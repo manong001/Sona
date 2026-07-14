@@ -1,0 +1,153 @@
+package cc.eu.sosee.sona.download;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+@Repository
+class DownloadTaskRepository {
+
+    private final JdbcClient jdbcClient;
+    private final Clock clock;
+
+    DownloadTaskRepository(JdbcClient jdbcClient, Clock clock) {
+        this.jdbcClient = jdbcClient;
+        this.clock = clock;
+    }
+
+    DownloadTask create(DownloadCandidate candidate, String requestedBy) {
+        var now = clock.millis();
+        var task = new DownloadTask(
+            UUID.randomUUID().toString(),
+            candidate.candidateId(),
+            candidate.source(),
+            candidate.sourceName(),
+            candidate.title().strip(),
+            candidate.artist().strip(),
+            text(candidate.album()),
+            text(candidate.quality()),
+            blankToNull(candidate.artworkUrl()),
+            requestedBy,
+            DownloadTaskState.QUEUED,
+            List.of(),
+            null,
+            now,
+            now
+        );
+        jdbcClient.sql("""
+                INSERT INTO download_tasks (
+                    id, candidate_id, source, source_name, title, artist, album, quality,
+                    artwork_url, requested_by, state, files_json, message, created_at, updated_at
+                ) VALUES (
+                    :id, :candidateId, :source, :sourceName, :title, :artist, :album, :quality,
+                    :artworkUrl, :requestedBy, :state, :files, :message, :createdAt, :updatedAt
+                )
+                """)
+            .param("id", task.id())
+            .param("candidateId", task.candidateId())
+            .param("source", task.source())
+            .param("sourceName", task.sourceName())
+            .param("title", task.title())
+            .param("artist", task.artist())
+            .param("album", task.album())
+            .param("quality", task.quality())
+            .param("artworkUrl", task.artworkUrl())
+            .param("requestedBy", task.requestedBy())
+            .param("state", task.state().name())
+            .param("files", writeFiles(task.files()))
+            .param("message", task.message())
+            .param("createdAt", task.createdAt())
+            .param("updatedAt", task.updatedAt())
+            .update();
+        return task;
+    }
+
+    List<DownloadTask> findRecent() {
+        return jdbcClient.sql("""
+                SELECT * FROM download_tasks ORDER BY created_at DESC LIMIT 100
+                """)
+            .query(this::map)
+            .list();
+    }
+
+    Optional<DownloadTask> findById(String id) {
+        return jdbcClient.sql("SELECT * FROM download_tasks WHERE id = :id")
+            .param("id", id)
+            .query(this::map)
+            .optional();
+    }
+
+    void update(String id, DownloadTaskState state, List<String> files, String message) {
+        jdbcClient.sql("""
+                UPDATE download_tasks
+                SET state = :state, files_json = :files, message = :message, updated_at = :updatedAt
+                WHERE id = :id
+                """)
+            .param("state", state.name())
+            .param("files", writeFiles(files))
+            .param("message", blankToNull(message))
+            .param("updatedAt", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
+    private DownloadTask map(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new DownloadTask(
+            resultSet.getString("id"),
+            resultSet.getString("candidate_id"),
+            resultSet.getString("source"),
+            resultSet.getString("source_name"),
+            resultSet.getString("title"),
+            resultSet.getString("artist"),
+            resultSet.getString("album"),
+            resultSet.getString("quality"),
+            resultSet.getString("artwork_url"),
+            resultSet.getString("requested_by"),
+            DownloadTaskState.valueOf(resultSet.getString("state")),
+            readFiles(resultSet.getString("files_json")),
+            resultSet.getString("message"),
+            resultSet.getLong("created_at"),
+            resultSet.getLong("updated_at")
+        );
+    }
+
+    private String writeFiles(List<String> files) {
+        if (files == null || files.isEmpty()) {
+            return "";
+        }
+        return files.stream()
+            .map(value -> Base64.getUrlEncoder().withoutPadding().encodeToString(
+                value.getBytes(StandardCharsets.UTF_8)
+            ))
+            .collect(Collectors.joining(","));
+    }
+
+    private List<String> readFiles(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        try {
+            return List.of(value.split(",")).stream()
+                .map(encoded -> new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8))
+                .toList();
+        } catch (IllegalArgumentException exception) {
+            return List.of();
+        }
+    }
+
+    private String text(String value) {
+        return value == null ? "" : value.strip();
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+}

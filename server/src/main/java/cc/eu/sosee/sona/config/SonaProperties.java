@@ -12,6 +12,7 @@ public class SonaProperties {
     private boolean scanOnStartup = true;
     private boolean scrapingEnabled = true;
     private final Auth auth = new Auth();
+    private final Downloader downloader = new Downloader();
 
     public Path getMusicDir() {
         return musicDir;
@@ -57,6 +58,10 @@ public class SonaProperties {
         return auth;
     }
 
+    public Downloader getDownloader() {
+        return downloader;
+    }
+
     public static class Auth {
 
         private String bootstrapUsername = "admin";
@@ -94,6 +99,37 @@ public class SonaProperties {
 
         public void setSecureCookie(boolean secureCookie) {
             this.secureCookie = secureCookie;
+        }
+    }
+
+    public static class Downloader {
+
+        private boolean enabled;
+        private String baseUrl = "http://sona-downloader:6700";
+        private String token = "";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
         }
     }
 }

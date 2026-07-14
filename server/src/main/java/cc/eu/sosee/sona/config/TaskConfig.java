@@ -18,5 +18,15 @@ class TaskConfig {
         executor.initialize();
         return executor;
     }
-}
 
+    @Bean
+    TaskExecutor downloadTaskExecutor() {
+        var executor = new ThreadPoolTaskExecutor();
+        executor.setThreadNamePrefix("sona-download-");
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(20);
+        executor.initialize();
+        return executor;
+    }
+}

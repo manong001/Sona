@@ -1,17 +1,21 @@
 package cc.eu.sosee.sona.library;
 
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
 @Service
-class ScanCoordinator {
+public class ScanCoordinator {
 
     private final LibraryScanner libraryScanner;
     private final TaskExecutor taskExecutor;
     private final AtomicReference<ScanStatus> status = new AtomicReference<>(ScanStatus.idle());
 
-    ScanCoordinator(LibraryScanner libraryScanner, TaskExecutor scanTaskExecutor) {
+    ScanCoordinator(
+        LibraryScanner libraryScanner,
+        @Qualifier("scanTaskExecutor") TaskExecutor scanTaskExecutor
+    ) {
         this.libraryScanner = libraryScanner;
         this.taskExecutor = scanTaskExecutor;
     }
@@ -34,5 +38,8 @@ class ScanCoordinator {
     ScanStatus status() {
         return status.get();
     }
-}
 
+    public void trigger() {
+        start();
+    }
+}

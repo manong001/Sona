@@ -25,7 +25,11 @@ class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(requests -> requests
                 .requestMatchers("/error", "/api/v1/health", "/api/v1/auth/login").permitAll()
-                .requestMatchers("/api/v1/users/**", "/api/v1/library/**").hasRole("ADMIN")
+                .requestMatchers(
+                    "/api/v1/users/**",
+                    "/api/v1/library/**",
+                    "/api/v1/downloads/**"
+                ).hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
             .exceptionHandling(errors -> errors

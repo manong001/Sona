@@ -20,7 +20,8 @@ class LibraryScanner {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LibraryScanner.class);
     private static final Set<String> SUPPORTED_EXTENSIONS = Set.of(
-        "mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif"
+        "mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif",
+        "ogg", "oga", "opus", "ape", "wv", "tta"
     );
 
     private final Path musicDirectory;
@@ -97,10 +98,18 @@ class LibraryScanner {
                 artist,
                 album,
                 metadata.durationMs(),
+                !titleFromTag,
+                !artistFromTag,
                 "Unknown Album".equals(album),
                 artworkPath == null,
                 lyrics.plain() == null && lyrics.synced() == null
             ));
+            if (!titleFromTag && hasText(scraped.title())) {
+                title = scraped.title().strip();
+            }
+            if (!artistFromTag && hasText(scraped.artist())) {
+                artist = scraped.artist().strip();
+            }
             if ("Unknown Album".equals(album) && hasText(scraped.album())) {
                 album = scraped.album().strip();
             }
@@ -108,7 +117,9 @@ class LibraryScanner {
                 lyrics = new LyricsValue(
                     blankToNull(scraped.plainLyrics()),
                     blankToNull(scraped.syncedLyrics()),
-                    hasText(scraped.plainLyrics()) || hasText(scraped.syncedLyrics()) ? "lrclib" : null
+                    hasText(scraped.plainLyrics()) || hasText(scraped.syncedLyrics())
+                        ? firstText(scraped.lyricsSource(), "remote")
+                        : null
                 );
             }
             if (artworkPath == null && scraped.artwork() != null) {

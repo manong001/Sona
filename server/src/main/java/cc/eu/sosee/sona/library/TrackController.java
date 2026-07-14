@@ -24,15 +24,21 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @RequestMapping("/api/v1/tracks")
 class TrackController {
 
-    private static final Map<String, MediaType> AUDIO_TYPES = Map.of(
-        "mp3", MediaType.parseMediaType("audio/mpeg"),
-        "m4a", MediaType.parseMediaType("audio/mp4"),
-        "aac", MediaType.parseMediaType("audio/aac"),
-        "flac", MediaType.parseMediaType("audio/flac"),
-        "alac", MediaType.parseMediaType("audio/mp4"),
-        "wav", MediaType.parseMediaType("audio/wav"),
-        "aiff", MediaType.parseMediaType("audio/aiff"),
-        "aif", MediaType.parseMediaType("audio/aiff")
+    private static final Map<String, MediaType> AUDIO_TYPES = Map.ofEntries(
+        Map.entry("mp3", MediaType.parseMediaType("audio/mpeg")),
+        Map.entry("m4a", MediaType.parseMediaType("audio/mp4")),
+        Map.entry("aac", MediaType.parseMediaType("audio/aac")),
+        Map.entry("flac", MediaType.parseMediaType("audio/flac")),
+        Map.entry("alac", MediaType.parseMediaType("audio/mp4")),
+        Map.entry("wav", MediaType.parseMediaType("audio/wav")),
+        Map.entry("aiff", MediaType.parseMediaType("audio/aiff")),
+        Map.entry("aif", MediaType.parseMediaType("audio/aiff")),
+        Map.entry("ogg", MediaType.parseMediaType("audio/ogg")),
+        Map.entry("oga", MediaType.parseMediaType("audio/ogg")),
+        Map.entry("opus", MediaType.parseMediaType("audio/opus")),
+        Map.entry("ape", MediaType.parseMediaType("audio/ape")),
+        Map.entry("wv", MediaType.parseMediaType("audio/wavpack")),
+        Map.entry("tta", MediaType.parseMediaType("audio/tta"))
     );
 
     private final TrackStore trackStore;
@@ -127,4 +133,3 @@ class TrackController {
     record LyricsResponse(String plain, String synced, String source) {
     }
 }
-

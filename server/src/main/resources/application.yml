@@ -18,6 +18,10 @@ sona:
   public-url: ${SONA_PUBLIC_URL:http://localhost:6699}
   scan-on-startup: ${SONA_SCAN_ON_STARTUP:true}
   scraping-enabled: ${SONA_SCRAPING_ENABLED:true}
+  downloader:
+    enabled: ${SONA_DOWNLOADER_ENABLED:false}
+    base-url: ${SONA_DOWNLOADER_URL:http://sona-downloader:6700}
+    token: ${SONA_SIDECAR_TOKEN:}
   auth:
     bootstrap-username: ${SONA_ADMIN_USERNAME:admin}
     bootstrap-password: ${SONA_ADMIN_PASSWORD:}

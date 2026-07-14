@@ -5,6 +5,8 @@ record ScrapeRequest(
     String artist,
     String album,
     long durationMs,
+    boolean needsTitle,
+    boolean needsArtist,
     boolean needsAlbum,
     boolean needsArtwork,
     boolean needsLyrics

@@ -47,5 +47,13 @@
     <array>
         <string>UIInterfaceOrientationPortrait</string>
     </array>
+    <!-- iPad requires all orientations unless the app opts into full-screen-only mode. -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
 </dict>
 </plist>

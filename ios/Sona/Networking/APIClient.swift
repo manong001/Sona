@@ -167,6 +167,35 @@ final class APIClient {
         try await request(path: "/api/v1/library/scan/status")
     }
 
+    func musicDownloadSources() async throws -> [DownloadSource] {
+        try await request(path: "/api/v1/downloads/sources")
+    }
+
+    func searchMusicDownloads(query: String) async throws -> DownloadSearchResponse {
+        var components = URLComponents(
+            url: url(for: "/api/v1/downloads/search"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        return try await request(url: components.url!, timeout: 180)
+    }
+
+    func queueMusicDownload(_ candidate: DownloadCandidate) async throws -> MusicDownloadTask {
+        try await request(
+            path: "/api/v1/downloads",
+            method: "POST",
+            body: try encoder.encode(candidate)
+        )
+    }
+
+    func musicDownloadTasks() async throws -> [MusicDownloadTask] {
+        try await request(path: "/api/v1/downloads")
+    }
+
+    func retryMusicDownload(taskID: String) async throws -> MusicDownloadTask {
+        try await request(path: "/api/v1/downloads/\(taskID)/retry", method: "POST")
+    }
+
     func lyrics(for track: Track) async throws -> Lyrics {
         try await request(path: "/api/v1/tracks/\(track.id)/lyrics")
     }
@@ -186,19 +215,24 @@ final class APIClient {
     private func request<T: Decodable>(
         path: String,
         method: String = "GET",
-        body: Data? = nil
+        body: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
-        try await request(url: url(for: path), method: method, body: body)
+        try await request(url: url(for: path), method: method, body: body, timeout: timeout)
     }
 
     private func request<T: Decodable>(
         url: URL,
         method: String = "GET",
-        body: Data? = nil
+        body: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

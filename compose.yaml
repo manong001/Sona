@@ -1,4 +1,18 @@
 services:
+  sona-downloader:
+    build:
+      context: ./downloader
+    container_name: sona-downloader
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      SONA_DOWNLOADER_PORT: 6700
+      SONA_MUSIC_DIR: /music
+      SONA_SIDECAR_TOKEN: ${SONA_SIDECAR_TOKEN:?请在 .env 设置 SONA_SIDECAR_TOKEN}
+      SONA_DOWNLOAD_SOURCES: ${SONA_DOWNLOAD_SOURCES:-MiguMusicClient,NeteaseMusicClient,QQMusicClient,KuwoMusicClient,QianqianMusicClient}
+    volumes:
+      - "${SONA_MUSIC_HOST_DIR:-/vol4/1000/media/download/音乐}:/music:rw"
+
   sona-server:
     build:
       context: ./server
@@ -14,9 +28,15 @@ services:
       SONA_ADMIN_PASSWORD: ${SONA_ADMIN_PASSWORD:?请在 .env 设置 SONA_ADMIN_PASSWORD}
       SONA_SCAN_ON_STARTUP: ${SONA_SCAN_ON_STARTUP:-true}
       SONA_SCRAPING_ENABLED: ${SONA_SCRAPING_ENABLED:-true}
+      SONA_DOWNLOADER_ENABLED: "true"
+      SONA_DOWNLOADER_URL: http://sona-downloader:6700
+      SONA_SIDECAR_TOKEN: ${SONA_SIDECAR_TOKEN:?请在 .env 设置 SONA_SIDECAR_TOKEN}
       SONA_SECURE_COOKIE: "false"
     ports:
       - "${SONA_PORT:-6699}:6699"
     volumes:
       - "${SONA_MUSIC_HOST_DIR:-/vol4/1000/media/download/音乐}:/music:ro"
-      - "${SONA_DATA_HOST_DIR:-/vol4/1000/docker/sona}:/data"
+      - "${SONA_DATA_HOST_DIR:-/vol1/1000/docker/Sona/data}:/data"
+    depends_on:
+      sona-downloader:
+        condition: service_healthy

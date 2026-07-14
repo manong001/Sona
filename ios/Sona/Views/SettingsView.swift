@@ -20,6 +20,12 @@ struct SettingsView: View {
 
                 if session.currentUser?.isAdmin == true {
                     Section("曲库维护") {
+                        NavigationLink {
+                            MusicDownloadView()
+                        } label: {
+                            Label("多源音乐下载", systemImage: "arrow.down.circle")
+                        }
+
                         Button {
                             Task { await library.scan() }
                         } label: {
@@ -65,7 +71,7 @@ struct SettingsView: View {
                 Section("关于") {
                     LabeledContent("应用", value: "Sona")
                     LabeledContent("版本", value: "0.4.0")
-                    Text("本地标签优先；MusicBrainz、LRCLIB 与 Cover Art Archive 仅补全缺失信息。")
+                    Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

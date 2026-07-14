@@ -379,6 +379,94 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScanStatus"
+  /downloads/sources:
+    get:
+      operationId: downloadSources
+      description: 可用的 musicdl 下载来源（仅管理员）
+      responses:
+        "200":
+          description: 来源列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DownloadSource"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /downloads/search:
+    get:
+      operationId: searchDownloads
+      description: 在已配置的 musicdl 来源中搜索歌曲（仅管理员）
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 120
+      responses:
+        "200":
+          description: 搜索候选
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DownloadCandidate"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /downloads:
+    get:
+      operationId: listDownloadTasks
+      description: 最近 100 条下载任务（仅管理员）
+      responses:
+        "200":
+          description: 下载任务
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DownloadTask"
+    post:
+      operationId: queueDownload
+      description: 将搜索候选加入下载队列（仅管理员）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadCandidate"
+      responses:
+        "202":
+          description: 已加入队列
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadTask"
+  /downloads/{downloadId}/retry:
+    post:
+      operationId: retryDownload
+      parameters:
+        - name: downloadId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: 已重新加入队列
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadTask"
 components:
   parameters:
     TrackId:
@@ -592,8 +680,90 @@ components:
           type: integer
         failed:
           type: integer
+          message:
+            type: [string, "null"]
+    DownloadSource:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    DownloadCandidate:
+      type: object
+      required: [candidateId, source, sourceName, title, artist, hasLyrics]
+      properties:
+        candidateId:
+          type: string
+        source:
+          type: string
+        sourceName:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        album:
+          type: [string, "null"]
+        extension:
+          type: [string, "null"]
+        quality:
+          type: [string, "null"]
+        durationMs:
+          type: [integer, "null"]
+          format: int64
+        fileSizeBytes:
+          type: [integer, "null"]
+          format: int64
+        artworkUrl:
+          type: [string, "null"]
+          format: uri
+        hasLyrics:
+          type: boolean
+        lyrics:
+          type: [string, "null"]
+    DownloadTask:
+      type: object
+      required: [id, candidateId, source, sourceName, title, artist, album, quality, requestedBy, state, files, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        candidateId:
+          type: string
+        source:
+          type: string
+        sourceName:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        quality:
+          type: string
+        artworkUrl:
+          type: [string, "null"]
+          format: uri
+        requestedBy:
+          type: string
+        state:
+          type: string
+          enum: [QUEUED, RUNNING, COMPLETED, FAILED]
+        files:
+          type: array
+          items:
+            type: string
         message:
           type: [string, "null"]
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
     Problem:
       type: object
       required: [status, title]
