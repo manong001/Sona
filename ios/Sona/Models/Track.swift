@@ -54,9 +54,18 @@ struct ScanStatus: Decodable {
     let message: String?
 }
 
-enum UserRole: String, Decodable {
+enum UserRole: String, Codable, CaseIterable, Identifiable {
     case admin = "ADMIN"
     case user = "USER"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .admin: "管理员"
+        case .user: "普通用户"
+        }
+    }
 }
 
 struct UserResponse: Decodable {

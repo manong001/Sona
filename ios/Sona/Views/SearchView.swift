@@ -21,13 +21,7 @@ struct SearchView: View {
     }
 
     private var filteredTracks: [Track] {
-        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return [] }
-        return library.tracks.filter {
-            $0.title.localizedCaseInsensitiveContains(value) ||
-            $0.artist.localizedCaseInsensitiveContains(value) ||
-            $0.album.localizedCaseInsensitiveContains(value)
-        }
+        library.searchResults
     }
 
     private var categories: [Category] {
@@ -92,6 +86,19 @@ struct SearchView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
+        .task(id: query) {
+            let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else {
+                library.clearSearch()
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            await library.search(query: value)
+        }
     }
 
     private var header: some View {
@@ -140,7 +147,10 @@ struct SearchView: View {
                         LazyHStack(spacing: 14) {
                             ForEach(Array(categories.prefix(4))) { category in
                                 NavigationLink {
-                                    SonaTrackListView(collection: collection(for: category))
+                                    SonaTrackListView(
+                                        collection: collection(for: category),
+                                        loadsMoreFromLibrary: category.id == "all"
+                                    )
                                 } label: {
                                     discoveryCard(category)
                                 }
@@ -160,7 +170,10 @@ struct SearchView: View {
                     ) {
                         ForEach(categories) { category in
                             NavigationLink {
-                                SonaTrackListView(collection: collection(for: category))
+                                SonaTrackListView(
+                                    collection: collection(for: category),
+                                    loadsMoreFromLibrary: category.id == "all"
+                                )
                             } label: {
                                 categoryCard(category)
                             }
@@ -175,7 +188,11 @@ struct SearchView: View {
 
     @ViewBuilder
     private var resultsContent: some View {
-        if filteredTracks.isEmpty {
+        if library.isSearching && filteredTracks.isEmpty {
+            ProgressView("搜索中…")
+                .frame(maxWidth: .infinity)
+                .padding(.top, 80)
+        } else if filteredTracks.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 38))
@@ -209,6 +226,14 @@ struct SearchView: View {
                         .padding(.vertical, 4)
                     }
                     .buttonStyle(.plain)
+                    .task {
+                        await library.loadNextSearchPageIfNeeded(currentTrack: track)
+                    }
+                }
+                if library.isLoadingMoreSearch {
+                    ProgressView("载入更多…")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
                 }
             }
         }

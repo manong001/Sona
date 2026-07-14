@@ -82,6 +82,12 @@ CREATE INDEX IF NOT EXISTS idx_tracks_sort ON tracks(normalized_title, id);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 
+CREATE TABLE IF NOT EXISTS track_play_stats (
+    track_id TEXT PRIMARY KEY,
+    play_count INTEGER NOT NULL DEFAULT 0,
+    completion_count INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS download_tasks (
     id TEXT PRIMARY KEY,
     candidate_id TEXT NOT NULL,

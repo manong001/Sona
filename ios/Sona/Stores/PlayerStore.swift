@@ -32,14 +32,18 @@ final class PlayerStore: ObservableObject {
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var playbackMode: PlaybackMode = .sequential
+    @Published private(set) var playbackQueue: [Track] = []
+    @Published private(set) var queueTitle = "随机播放"
+    @Published private(set) var isLoadingQueue = false
+    @Published private(set) var queueErrorMessage: String?
 
     private let player = AVPlayer()
-    private var queue: [Track] = []
     private var activeAPI = APIClient.shared
     private var offlineURLProvider: ((Track) -> URL?)?
     private var timeObserver: Any?
     private var itemEndObserver: NSObjectProtocol?
     private var artworkTask: Task<Void, Never>?
+    private var randomQueueTask: Task<Void, Never>?
     private var nowPlayingArtwork: MPMediaItemArtwork?
 
     init() {
@@ -57,34 +61,47 @@ final class PlayerStore: ObservableObject {
             NotificationCenter.default.removeObserver(itemEndObserver)
         }
         artworkTask?.cancel()
+        randomQueueTask?.cancel()
     }
 
     var canGoPrevious: Bool {
-        guard queue.count > 1, let index = currentIndex else { return false }
-        return playbackMode == .shuffle || index > queue.startIndex
+        currentIndex != nil
     }
 
     var canGoNext: Bool {
-        guard queue.count > 1, let index = currentIndex else { return false }
-        return playbackMode == .shuffle || index < queue.index(before: queue.endIndex)
+        currentIndex != nil
     }
 
     func play(
         track: Track,
         queue: [Track],
+        prioritizedQueueTitle: String? = nil,
         api: APIClient = .shared,
         offlineURLProvider: @escaping (Track) -> URL?
     ) {
-        self.queue = queue.contains(where: { $0.id == track.id }) ? queue : queue + [track]
         activeAPI = api
         self.offlineURLProvider = offlineURLProvider
+        randomQueueTask?.cancel()
+        queueErrorMessage = nil
+
+        if let prioritizedQueueTitle {
+            playbackQueue = prioritizedQueue(queue, startingWith: track)
+            queueTitle = prioritizedQueueTitle
+            isLoadingQueue = false
+        } else {
+            playbackQueue = [track]
+            queueTitle = "随机播放"
+        }
 
         if currentTrack?.id == track.id {
             resume()
-            return
+        } else {
+            startPlayback(track)
         }
 
-        startPlayback(track)
+        if prioritizedQueueTitle == nil {
+            loadRandomQueue(keeping: track)
+        }
     }
 
     private func startPlayback(_ track: Track) {
@@ -104,6 +121,7 @@ final class PlayerStore: ObservableObject {
         currentTrack = track
         elapsed = 0
         duration = Double(track.durationMs) / 1_000
+        recordPlaybackStart(track.id)
         player.play()
         isPlaying = true
         loadNowPlayingArtwork(for: track)
@@ -119,22 +137,31 @@ final class PlayerStore: ObservableObject {
 
     func cyclePlaybackMode() {
         guard let index = PlaybackMode.allCases.firstIndex(of: playbackMode) else { return }
-        playbackMode = PlaybackMode.allCases[(index + 1) % PlaybackMode.allCases.count]
+        setPlaybackMode(PlaybackMode.allCases[(index + 1) % PlaybackMode.allCases.count])
     }
 
     func toggleShuffle() {
-        playbackMode = playbackMode == .shuffle ? .sequential : .shuffle
+        setPlaybackMode(playbackMode == .shuffle ? .sequential : .shuffle)
     }
 
     func toggleRepeatOne() {
-        playbackMode = playbackMode == .repeatOne ? .sequential : .repeatOne
+        setPlaybackMode(playbackMode == .repeatOne ? .sequential : .repeatOne)
+    }
+
+    func playQueuedTrack(_ track: Track) {
+        guard playbackQueue.contains(where: { $0.id == track.id }) else { return }
+        startPlayback(track)
     }
 
     func stop() {
         player.pause()
         player.replaceCurrentItem(with: nil)
         artworkTask?.cancel()
-        queue = []
+        randomQueueTask?.cancel()
+        playbackQueue = []
+        queueTitle = "随机播放"
+        isLoadingQueue = false
+        queueErrorMessage = nil
         currentTrack = nil
         elapsed = 0
         duration = 0
@@ -199,6 +226,10 @@ final class PlayerStore: ObservableObject {
                 guard let self,
                       let endedItem = notification.object as? AVPlayerItem,
                       endedItem === self.player.currentItem else { return }
+                if let trackID = self.currentTrack?.id {
+                    let api = self.activeAPI
+                    Task { try? await api.recordPlaybackCompletion(trackID: trackID) }
+                }
                 self.advance(by: 1, automatic: true)
             }
         }
@@ -206,34 +237,109 @@ final class PlayerStore: ObservableObject {
 
     private var currentIndex: Int? {
         guard let currentTrack else { return nil }
-        return queue.firstIndex { $0.id == currentTrack.id }
+        return playbackQueue.firstIndex { $0.id == currentTrack.id }
     }
 
     private func advance(by offset: Int, automatic: Bool) {
         guard let index = currentIndex else { return }
 
         if automatic && playbackMode == .repeatOne {
+            if let trackID = currentTrack?.id {
+                recordPlaybackStart(trackID)
+            }
             seek(to: 0)
             resume()
             return
         }
 
-        let targetIndex: Int?
-        if playbackMode == .shuffle {
-            targetIndex = queue.indices.filter { $0 != index }.randomElement()
-        } else {
-            let candidate = index + offset
-            targetIndex = queue.indices.contains(candidate) ? candidate : nil
-        }
-
-        guard let targetIndex else {
-            if automatic {
-                isPlaying = false
-                updateNowPlaying()
-            }
+        let candidate = index + offset
+        if playbackQueue.indices.contains(candidate) {
+            startPlayback(playbackQueue[candidate])
             return
         }
-        startPlayback(queue[targetIndex])
+
+        if offset > 0 {
+            replaceWithRandomQueue()
+            return
+        }
+
+        guard let last = playbackQueue.last else { return }
+        startPlayback(last)
+    }
+
+    private func setPlaybackMode(_ mode: PlaybackMode) {
+        let shouldShuffle = mode == .shuffle && playbackMode != .shuffle
+        playbackMode = mode
+        if shouldShuffle, let currentTrack {
+            playbackQueue = [currentTrack] + playbackQueue
+                .filter { $0.id != currentTrack.id }
+                .shuffled()
+        }
+    }
+
+    private func prioritizedQueue(_ queue: [Track], startingWith track: Track) -> [Track] {
+        let values = queue.contains(where: { $0.id == track.id }) ? queue : queue + [track]
+        guard playbackMode == .shuffle else { return values }
+        return [track] + values.filter { $0.id != track.id }.shuffled()
+    }
+
+    private func loadRandomQueue(keeping track: Track) {
+        isLoadingQueue = true
+        let api = activeAPI
+        randomQueueTask = Task { [weak self] in
+            do {
+                let randomTracks = try await api.randomTracks(limit: 50)
+                guard !Task.isCancelled,
+                      let self,
+                      self.currentTrack?.id == track.id else { return }
+                var seen = Set([track.id])
+                let remaining = randomTracks.filter { seen.insert($0.id).inserted }
+                self.playbackQueue = Array(([track] + remaining).prefix(50))
+                self.isLoadingQueue = false
+                self.updateNowPlaying()
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.isLoadingQueue = false
+                self.queueErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func replaceWithRandomQueue() {
+        guard !isLoadingQueue else { return }
+        isPlaying = false
+        isLoadingQueue = true
+        queueErrorMessage = nil
+        updateNowPlaying()
+        let api = activeAPI
+        let previousTrackID = currentTrack?.id
+        randomQueueTask?.cancel()
+        randomQueueTask = Task { [weak self] in
+            do {
+                var randomTracks = try await api.randomTracks(limit: 50)
+                guard !Task.isCancelled, let self else { return }
+                if randomTracks.count > 1, randomTracks.first?.id == previousTrackID {
+                    randomTracks.append(randomTracks.removeFirst())
+                }
+                self.playbackQueue = randomTracks
+                self.queueTitle = "随机播放"
+                self.isLoadingQueue = false
+                guard let first = randomTracks.first else {
+                    self.queueErrorMessage = "曲库中没有可播放的歌曲"
+                    return
+                }
+                self.startPlayback(first)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.isLoadingQueue = false
+                self.queueErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func recordPlaybackStart(_ trackID: String) {
+        let api = activeAPI
+        Task { try? await api.recordPlayback(trackID: trackID) }
     }
 
     private func configureRemoteCommands() {
@@ -308,7 +414,7 @@ final class PlayerStore: ObservableObject {
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyPlaybackQueueIndex: currentIndex ?? 0,
-            MPNowPlayingInfoPropertyPlaybackQueueCount: queue.count
+            MPNowPlayingInfoPropertyPlaybackQueueCount: playbackQueue.count
         ]
         if let nowPlayingArtwork {
             info[MPMediaItemPropertyArtwork] = nowPlayingArtwork

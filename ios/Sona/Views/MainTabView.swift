@@ -28,6 +28,12 @@ struct MainTabView: View {
             .toolbarBackground(Color.sonaBackgroundDeep.opacity(0.98), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
 
+            if player.currentTrack != nil {
+                MiniPlayerView {
+                    showsNowPlaying = true
+                }
+            }
+
             if showsDrawer {
                 Color.black.opacity(0.56)
                     .ignoresSafeArea()
@@ -63,7 +69,7 @@ struct MainTabView: View {
         }
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }
-            Task { await personal.recordPlayback(trackID: newValue) }
+            personal.notePlayback(trackID: newValue)
         }
         .onDisappear {
             personal.reset()
@@ -72,13 +78,7 @@ struct MainTabView: View {
     }
 
     private func tabContent<Content: View>(_ content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 0) {
-            if player.currentTrack != nil {
-                MiniPlayerView {
-                    showsNowPlaying = true
-                }
-            }
-        }
+        content
     }
 
     private func openDrawer() {

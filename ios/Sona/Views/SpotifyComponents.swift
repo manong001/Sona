@@ -174,10 +174,40 @@ struct SonaMediaCard: View {
 }
 
 struct SonaTrackListView: View {
+    @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     let collection: SonaCollection
+    let playbackQueue: [Track]?
+    let loadsMoreFromLibrary: Bool
+
+    init(
+        collection: SonaCollection,
+        playbackQueue: [Track]? = nil,
+        loadsMoreFromLibrary: Bool = false
+    ) {
+        self.collection = collection
+        self.playbackQueue = playbackQueue
+        self.loadsMoreFromLibrary = loadsMoreFromLibrary
+    }
+
+    private var tracks: [Track] {
+        loadsMoreFromLibrary ? library.tracks : collection.tracks
+    }
+
+    private var queue: [Track] {
+        guard let playbackQueue, !playbackQueue.isEmpty else { return tracks }
+        return playbackQueue
+    }
+
+    private var prioritizedQueueTitle: String? {
+        let isPlaylist = collection.id == "liked-songs" ||
+            collection.id.hasPrefix("playlist-") ||
+            collection.subtitle.hasPrefix("歌单")
+        guard isPlaylist || collection.id.hasPrefix("album-") else { return nil }
+        return collection.title
+    }
 
     var body: some View {
         ZStack {
@@ -202,15 +232,16 @@ struct SonaTrackListView: View {
                                 .foregroundStyle(Color.sonaSecondaryText)
                         }
                         HStack {
-                            Text("\(collection.tracks.count) 首歌曲")
+                            Text("\(tracks.count) 首歌曲")
                                 .font(.caption)
                                 .foregroundStyle(Color.sonaSecondaryText)
                             Spacer()
                             Button {
-                                guard let first = collection.tracks.first else { return }
+                                guard let first = tracks.first else { return }
                                 player.play(
                                     track: first,
-                                    queue: collection.tracks,
+                                    queue: queue,
+                                    prioritizedQueueTitle: prioritizedQueueTitle,
                                     offlineURLProvider: offline.localURL(for:)
                                 )
                             } label: {
@@ -220,17 +251,18 @@ struct SonaTrackListView: View {
                                     .frame(width: 56, height: 56)
                                     .background(Color.sonaGreen, in: Circle())
                             }
-                            .disabled(collection.tracks.isEmpty)
+                            .disabled(tracks.isEmpty)
                         }
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 18)
 
-                    ForEach(collection.tracks) { track in
+                    ForEach(tracks) { track in
                         Button {
                             player.play(
                                 track: track,
-                                queue: collection.tracks,
+                                queue: queue,
+                                prioritizedQueueTitle: prioritizedQueueTitle,
                                 offlineURLProvider: offline.localURL(for:)
                             )
                         } label: {
@@ -243,6 +275,15 @@ struct SonaTrackListView: View {
                             .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
+                        .task {
+                            guard loadsMoreFromLibrary else { return }
+                            await library.loadNextPageIfNeeded(currentTrack: track)
+                        }
+                    }
+
+                    if loadsMoreFromLibrary && library.isLoadingMore {
+                        ProgressView("载入更多…")
+                            .padding(.vertical, 18)
                     }
                 }
                 .padding(.bottom, 24)

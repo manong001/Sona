@@ -6,6 +6,7 @@ struct NowPlayingView: View {
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var showsLyrics = false
+    @State private var showsQueue = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -34,9 +35,12 @@ struct NowPlayingView: View {
                                     .lineLimit(1)
                             }
                             Spacer()
-                            Image(systemName: "ellipsis")
-                                .font(.title3.weight(.semibold))
-                                .frame(width: 44, height: 44)
+                            Button("播放列表", systemImage: "list.bullet") {
+                                showsQueue = true
+                            }
+                            .labelStyle(.iconOnly)
+                            .font(.title3.weight(.semibold))
+                            .frame(width: 44, height: 44)
                         }
 
                         Spacer(minLength: 8)
@@ -170,6 +174,9 @@ struct NowPlayingView: View {
                 LyricsView(track: track)
             }
         }
+        .sheet(isPresented: $showsQueue) {
+            PlaybackQueueView()
+        }
     }
 
     private func toggleOffline(_ track: Track) {
@@ -184,5 +191,69 @@ struct NowPlayingView: View {
         guard seconds.isFinite else { return "0:00" }
         let value = max(0, Int(seconds))
         return String(format: "%d:%02d", value / 60, value % 60)
+    }
+}
+
+struct PlaybackQueueView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(Array(player.playbackQueue.enumerated()), id: \.element.id) { index, track in
+                        Button {
+                            player.playQueuedTrack(track)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text("\(index + 1)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(Color.sonaSecondaryText)
+                                    .frame(width: 24, alignment: .trailing)
+                                TrackRow(
+                                    track: track,
+                                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                    isFavorite: personal.favoriteIDs.contains(track.id)
+                                )
+                                if player.currentTrack?.id == track.id {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .foregroundStyle(Color.sonaGreen)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("\(player.queueTitle) · \(player.playbackQueue.count) 首")
+                }
+
+                if player.isLoadingQueue {
+                    HStack {
+                        Spacer()
+                        ProgressView("正在随机补充歌曲…")
+                        Spacer()
+                    }
+                }
+
+                if let message = player.queueErrorMessage {
+                    Text(message).foregroundStyle(.red)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.sonaBackground)
+            .navigationTitle("播放列表")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

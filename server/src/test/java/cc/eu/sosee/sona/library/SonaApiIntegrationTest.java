@@ -9,11 +9,15 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -38,6 +42,9 @@ class SonaApiIntegrationTest {
 
     @Autowired
     TrackStore trackStore;
+
+    @Autowired
+    JdbcClient jdbcClient;
 
     private final HttpClient client = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
@@ -112,6 +119,99 @@ class SonaApiIntegrationTest {
         assertThat(response.body()).containsExactly(2, 3, 4, 5);
     }
 
+    @Test
+    void returnsFiftyRandomTracksByDefault() throws Exception {
+        var now = System.currentTimeMillis();
+        for (var index = 0; index < 60; index++) {
+            trackStore.save(new TrackRecord(
+                "random-" + index,
+                MUSIC_DIRECTORY.resolve("random-" + index + ".mp3"),
+                1,
+                now,
+                "Random " + index,
+                "random " + index,
+                "Sona",
+                "Random",
+                index,
+                1_000,
+                "MP3",
+                44_100,
+                16,
+                null,
+                null,
+                null,
+                null,
+                "LOCAL",
+                false,
+                now,
+                now
+            ));
+        }
+
+        var login = login("test-password");
+        var cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+        var request = HttpRequest.newBuilder(uri("/api/v1/tracks/random"))
+            .header("Cookie", cookie)
+            .GET()
+            .build();
+
+        var response = send(request);
+        var matcher = Pattern.compile("\\\"id\\\":\\\"([^\\\"]+)\\\"").matcher(response.body());
+        var ids = new HashSet<String>();
+        while (matcher.find()) {
+            ids.add(matcher.group(1));
+        }
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(ids).hasSize(50);
+    }
+
+    @Test
+    void recordsPlaybackCompletionRate() throws Exception {
+        var now = System.currentTimeMillis();
+        trackStore.save(new TrackRecord(
+            "completion-rate",
+            MUSIC_DIRECTORY.resolve("completion-rate.mp3"),
+            1,
+            now,
+            "Completion Rate",
+            "completion rate",
+            "Sona",
+            "Tests",
+            1,
+            1_000,
+            "MP3",
+            44_100,
+            16,
+            null,
+            null,
+            null,
+            null,
+            "LOCAL",
+            false,
+            now,
+            now
+        ));
+        var login = login("test-password");
+        var cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+        assertThat(post("/api/v1/me/history/completion-rate", cookie).statusCode()).isEqualTo(204);
+        assertThat(post("/api/v1/me/history/completion-rate", cookie).statusCode()).isEqualTo(204);
+        assertThat(post("/api/v1/me/history/completion-rate/complete", cookie).statusCode()).isEqualTo(204);
+
+        var stats = jdbcClient.sql("""
+                SELECT play_count, completion_count
+                FROM track_play_stats
+                WHERE track_id = 'completion-rate'
+                """)
+            .query((resultSet, rowNumber) -> List.of(
+                resultSet.getInt("play_count"),
+                resultSet.getInt("completion_count")
+            ))
+            .single();
+        assertThat(stats).containsExactly(2, 1);
+    }
+
     private HttpResponse<String> login(String password) throws Exception {
         var request = HttpRequest.newBuilder(uri("/api/v1/auth/login"))
             .header("Content-Type", "application/json")
@@ -124,6 +224,13 @@ class SonaApiIntegrationTest {
 
     private HttpResponse<String> send(HttpRequest request) throws Exception {
         return client.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> post(String path, String cookie) throws Exception {
+        return send(HttpRequest.newBuilder(uri(path))
+            .header("Cookie", cookie)
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build());
     }
 
     private URI uri(String path) {

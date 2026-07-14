@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -129,6 +130,26 @@ class JdbcTrackStore implements TrackStore {
         return new TrackPageData(results, nextCursor);
     }
 
+    @Override
+    public List<TrackRecord> findRandom(int limit) {
+        return jdbcClient.sql("""
+                SELECT tracks.*
+                FROM tracks
+                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
+                ORDER BY ABS(RANDOM() % 1000000) * (
+                    1.0 + 4.0 * CASE
+                        WHEN COALESCE(stats.play_count, 0) > 0
+                        THEN MIN(stats.completion_count, stats.play_count) * 1.0 / stats.play_count
+                        ELSE 0
+                    END
+                ) DESC
+                LIMIT :limit
+                """)
+            .param("limit", limit)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
     private static TrackRecord mapTrack(ResultSet resultSet, int rowNumber) throws SQLException {
         return new TrackRecord(
             resultSet.getString("id"),
@@ -168,4 +189,3 @@ class JdbcTrackStore implements TrackStore {
         return path == null ? null : path.toString();
     }
 }
-

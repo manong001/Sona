@@ -34,6 +34,7 @@
 		200000000000000000000019 /* ProfileDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* ProfileDrawerView.swift */; };
 		20000000000000000000001A /* MusicDownload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001A /* MusicDownload.swift */; };
 		20000000000000000000001B /* MusicDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* MusicDownloadView.swift */; };
+		20000000000000000000001C /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C /* LyricsParser.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -64,6 +65,7 @@
 		100000000000000000000019 /* ProfileDrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/ProfileDrawerView.swift; sourceTree = "<group>"; };
 		10000000000000000000001A /* MusicDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/MusicDownload.swift; sourceTree = "<group>"; };
 		10000000000000000000001B /* MusicDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/MusicDownloadView.swift; sourceTree = "<group>"; };
+		10000000000000000000001C /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/LyricsParser.swift; sourceTree = "<group>"; };
 		900000000000000000000001 /* Sona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sona.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -108,6 +110,7 @@
 				100000000000000000000019 /* ProfileDrawerView.swift */,
 				10000000000000000000001A /* MusicDownload.swift */,
 				10000000000000000000001B /* MusicDownloadView.swift */,
+				10000000000000000000001C /* LyricsParser.swift */,
 				300000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -216,6 +219,7 @@
 				200000000000000000000019 /* ProfileDrawerView.swift in Sources */,
 				20000000000000000000001A /* MusicDownload.swift in Sources */,
 				20000000000000000000001B /* MusicDownloadView.swift in Sources */,
+				20000000000000000000001C /* LyricsParser.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

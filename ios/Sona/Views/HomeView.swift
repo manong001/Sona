@@ -142,7 +142,10 @@ struct HomeView: View {
             ) {
                 ForEach(shortcuts) { collection in
                     NavigationLink {
-                        SonaTrackListView(collection: collection)
+                        SonaTrackListView(
+                            collection: collection,
+                            playbackQueue: playbackQueue(for: collection)
+                        )
                     } label: {
                         HStack(spacing: 10) {
                             if collection.id == "liked-songs" {
@@ -179,7 +182,10 @@ struct HomeView: View {
                     LazyHStack(alignment: .top, spacing: 16) {
                         ForEach(collections) { collection in
                             NavigationLink {
-                                SonaTrackListView(collection: collection)
+                                SonaTrackListView(
+                                    collection: collection,
+                                    playbackQueue: playbackQueue(for: collection)
+                                )
                             } label: {
                                 SonaMediaCard(collection: collection)
                             }
@@ -190,5 +196,15 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private func playbackQueue(for collection: SonaCollection) -> [Track]? {
+        if collection.id.hasPrefix("recent-") {
+            return historyTracks.count > 1 ? historyTracks : library.tracks
+        }
+        if collection.id.hasPrefix("favorite-") || collection.id == "liked-songs" {
+            return favoriteTracks.count > 1 ? favoriteTracks : library.tracks
+        }
+        return collection.tracks.count == 1 ? library.tracks : nil
     }
 }

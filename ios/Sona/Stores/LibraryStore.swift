@@ -5,32 +5,121 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var tracks: [Track] = []
     @Published private(set) var nextCursor: String?
     @Published private(set) var isLoading = false
+    @Published private(set) var isLoadingMore = false
+    @Published private(set) var searchResults: [Track] = []
+    @Published private(set) var isSearching = false
+    @Published private(set) var isLoadingMoreSearch = false
     @Published private(set) var scanStatus: ScanStatus?
     @Published var errorMessage: String?
 
     private let api: APIClient
     private var loadedQuery = ""
+    private var searchQuery = ""
+    private var searchCursor: String?
+    private var searchGeneration = 0
 
     init(api: APIClient = .shared) {
         self.api = api
     }
 
     func refresh(query: String = "") async {
-        guard !isLoading else { return }
+        guard !isLoading, !isLoadingMore else { return }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            var page = try await api.tracks(query: query, cursor: nil)
+            let page = try await api.tracks(query: query, cursor: nil)
             tracks = page.items
             nextCursor = page.nextCursor
             loadedQuery = query
-            while let cursor = nextCursor {
-                page = try await api.tracks(query: query, cursor: cursor)
-                tracks.append(contentsOf: page.items)
-                nextCursor = page.nextCursor
-            }
         } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func loadNextPageIfNeeded(currentTrack: Track) async {
+        guard let index = tracks.firstIndex(where: { $0.id == currentTrack.id }) else { return }
+        let threshold = max(tracks.count - 10, 0)
+        guard index >= threshold else { return }
+        await loadNextPage()
+    }
+
+    func loadNextPage() async {
+        guard !isLoading, !isLoadingMore, let cursor = nextCursor else { return }
+        isLoadingMore = true
+        errorMessage = nil
+        defer { isLoadingMore = false }
+        do {
+            let page = try await api.tracks(query: loadedQuery, cursor: cursor)
+            let loadedIDs = Set(tracks.map(\.id))
+            tracks.append(contentsOf: page.items.filter { !loadedIDs.contains($0.id) })
+            nextCursor = page.nextCursor
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func search(query: String) async {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            clearSearch()
+            return
+        }
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchQuery = value
+        searchCursor = nil
+        searchResults = []
+        isSearching = true
+        isLoadingMoreSearch = false
+        errorMessage = nil
+        do {
+            let page = try await api.tracks(query: value, cursor: nil)
+            guard generation == searchGeneration else { return }
+            searchResults = page.items
+            searchCursor = page.nextCursor
+            isSearching = false
+        } catch {
+            guard generation == searchGeneration else { return }
+            searchResults = []
+            searchCursor = nil
+            isSearching = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func clearSearch() {
+        searchGeneration += 1
+        searchQuery = ""
+        searchCursor = nil
+        searchResults = []
+        isSearching = false
+        isLoadingMoreSearch = false
+    }
+
+    func loadNextSearchPageIfNeeded(currentTrack: Track) async {
+        guard let index = searchResults.firstIndex(where: { $0.id == currentTrack.id }) else { return }
+        let threshold = max(searchResults.count - 10, 0)
+        guard index >= threshold else { return }
+        await loadNextSearchPage()
+    }
+
+    private func loadNextSearchPage() async {
+        guard !isSearching, !isLoadingMoreSearch, let cursor = searchCursor else { return }
+        let generation = searchGeneration
+        let query = searchQuery
+        isLoadingMoreSearch = true
+        errorMessage = nil
+        do {
+            let page = try await api.tracks(query: query, cursor: cursor)
+            guard generation == searchGeneration else { return }
+            let loadedIDs = Set(searchResults.map(\.id))
+            searchResults.append(contentsOf: page.items.filter { !loadedIDs.contains($0.id) })
+            searchCursor = page.nextCursor
+            isLoadingMoreSearch = false
+        } catch {
+            guard generation == searchGeneration else { return }
+            isLoadingMoreSearch = false
             errorMessage = error.localizedDescription
         }
     }
@@ -138,18 +227,13 @@ final class PersonalStore: ObservableObject {
         }
     }
 
-    func recordPlayback(trackID: String) async {
-        do {
-            try await api.recordPlayback(trackID: trackID)
-            history.insert(
-                HistoryItem(trackID: trackID, playedAt: Int64(Date().timeIntervalSince1970 * 1_000)),
-                at: 0
-            )
-            if history.count > 100 {
-                history.removeLast(history.count - 100)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
+    func notePlayback(trackID: String) {
+        history.insert(
+            HistoryItem(trackID: trackID, playedAt: Int64(Date().timeIntervalSince1970 * 1_000)),
+            at: 0
+        )
+        if history.count > 100 {
+            history.removeLast(history.count - 100)
         }
     }
 

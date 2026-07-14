@@ -19,44 +19,56 @@ struct LibraryView: View {
                         description: Text("在设置中扫描服务器音乐目录")
                     )
                 } else {
-                    List(library.tracks) { track in
-                        TrackRow(
-                            track: track,
-                            showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                            isFavorite: personal.favoriteIDs.contains(track.id)
-                        )
-                        .onTapGesture {
-                            player.play(
+                    List {
+                        ForEach(library.tracks) { track in
+                            TrackRow(
                                 track: track,
-                                queue: library.tracks,
-                                offlineURLProvider: offline.localURL(for:)
+                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                isFavorite: personal.favoriteIDs.contains(track.id)
                             )
-                        }
-                        .contextMenu {
-                            Button {
-                                Task { await personal.toggleFavorite(trackID: track.id) }
-                            } label: {
-                                Label(
-                                    personal.favoriteIDs.contains(track.id) ? "取消收藏" : "收藏",
-                                    systemImage: personal.favoriteIDs.contains(track.id) ? "heart.slash" : "heart"
+                            .onTapGesture {
+                                player.play(
+                                    track: track,
+                                    queue: library.tracks,
+                                    offlineURLProvider: offline.localURL(for:)
                                 )
                             }
-                            if personal.playlists.isEmpty {
-                                Text("请先创建歌单")
-                            } else {
-                                Menu("添加到歌单", systemImage: "text.badge.plus") {
-                                    ForEach(personal.playlists) { playlist in
-                                        Button(playlist.name) {
-                                            Task {
-                                                await personal.setTrack(
-                                                    track.id,
-                                                    in: playlist.id,
-                                                    isIncluded: true
-                                                )
+                            .task {
+                                await library.loadNextPageIfNeeded(currentTrack: track)
+                            }
+                            .contextMenu {
+                                Button {
+                                    Task { await personal.toggleFavorite(trackID: track.id) }
+                                } label: {
+                                    Label(
+                                        personal.favoriteIDs.contains(track.id) ? "取消收藏" : "收藏",
+                                        systemImage: personal.favoriteIDs.contains(track.id) ? "heart.slash" : "heart"
+                                    )
+                                }
+                                if personal.playlists.isEmpty {
+                                    Text("请先创建歌单")
+                                } else {
+                                    Menu("添加到歌单", systemImage: "text.badge.plus") {
+                                        ForEach(personal.playlists) { playlist in
+                                            Button(playlist.name) {
+                                                Task {
+                                                    await personal.setTrack(
+                                                        track.id,
+                                                        in: playlist.id,
+                                                        isIncluded: true
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
+                            }
+                        }
+                        if library.isLoadingMore {
+                            HStack {
+                                Spacer()
+                                ProgressView("载入更多…")
+                                Spacer()
                             }
                         }
                     }

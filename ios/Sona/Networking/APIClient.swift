@@ -69,15 +69,16 @@ final class APIClient {
         try await request(path: "/api/v1/users")
     }
 
-    func createUser(username: String, password: String) async throws -> ManagedUser {
+    func createUser(username: String, password: String, role: UserRole) async throws -> ManagedUser {
         struct Body: Encodable {
             let username: String
             let password: String
+            let role: UserRole
         }
         return try await request(
             path: "/api/v1/users",
             method: "POST",
-            body: try encoder.encode(Body(username: username, password: password))
+            body: try encoder.encode(Body(username: username, password: password, role: role))
         )
     }
 
@@ -146,6 +147,13 @@ final class APIClient {
         try await requestVoid(path: "/api/v1/me/history/\(trackID)", method: "POST")
     }
 
+    func recordPlaybackCompletion(trackID: String) async throws {
+        try await requestVoid(
+            path: "/api/v1/me/history/\(trackID)/complete",
+            method: "POST"
+        )
+    }
+
     func tracks(query: String, cursor: String?) async throws -> TrackPage {
         var components = URLComponents(url: url(for: "/api/v1/tracks"), resolvingAgainstBaseURL: false)!
         var queryItems = [URLQueryItem(name: "limit", value: "50")]
@@ -156,6 +164,15 @@ final class APIClient {
             queryItems.append(URLQueryItem(name: "cursor", value: cursor))
         }
         components.queryItems = queryItems
+        return try await request(url: components.url!)
+    }
+
+    func randomTracks(limit: Int = 50) async throws -> [Track] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/tracks/random"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
         return try await request(url: components.url!)
     }
 

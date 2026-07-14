@@ -205,6 +205,11 @@ struct MusicLibraryView: View {
                     libraryRow(collection)
                 }
                 .buttonStyle(.plain)
+                .task {
+                    guard selectedFilter != .playlists,
+                          collection.id == collections.last?.id else { return }
+                    await library.loadNextPage()
+                }
                 .contextMenu {
                     if selectedFilter == .playlists {
                         Button("删除歌单", systemImage: "trash", role: .destructive) {
@@ -212,6 +217,11 @@ struct MusicLibraryView: View {
                         }
                     }
                 }
+            }
+
+            if selectedFilter != .playlists, library.isLoadingMore {
+                ProgressView("载入更多…")
+                    .padding(.vertical, 18)
             }
 
             if collections.isEmpty && !(selectedFilter == .playlists && query.isEmpty) {
@@ -274,6 +284,7 @@ private struct ManagedPlaylistDetailView: View {
                             player.play(
                                 track: track,
                                 queue: tracks,
+                                prioritizedQueueTitle: playlist?.name ?? "歌单",
                                 offlineURLProvider: offline.localURL(for:)
                             )
                         } label: {

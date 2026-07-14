@@ -147,12 +147,14 @@ private struct AccountSecurityView: View {
 }
 
 private struct UserManagementView: View {
+    @EnvironmentObject private var session: SessionStore
     @State private var users: [ManagedUser] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showsCreate = false
     @State private var newUsername = ""
     @State private var newPassword = ""
+    @State private var newRole: UserRole = .user
     @State private var resetUser: ManagedUser?
     @State private var resetPassword = ""
     @State private var deleteUser: ManagedUser?
@@ -166,7 +168,7 @@ private struct UserManagementView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(user.username).fontWeight(.semibold)
-                            Text(user.role == .admin ? "管理员" : "普通用户")
+                            Text(user.role.title)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -176,7 +178,7 @@ private struct UserManagementView: View {
                             .foregroundStyle(user.enabled ? Color.sonaGreen : .secondary)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if user.role != .admin {
+                        if canManage(user) {
                             Button(user.enabled ? "停用" : "启用") {
                                 Task { await setEnabled(user, enabled: !user.enabled) }
                             }
@@ -187,7 +189,7 @@ private struct UserManagementView: View {
                         }
                     }
                     .contextMenu {
-                        if user.role != .admin {
+                        if canManage(user) {
                             Button("重置密码", systemImage: "key") {
                                 resetPassword = ""
                                 resetUser = user
@@ -205,19 +207,48 @@ private struct UserManagementView: View {
             Button("新建用户", systemImage: "person.badge.plus") {
                 newUsername = ""
                 newPassword = ""
+                newRole = .user
                 showsCreate = true
             }
         }
         .refreshable { await loadUsers() }
         .task { await loadUsers() }
-        .alert("新建用户", isPresented: $showsCreate) {
-            TextField("用户名", text: $newUsername)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            SecureField("密码（至少 8 位）", text: $newPassword)
-            Button("取消", role: .cancel) { }
-            Button("创建") { Task { await createUser() } }
-                .disabled(newUsername.count < 2 || newPassword.count < 8)
+        .sheet(isPresented: $showsCreate) {
+            NavigationStack {
+                Form {
+                    Section("账号") {
+                        TextField("用户名", text: $newUsername)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        SecureField("密码（至少 8 位）", text: $newPassword)
+                    }
+                    Section("角色") {
+                        Picker("用户角色", selection: $newRole) {
+                            ForEach(UserRole.allCases) { role in
+                                Text(role.title).tag(role)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    if let errorMessage {
+                        Section {
+                            Text(errorMessage).foregroundStyle(.red)
+                        }
+                    }
+                }
+                .navigationTitle("新建用户")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { showsCreate = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("创建") { Task { await createUser() } }
+                            .disabled(newUsername.count < 2 || newPassword.count < 8)
+                    }
+                }
+            }
+            .presentationDetents([.medium])
         }
         .alert("重置密码", isPresented: resetAlertBinding) {
             SecureField("新密码（至少 8 位）", text: $resetPassword)
@@ -255,6 +286,10 @@ private struct UserManagementView: View {
         )
     }
 
+    private func canManage(_ user: ManagedUser) -> Bool {
+        user.id != session.currentUser?.id
+    }
+
     private var deleteDialogBinding: Binding<Bool> {
         Binding(
             get: { deleteUser != nil },
@@ -277,8 +312,10 @@ private struct UserManagementView: View {
         do {
             users.append(try await APIClient.shared.createUser(
                 username: newUsername.trimmingCharacters(in: .whitespacesAndNewlines),
-                password: newPassword
+                password: newPassword,
+                role: newRole
             ))
+            showsCreate = false
         } catch {
             errorMessage = error.localizedDescription
         }

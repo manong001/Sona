@@ -115,6 +115,12 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/history/{trackId}/complete")
+    ResponseEntity<Void> recordPlaybackCompletion(@PathVariable String trackId) {
+        repository.recordPlaybackCompletion(trackId);
+        return ResponseEntity.noContent().build();
+    }
+
     private void requireOwnedPlaylist(String userId, String playlistId) {
         if (!repository.ownsPlaylist(userId, playlistId)) {
             throw new ResponseStatusException(NOT_FOUND, "Playlist not found");

@@ -65,6 +65,20 @@ class UserSystemApiIntegrationTest {
     }
 
     @Test
+    void adminChoosesRoleWhenCreatingUser() throws Exception {
+        var adminCookie = login("admin", "test-password");
+        var created = sendJson("POST", "/api/v1/users", adminCookie, """
+            {"username":"role-admin","password":"role-admin-password","role":"ADMIN"}
+            """);
+
+        assertThat(created.statusCode()).isEqualTo(201);
+        assertThat(created.body()).contains("\"role\":\"ADMIN\"");
+
+        var createdAdminCookie = login("role-admin", "role-admin-password");
+        assertThat(get("/api/v1/users", createdAdminCookie).statusCode()).isEqualTo(200);
+    }
+
+    @Test
     void favoritesPlaylistsAndHistoryAreIsolatedPerUser() throws Exception {
         var adminCookie = login("admin", "test-password");
         createUser(adminCookie, "alice");

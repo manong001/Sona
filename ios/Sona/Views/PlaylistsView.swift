@@ -114,6 +114,7 @@ private struct PlaylistDetailView: View {
                         player.play(
                             track: track,
                             queue: tracks,
+                            prioritizedQueueTitle: playlist?.name ?? "歌单",
                             offlineURLProvider: offline.localURL(for:)
                         )
                     }
@@ -165,6 +166,7 @@ struct PersonalView: View {
                                 player.play(
                                     track: track,
                                     queue: favoriteTracks,
+                                    prioritizedQueueTitle: "收藏的歌曲",
                                     offlineURLProvider: offline.localURL(for:)
                                 )
                             }

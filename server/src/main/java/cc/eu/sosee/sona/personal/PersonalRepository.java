@@ -154,6 +154,13 @@ class PersonalRepository {
             .param("playedAt", clock.millis())
             .update();
         jdbcClient.sql("""
+                INSERT INTO track_play_stats(track_id, play_count, completion_count)
+                VALUES (:trackId, 1, 0)
+                ON CONFLICT(track_id) DO UPDATE SET play_count = play_count + 1
+                """)
+            .param("trackId", trackId)
+            .update();
+        jdbcClient.sql("""
                 DELETE FROM play_history
                 WHERE user_id = :userId
                   AND id NOT IN (
@@ -164,6 +171,16 @@ class PersonalRepository {
                   )
                 """)
             .param("userId", userId)
+            .update();
+    }
+
+    void recordPlaybackCompletion(String trackId) {
+        jdbcClient.sql("""
+                UPDATE track_play_stats
+                SET completion_count = MIN(play_count, completion_count + 1)
+                WHERE track_id = :trackId
+                """)
+            .param("trackId", trackId)
             .update();
     }
 

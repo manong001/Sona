@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.library;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 interface TrackStore {
@@ -12,5 +13,6 @@ interface TrackStore {
     void save(TrackRecord track);
 
     TrackPageData findPage(String query, String cursor, int limit);
-}
 
+    List<TrackRecord> findRandom(int limit);
+}

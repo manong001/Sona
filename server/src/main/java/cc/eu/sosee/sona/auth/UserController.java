@@ -54,7 +54,7 @@ class UserController {
         var account = userRepository.create(
             request.username(),
             passwordEncoder.encode(request.password()),
-            UserRole.USER
+            request.role() == null ? UserRole.USER : request.role()
         );
         return ResponseEntity.created(URI.create("/api/v1/users/" + account.id()))
             .body(ManagedUserResponse.from(account));
@@ -111,7 +111,8 @@ class UserController {
     record CreateUserRequest(
         @NotBlank @Size(min = 2, max = 32)
         @Pattern(regexp = "^[^\\s/]+$") String username,
-        @NotBlank @Size(min = 8, max = 64) String password
+        @NotBlank @Size(min = 8, max = 64) String password,
+        UserRole role
     ) {
     }
 

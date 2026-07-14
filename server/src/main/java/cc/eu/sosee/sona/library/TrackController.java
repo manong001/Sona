@@ -65,6 +65,12 @@ class TrackController {
         );
     }
 
+    @GetMapping("/random")
+    List<TrackResponse> random(@RequestParam(defaultValue = "50") int limit) {
+        var safeLimit = Math.max(1, Math.min(limit, 100));
+        return trackStore.findRandom(safeLimit).stream().map(TrackResponse::from).toList();
+    }
+
     @GetMapping("/{id}")
     TrackResponse get(@PathVariable String id) {
         return TrackResponse.from(findTrack(id));
