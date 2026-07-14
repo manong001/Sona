@@ -16,7 +16,21 @@ struct HomeView: View {
     }
 
     private var favoriteTracks: [Track] {
-        library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+        if !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty {
+            return personal.favoriteTracks
+        }
+        return library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+    }
+
+    private var likedSongsCollection: SonaCollection {
+        SonaCollection(
+            id: "liked-songs",
+            title: "收藏的歌曲",
+            subtitle: "歌单 · \(username)",
+            artworkURL: favoriteTracks.first?.artworkURL,
+            tracks: favoriteTracks,
+            shape: .square
+        )
     }
 
     private var playlistCollections: [SonaCollection] {
@@ -70,14 +84,7 @@ struct HomeView: View {
     private var shortcuts: [SonaCollection] {
         var values: [SonaCollection] = []
         if !favoriteTracks.isEmpty {
-            values.append(SonaCollection(
-                id: "liked-songs",
-                title: "收藏的歌曲",
-                subtitle: "歌单 · \(username)",
-                artworkURL: favoriteTracks.first?.artworkURL,
-                tracks: favoriteTracks,
-                shape: .square
-            ))
+            values.append(likedSongsCollection)
         }
         values.append(contentsOf: playlistCollections.prefix(3))
         values.append(contentsOf: recentCollections.prefix(max(0, 6 - values.count)))
@@ -104,7 +111,11 @@ struct HomeView: View {
                         } else {
                             shortcutGrid
                             mediaSection(title: "最近播放", collections: recentCollections)
-                            mediaSection(title: "收藏的歌曲", collections: favoriteCollections)
+                            mediaSection(
+                                title: "收藏的歌曲",
+                                collections: favoriteCollections,
+                                titleDestination: likedSongsCollection
+                            )
                             mediaSection(title: "你的歌单", collections: playlistCollections)
                             mediaSection(title: "浏览专辑", collections: albums)
                             mediaSection(title: "常听艺人", collections: artists)
@@ -173,11 +184,31 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func mediaSection(title: String, collections: [SonaCollection]) -> some View {
+    private func mediaSection(
+        title: String,
+        collections: [SonaCollection],
+        titleDestination: SonaCollection? = nil
+    ) -> some View {
         if !collections.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
-                SonaSectionHeader(title: title)
+                if let titleDestination {
+                    NavigationLink {
+                        SonaTrackListView(collection: titleDestination)
+                    } label: {
+                        HStack {
+                            SonaSectionHeader(title: title)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     .padding(.horizontal, 16)
+                } else {
+                    SonaSectionHeader(title: title)
+                        .padding(.horizontal, 16)
+                }
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(alignment: .top, spacing: 16) {
                         ForEach(collections) { collection in

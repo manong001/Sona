@@ -108,6 +108,19 @@ final class APIClient {
         try await request(path: "/api/v1/me/favorites")
     }
 
+    func favoriteTracks(cursor: String?) async throws -> TrackPage {
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/favorites/tracks"),
+            resolvingAgainstBaseURL: false
+        )!
+        var queryItems = [URLQueryItem(name: "limit", value: "50")]
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        components.queryItems = queryItems
+        return try await request(url: components.url!)
+    }
+
     func setFavorite(trackID: String, isFavorite: Bool) async throws {
         try await requestVoid(
             path: "/api/v1/me/favorites/\(trackID)",

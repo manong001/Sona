@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -15,9 +16,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @RestController
@@ -33,6 +36,23 @@ class PersonalController {
     @GetMapping("/favorites")
     FavoriteResponse favorites(@AuthenticationPrincipal AuthenticatedUser user) {
         return new FavoriteResponse(repository.favoriteTrackIds(user.id()));
+    }
+
+    @GetMapping("/favorites/tracks")
+    FavoriteTrackPageResponse favoriteTracks(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam(required = false) String cursor,
+        @RequestParam(defaultValue = "50") int limit
+    ) {
+        var safeLimit = Math.max(1, Math.min(limit, 100));
+        var offset = parseOffset(cursor);
+        var items = new ArrayList<>(repository.favoriteTracks(user.id(), offset, safeLimit + 1));
+        String nextCursor = null;
+        if (items.size() > safeLimit) {
+            items.remove(items.size() - 1);
+            nextCursor = String.valueOf(offset + safeLimit);
+        }
+        return new FavoriteTrackPageResponse(items, nextCursor);
     }
 
     @PutMapping("/favorites/{trackId}")
@@ -127,7 +147,24 @@ class PersonalController {
         }
     }
 
+    private int parseOffset(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(cursor));
+        } catch (NumberFormatException exception) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid favorites cursor");
+        }
+    }
+
     record FavoriteResponse(List<String> trackIds) {
+    }
+
+    record FavoriteTrackPageResponse(
+        List<PersonalRepository.FavoriteTrackData> items,
+        String nextCursor
+    ) {
     }
 
     record HistoryResponse(List<PersonalRepository.HistoryData> items) {

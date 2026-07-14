@@ -145,12 +145,15 @@ final class LibraryStore: ObservableObject {
 @MainActor
 final class PersonalStore: ObservableObject {
     @Published private(set) var favoriteIDs: Set<String> = []
+    @Published private(set) var favoriteTracks: [Track] = []
+    @Published private(set) var isLoadingMoreFavorites = false
     @Published private(set) var playlists: [Playlist] = []
     @Published private(set) var history: [HistoryItem] = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
     private let api: APIClient
+    private var favoriteNextCursor: String?
 
     init(api: APIClient = .shared) {
         self.api = api
@@ -163,6 +166,9 @@ final class PersonalStore: ObservableObject {
         defer { isLoading = false }
         do {
             favoriteIDs = Set(try await api.favorites().trackIDs)
+            let favoritePage = try await api.favoriteTracks(cursor: nil)
+            favoriteTracks = favoritePage.items
+            favoriteNextCursor = favoritePage.nextCursor
             playlists = try await api.playlists()
             history = try await api.history().items
         } catch {
@@ -178,10 +184,39 @@ final class PersonalStore: ObservableObject {
                 favoriteIDs.insert(trackID)
             } else {
                 favoriteIDs.remove(trackID)
+                favoriteTracks.removeAll { $0.id == trackID }
             }
+            favoriteIDs = Set(try await api.favorites().trackIDs)
+            let favoritePage = try await api.favoriteTracks(cursor: nil)
+            favoriteTracks = favoritePage.items
+            favoriteNextCursor = favoritePage.nextCursor
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func loadNextFavoritePageIfNeeded(currentTrack: Track) async {
+        guard let index = favoriteTracks.firstIndex(where: { $0.id == currentTrack.id }) else { return }
+        let threshold = max(favoriteTracks.count - 10, 0)
+        guard index >= threshold else { return }
+        await loadNextFavoritePage()
+    }
+
+    func loadAllFavoriteTracks() async -> [Track] {
+        guard !isLoadingMoreFavorites else { return favoriteTracks }
+        isLoadingMoreFavorites = true
+        defer { isLoadingMoreFavorites = false }
+        while let cursor = favoriteNextCursor {
+            do {
+                let page = try await api.favoriteTracks(cursor: cursor)
+                appendFavoriteTracks(page.items)
+                favoriteNextCursor = page.nextCursor
+            } catch {
+                errorMessage = error.localizedDescription
+                break
+            }
+        }
+        return favoriteTracks
     }
 
     func createPlaylist(name: String) async {
@@ -239,8 +274,29 @@ final class PersonalStore: ObservableObject {
 
     func reset() {
         favoriteIDs = []
+        favoriteTracks = []
+        favoriteNextCursor = nil
+        isLoadingMoreFavorites = false
         playlists = []
         history = []
         errorMessage = nil
+    }
+
+    private func loadNextFavoritePage() async {
+        guard !isLoadingMoreFavorites, let cursor = favoriteNextCursor else { return }
+        isLoadingMoreFavorites = true
+        defer { isLoadingMoreFavorites = false }
+        do {
+            let page = try await api.favoriteTracks(cursor: cursor)
+            appendFavoriteTracks(page.items)
+            favoriteNextCursor = page.nextCursor
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func appendFavoriteTracks(_ tracks: [Track]) {
+        let loadedIDs = Set(favoriteTracks.map(\.id))
+        favoriteTracks.append(contentsOf: tracks.filter { !loadedIDs.contains($0.id) })
     }
 }

@@ -1,5 +1,8 @@
 package cc.eu.sosee.sona.personal;
 
+import java.nio.file.Path;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
@@ -22,10 +25,26 @@ class PersonalRepository {
                 SELECT track_id
                 FROM favorites
                 WHERE user_id = :userId
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, track_id
                 """)
             .param("userId", userId)
             .query(String.class)
+            .list();
+    }
+
+    List<FavoriteTrackData> favoriteTracks(String userId, int offset, int limit) {
+        return jdbcClient.sql("""
+                SELECT tracks.*
+                FROM favorites
+                JOIN tracks ON tracks.id = favorites.track_id
+                WHERE favorites.user_id = :userId
+                ORDER BY favorites.created_at DESC, favorites.track_id
+                LIMIT :limit OFFSET :offset
+                """)
+            .param("userId", userId)
+            .param("limit", limit)
+            .param("offset", offset)
+            .query(PersonalRepository::favoriteTrack)
             .list();
     }
 
@@ -196,9 +215,59 @@ class PersonalRepository {
             .list();
     }
 
+    private static FavoriteTrackData favoriteTrack(ResultSet resultSet, int rowNumber)
+        throws SQLException {
+        var id = resultSet.getString("id");
+        return new FavoriteTrackData(
+            id,
+            resultSet.getString("title"),
+            resultSet.getString("artist"),
+            resultSet.getString("album"),
+            integer(resultSet, "track_number"),
+            resultSet.getLong("duration_ms"),
+            resultSet.getString("codec"),
+            extension(resultSet.getString("path")),
+            integer(resultSet, "sample_rate"),
+            integer(resultSet, "bit_depth"),
+            resultSet.getString("artwork_path") == null ? null : "/api/v1/tracks/" + id + "/artwork",
+            "/api/v1/tracks/" + id + "/stream",
+            resultSet.getString("plain_lyrics") != null || resultSet.getString("synced_lyrics") != null,
+            resultSet.getString("metadata_status")
+        );
+    }
+
+    private static Integer integer(ResultSet resultSet, String column) throws SQLException {
+        var value = resultSet.getInt(column);
+        return resultSet.wasNull() ? null : value;
+    }
+
+    private static String extension(String path) {
+        var filename = Path.of(path).getFileName().toString();
+        var separator = filename.lastIndexOf('.');
+        return separator < 0 ? "" : filename.substring(separator + 1).toLowerCase();
+    }
+
     record PlaylistData(String id, String name, List<String> trackIds, long createdAt) {
     }
 
     record HistoryData(String trackId, long playedAt) {
+    }
+
+    record FavoriteTrackData(
+        String id,
+        String title,
+        String artist,
+        String album,
+        Integer trackNumber,
+        long durationMs,
+        String codec,
+        String fileExtension,
+        Integer sampleRate,
+        Integer bitDepth,
+        String artworkURL,
+        String streamURL,
+        boolean hasLyrics,
+        String metadataStatus
+    ) {
     }
 }

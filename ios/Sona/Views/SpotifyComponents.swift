@@ -193,10 +193,19 @@ struct SonaTrackListView: View {
     }
 
     private var tracks: [Track] {
-        loadsMoreFromLibrary ? library.tracks : collection.tracks
+        if collection.id == "liked-songs" {
+            if !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty {
+                return personal.favoriteTracks
+            }
+            return library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+        }
+        return loadsMoreFromLibrary ? library.tracks : collection.tracks
     }
 
     private var queue: [Track] {
+        if collection.id == "liked-songs" {
+            return tracks
+        }
         guard let playbackQueue, !playbackQueue.isEmpty else { return tracks }
         return playbackQueue
     }
@@ -232,26 +241,58 @@ struct SonaTrackListView: View {
                                 .foregroundStyle(Color.sonaSecondaryText)
                         }
                         HStack {
-                            Text("\(tracks.count) 首歌曲")
+                            Text("\(collection.id == "liked-songs" ? personal.favoriteIDs.count : tracks.count) 首歌曲")
                                 .font(.caption)
                                 .foregroundStyle(Color.sonaSecondaryText)
                             Spacer()
                             Button {
-                                guard let first = tracks.first else { return }
-                                player.play(
-                                    track: first,
-                                    queue: queue,
-                                    prioritizedQueueTitle: prioritizedQueueTitle,
-                                    offlineURLProvider: offline.localURL(for:)
-                                )
+                                if collection.id == "liked-songs" {
+                                    Task {
+                                        let allTracks = await personal.loadAllFavoriteTracks()
+                                        guard let first = allTracks.first else { return }
+                                        player.play(
+                                            track: first,
+                                            queue: allTracks,
+                                            prioritizedQueueTitle: prioritizedQueueTitle,
+                                            offlineURLProvider: offline.localURL(for:)
+                                        )
+                                    }
+                                } else {
+                                    guard let first = tracks.first else { return }
+                                    player.play(
+                                        track: first,
+                                        queue: queue,
+                                        prioritizedQueueTitle: prioritizedQueueTitle,
+                                        offlineURLProvider: offline.localURL(for:)
+                                    )
+                                }
                             } label: {
-                                Image(systemName: "play.fill")
-                                    .font(.title2)
-                                    .foregroundStyle(.black)
-                                    .frame(width: 56, height: 56)
-                                    .background(Color.sonaGreen, in: Circle())
+                                if collection.id == "liked-songs" {
+                                    if personal.isLoadingMoreFavorites {
+                                        ProgressView()
+                                            .tint(.black)
+                                            .frame(width: 48, height: 48)
+                                            .background(Color.sonaGreen, in: Circle())
+                                    } else {
+                                        Label("播放全部", systemImage: "play.fill")
+                                            .font(.subheadline.bold())
+                                            .foregroundStyle(.black)
+                                            .padding(.horizontal, 18)
+                                            .frame(height: 48)
+                                            .background(Color.sonaGreen, in: Capsule())
+                                    }
+                                } else {
+                                    Image(systemName: "play.fill")
+                                        .font(.title2)
+                                        .foregroundStyle(.black)
+                                        .frame(width: 56, height: 56)
+                                        .background(Color.sonaGreen, in: Circle())
+                                }
                             }
-                            .disabled(tracks.isEmpty)
+                            .disabled(
+                                tracks.isEmpty ||
+                                (collection.id == "liked-songs" && personal.isLoadingMoreFavorites)
+                            )
                         }
                     }
                     .padding(.horizontal, 20)
@@ -276,12 +317,18 @@ struct SonaTrackListView: View {
                         }
                         .buttonStyle(.plain)
                         .task {
-                            guard loadsMoreFromLibrary else { return }
-                            await library.loadNextPageIfNeeded(currentTrack: track)
+                            if collection.id == "liked-songs" {
+                                await personal.loadNextFavoritePageIfNeeded(currentTrack: track)
+                            } else if loadsMoreFromLibrary {
+                                await library.loadNextPageIfNeeded(currentTrack: track)
+                            }
                         }
                     }
 
-                    if loadsMoreFromLibrary && library.isLoadingMore {
+                    if collection.id == "liked-songs" && personal.isLoadingMoreFavorites {
+                        ProgressView("载入更多…")
+                            .padding(.vertical, 18)
+                    } else if loadsMoreFromLibrary && library.isLoadingMore {
                         ProgressView("载入更多…")
                             .padding(.vertical, 18)
                     }

@@ -145,7 +145,10 @@ struct PersonalView: View {
     @EnvironmentObject private var personal: PersonalStore
 
     private var favoriteTracks: [Track] {
-        library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+        if !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty {
+            return personal.favoriteTracks
+        }
+        return library.tracks.filter { personal.favoriteIDs.contains($0.id) }
     }
 
     var body: some View {

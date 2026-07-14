@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var personal: PersonalStore
     @AppStorage("miniPlayerSide") private var anchoredSide = "right"
     @AppStorage("miniPlayerY") private var storedY = 0.0
     @GestureState private var dragTranslation: CGSize = .zero
@@ -20,22 +21,43 @@ struct MiniPlayerView: View {
                 let preferredY = storedY > 0 ? CGFloat(storedY) : bounds.maxY
                 let baseY = clamped(preferredY, from: bounds.minY, to: bounds.maxY)
 
-                ZStack(alignment: .bottomTrailing) {
+                ZStack(alignment: .bottom) {
                     Button(action: open) {
                         cdArtwork(for: track)
                     }
                     .buttonStyle(.plain)
 
-                    Button("播放列表", systemImage: "list.bullet") {
-                        showsQueue = true
+                    HStack {
+                        Button(
+                            personal.favoriteIDs.contains(track.id) ? "取消收藏" : "收藏",
+                            systemImage: personal.favoriteIDs.contains(track.id) ? "heart.fill" : "heart"
+                        ) {
+                            Task { await personal.toggleFavorite(trackID: track.id) }
+                        }
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(
+                            personal.favoriteIDs.contains(track.id) ? Color.sonaGreen : .white
+                        )
+                        .frame(width: 29, height: 29)
+                        .background(.black.opacity(0.9), in: Circle())
+                        .overlay(Circle().stroke(Color.sonaGreen, lineWidth: 2))
+                        .buttonStyle(.plain)
+
+                        Spacer()
+
+                        Button("播放列表", systemImage: "list.bullet") {
+                            showsQueue = true
+                        }
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 29, height: 29)
+                        .background(.black.opacity(0.9), in: Circle())
+                        .overlay(Circle().stroke(Color.sonaGreen, lineWidth: 2))
+                        .buttonStyle(.plain)
                     }
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 29, height: 29)
-                    .background(.black.opacity(0.9), in: Circle())
-                    .overlay(Circle().stroke(Color.sonaGreen, lineWidth: 2))
-                    .buttonStyle(.plain)
+                    .frame(width: diameter)
                 }
                     .frame(width: diameter, height: diameter)
                     .contentShape(Circle())

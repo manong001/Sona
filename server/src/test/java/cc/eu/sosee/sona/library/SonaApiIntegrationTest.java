@@ -212,6 +212,77 @@ class SonaApiIntegrationTest {
         assertThat(stats).containsExactly(2, 1);
     }
 
+    @Test
+    void returnsFavoriteTrackDetailsNewestFirst() throws Exception {
+        saveTrack("favorite-older", "Older Favorite");
+        saveTrack("favorite-newer", "Newer Favorite");
+        var userId = jdbcClient.sql("SELECT id FROM users WHERE username = 'admin'")
+            .query(String.class)
+            .single();
+        jdbcClient.sql("""
+                INSERT OR REPLACE INTO favorites(user_id, track_id, created_at)
+                VALUES (:userId, :trackId, :createdAt)
+                """)
+            .param("userId", userId)
+            .param("trackId", "favorite-older")
+            .param("createdAt", 100)
+            .update();
+        jdbcClient.sql("""
+                INSERT OR REPLACE INTO favorites(user_id, track_id, created_at)
+                VALUES (:userId, :trackId, :createdAt)
+                """)
+            .param("userId", userId)
+            .param("trackId", "favorite-newer")
+            .param("createdAt", 200)
+            .update();
+        var login = login("test-password");
+        var cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+        var response = send(HttpRequest.newBuilder(uri("/api/v1/me/favorites/tracks?limit=1"))
+            .header("Cookie", cookie)
+            .GET()
+            .build());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"items\":[");
+        assertThat(response.body()).contains("\"id\":\"favorite-newer\"", "\"nextCursor\":\"1\"");
+        assertThat(response.body()).doesNotContain("\"id\":\"favorite-older\"");
+
+        var nextPage = send(HttpRequest.newBuilder(uri("/api/v1/me/favorites/tracks?limit=1&cursor=1"))
+            .header("Cookie", cookie)
+            .GET()
+            .build());
+        assertThat(nextPage.statusCode()).isEqualTo(200);
+        assertThat(nextPage.body()).contains("\"id\":\"favorite-older\"");
+    }
+
+    private void saveTrack(String id, String title) {
+        var now = System.currentTimeMillis();
+        trackStore.save(new TrackRecord(
+            id,
+            MUSIC_DIRECTORY.resolve(id + ".mp3"),
+            1,
+            now,
+            title,
+            title.toLowerCase(),
+            "Sona",
+            "Favorites",
+            1,
+            1_000,
+            "MP3",
+            44_100,
+            16,
+            null,
+            null,
+            null,
+            null,
+            "LOCAL",
+            false,
+            now,
+            now
+        ));
+    }
+
     private HttpResponse<String> login(String password) throws Exception {
         var request = HttpRequest.newBuilder(uri("/api/v1/auth/login"))
             .header("Content-Type", "application/json")

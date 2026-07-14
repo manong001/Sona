@@ -49,7 +49,9 @@ struct SearchView: View {
                 id: "favorites",
                 title: "收藏歌曲",
                 color: Color(red: 0.55, green: 0.38, blue: 0.70),
-                tracks: library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+                tracks: personal.favoriteTracks.isEmpty && !personal.favoriteIDs.isEmpty
+                    ? library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+                    : personal.favoriteTracks
             ),
             Category(
                 id: "albums",
@@ -279,7 +281,7 @@ struct SearchView: View {
 
     private func collection(for category: Category) -> SonaCollection {
         SonaCollection(
-            id: "category-\(category.id)",
+            id: category.id == "favorites" ? "liked-songs" : "category-\(category.id)",
             title: category.title,
             subtitle: "Sona · \(category.tracks.count) 首歌曲",
             artworkURL: category.tracks.first?.artworkURL,

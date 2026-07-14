@@ -181,6 +181,28 @@ paths:
       responses:
         "204":
           description: 已取消收藏
+  /me/favorites/tracks:
+    get:
+      operationId: favoriteTracks
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: 按收藏时间倒序返回当前用户的收藏歌曲
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackPage"
   /me/playlists:
     get:
       operationId: listPlaylists
