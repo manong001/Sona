@@ -27,3 +27,6 @@ replay_pid*
 .env
 .env.*
 !.env.example
+
+# Local Xcode build artifacts
+ios/build/
