@@ -1,0 +1,283 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		200000000000000000000001 /* SonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000001 /* SonaApp.swift */; };
+		200000000000000000000002 /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000002 /* Track.swift */; };
+		200000000000000000000003 /* Playlist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000003 /* Playlist.swift */; };
+		200000000000000000000004 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000004 /* APIClient.swift */; };
+		200000000000000000000005 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000005 /* SessionStore.swift */; };
+		200000000000000000000006 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000006 /* LibraryStore.swift */; };
+		200000000000000000000007 /* OfflineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000007 /* OfflineStore.swift */; };
+		200000000000000000000008 /* PlayerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000008 /* PlayerStore.swift */; };
+		200000000000000000000009 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000009 /* RootView.swift */; };
+		20000000000000000000000A /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000A /* LoginView.swift */; };
+		20000000000000000000000B /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000B /* MainTabView.swift */; };
+		20000000000000000000000C /* ArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000C /* ArtworkView.swift */; };
+		20000000000000000000000D /* TrackRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000D /* TrackRow.swift */; };
+		20000000000000000000000E /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000E /* LibraryView.swift */; };
+		20000000000000000000000F /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000F /* MiniPlayerView.swift */; };
+		200000000000000000000010 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000010 /* NowPlayingView.swift */; };
+		200000000000000000000011 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000011 /* LyricsView.swift */; };
+		200000000000000000000012 /* PlaylistsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000012 /* PlaylistsView.swift */; };
+		200000000000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* SettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		100000000000000000000001 /* SonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/App/SonaApp.swift; sourceTree = "<group>"; };
+		100000000000000000000002 /* Track.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/Track.swift; sourceTree = "<group>"; };
+		100000000000000000000003 /* Playlist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/Playlist.swift; sourceTree = "<group>"; };
+		100000000000000000000004 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Networking/APIClient.swift; sourceTree = "<group>"; };
+		100000000000000000000005 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/SessionStore.swift; sourceTree = "<group>"; };
+		100000000000000000000006 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/LibraryStore.swift; sourceTree = "<group>"; };
+		100000000000000000000007 /* OfflineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/OfflineStore.swift; sourceTree = "<group>"; };
+		100000000000000000000008 /* PlayerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/PlayerStore.swift; sourceTree = "<group>"; };
+		100000000000000000000009 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/RootView.swift; sourceTree = "<group>"; };
+		10000000000000000000000A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/LoginView.swift; sourceTree = "<group>"; };
+		10000000000000000000000B /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/MainTabView.swift; sourceTree = "<group>"; };
+		10000000000000000000000C /* ArtworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/ArtworkView.swift; sourceTree = "<group>"; };
+		10000000000000000000000D /* TrackRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/TrackRow.swift; sourceTree = "<group>"; };
+		10000000000000000000000E /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/LibraryView.swift; sourceTree = "<group>"; };
+		10000000000000000000000F /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/MiniPlayerView.swift; sourceTree = "<group>"; };
+		100000000000000000000010 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/NowPlayingView.swift; sourceTree = "<group>"; };
+		100000000000000000000011 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/LyricsView.swift; sourceTree = "<group>"; };
+		100000000000000000000012 /* PlaylistsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/PlaylistsView.swift; sourceTree = "<group>"; };
+		100000000000000000000013 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/SettingsView.swift; sourceTree = "<group>"; };
+		900000000000000000000001 /* Sona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sona.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		500000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		300000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000001 /* SonaApp.swift */,
+				100000000000000000000002 /* Track.swift */,
+				100000000000000000000003 /* Playlist.swift */,
+				100000000000000000000004 /* APIClient.swift */,
+				100000000000000000000005 /* SessionStore.swift */,
+				100000000000000000000006 /* LibraryStore.swift */,
+				100000000000000000000007 /* OfflineStore.swift */,
+				100000000000000000000008 /* PlayerStore.swift */,
+				100000000000000000000009 /* RootView.swift */,
+				10000000000000000000000A /* LoginView.swift */,
+				10000000000000000000000B /* MainTabView.swift */,
+				10000000000000000000000C /* ArtworkView.swift */,
+				10000000000000000000000D /* TrackRow.swift */,
+				10000000000000000000000E /* LibraryView.swift */,
+				10000000000000000000000F /* MiniPlayerView.swift */,
+				100000000000000000000010 /* NowPlayingView.swift */,
+				100000000000000000000011 /* LyricsView.swift */,
+				100000000000000000000012 /* PlaylistsView.swift */,
+				100000000000000000000013 /* SettingsView.swift */,
+				300000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		300000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				900000000000000000000001 /* Sona.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		400000000000000000000001 /* Sona */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 700000000000000000000002 /* Build configuration list for PBXNativeTarget "Sona" */;
+			buildPhases = (
+				500000000000000000000001 /* Sources */,
+				500000000000000000000002 /* Frameworks */,
+				500000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Sona;
+			productName = Sona;
+			productReference = 900000000000000000000001 /* Sona.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		800000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					400000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = 700000000000000000000001 /* Build configuration list for PBXProject "Sona" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				zh-Hans,
+			);
+			mainGroup = 300000000000000000000001;
+			productRefGroup = 300000000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				400000000000000000000001 /* Sona */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		500000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		500000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				200000000000000000000001 /* SonaApp.swift in Sources */,
+				200000000000000000000002 /* Track.swift in Sources */,
+				200000000000000000000003 /* Playlist.swift in Sources */,
+				200000000000000000000004 /* APIClient.swift in Sources */,
+				200000000000000000000005 /* SessionStore.swift in Sources */,
+				200000000000000000000006 /* LibraryStore.swift in Sources */,
+				200000000000000000000007 /* OfflineStore.swift in Sources */,
+				200000000000000000000008 /* PlayerStore.swift in Sources */,
+				200000000000000000000009 /* RootView.swift in Sources */,
+				20000000000000000000000A /* LoginView.swift in Sources */,
+				20000000000000000000000B /* MainTabView.swift in Sources */,
+				20000000000000000000000C /* ArtworkView.swift in Sources */,
+				20000000000000000000000D /* TrackRow.swift in Sources */,
+				20000000000000000000000E /* LibraryView.swift in Sources */,
+				20000000000000000000000F /* MiniPlayerView.swift in Sources */,
+				200000000000000000000010 /* NowPlayingView.swift in Sources */,
+				200000000000000000000011 /* LyricsView.swift in Sources */,
+				200000000000000000000012 /* PlaylistsView.swift in Sources */,
+				200000000000000000000013 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		600000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		600000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		600000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sona/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		600000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sona/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		700000000000000000000001 /* Build configuration list for PBXProject "Sona" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				600000000000000000000001 /* Debug */,
+				600000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		700000000000000000000002 /* Build configuration list for PBXNativeTarget "Sona" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				600000000000000000000003 /* Debug */,
+				600000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 800000000000000000000001 /* Project object */;
+}

@@ -1,0 +1,22 @@
+services:
+  sona-server:
+    build:
+      context: ./server
+    container_name: sona-server
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      SONA_PORT: 6699
+      SONA_MUSIC_DIR: /music
+      SONA_DATA_DIR: /data
+      SONA_PUBLIC_URL: ${SONA_PUBLIC_URL:-http://sosee.eu.cc:6699}
+      SONA_ADMIN_USERNAME: ${SONA_ADMIN_USERNAME:-admin}
+      SONA_ADMIN_PASSWORD: ${SONA_ADMIN_PASSWORD:?请在 .env 设置 SONA_ADMIN_PASSWORD}
+      SONA_SCAN_ON_STARTUP: ${SONA_SCAN_ON_STARTUP:-true}
+      SONA_SCRAPING_ENABLED: ${SONA_SCRAPING_ENABLED:-true}
+      SONA_SECURE_COOKIE: "false"
+    ports:
+      - "${SONA_PORT:-6699}:6699"
+    volumes:
+      - "${SONA_MUSIC_HOST_DIR:-/vol4/1000/media/download/音乐}:/music:ro"
+      - "${SONA_DATA_HOST_DIR:-/vol4/1000/docker/sona}:/data"

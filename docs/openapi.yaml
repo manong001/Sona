@@ -1,0 +1,307 @@
+openapi: 3.1.0
+info:
+  title: Sona API
+  version: 0.1.0
+servers:
+  - url: http://sosee.eu.cc:6699/api/v1
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: UP
+  /auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功并设置 SONA_SESSION Cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204":
+          description: 已退出登录
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/me:
+    get:
+      operationId: currentUser
+      responses:
+        "200":
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /tracks:
+    get:
+      operationId: listTracks
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: 曲目列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /tracks/{trackId}:
+    get:
+      operationId: getTrack
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "200":
+          description: 曲目详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Track"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /tracks/{trackId}/stream:
+    get:
+      operationId: streamTrack
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+        - name: Range
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 完整音频
+          content:
+            audio/*:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+        "206":
+          description: 音频字节范围
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /tracks/{trackId}/lyrics:
+    get:
+      operationId: getLyrics
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "200":
+          description: 歌词
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lyrics"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /tracks/{trackId}/artwork:
+    get:
+      operationId: getArtwork
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "200":
+          description: 封面图片
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /library/scan:
+    post:
+      operationId: startScan
+      responses:
+        "202":
+          description: 扫描已开始
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanStatus"
+  /library/scan/status:
+    get:
+      operationId: scanStatus
+      responses:
+        "200":
+          description: 当前扫描状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanStatus"
+components:
+  parameters:
+    TrackId:
+      name: trackId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthorized:
+      description: 未登录或会话失效
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: 资源不存在
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+    User:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+    Track:
+      type: object
+      required: [id, title, artist, album, durationMs, codec, fileExtension, streamURL, hasLyrics, metadataStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        trackNumber:
+          type: integer
+        durationMs:
+          type: integer
+          format: int64
+        codec:
+          type: string
+        fileExtension:
+          type: string
+        sampleRate:
+          type: integer
+        bitDepth:
+          type: integer
+        artworkURL:
+          type: string
+          format: uri-reference
+        streamURL:
+          type: string
+          format: uri-reference
+        hasLyrics:
+          type: boolean
+        metadataStatus:
+          type: string
+          enum: [LOCAL, SCRAPED, NEEDS_REVIEW]
+    TrackPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Track"
+        nextCursor:
+          type: [string, "null"]
+    Lyrics:
+      type: object
+      properties:
+        plain:
+          type: [string, "null"]
+        synced:
+          type: [string, "null"]
+        source:
+          type: [string, "null"]
+    ScanStatus:
+      type: object
+      required: [state, discovered, imported, updated, skipped, failed]
+      properties:
+        state:
+          type: string
+          enum: [IDLE, RUNNING, COMPLETED, FAILED]
+        discovered:
+          type: integer
+        imported:
+          type: integer
+        updated:
+          type: integer
+        skipped:
+          type: integer
+        failed:
+          type: integer
+        message:
+          type: [string, "null"]
+    Problem:
+      type: object
+      required: [status, title]
+      properties:
+        status:
+          type: integer
+        title:
+          type: string
+        detail:
+          type: string

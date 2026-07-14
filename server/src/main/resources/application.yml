@@ -1,0 +1,25 @@
+server:
+  port: ${SONA_PORT:6699}
+  shutdown: graceful
+
+spring:
+  application:
+    name: sona-server
+  sql:
+    init:
+      mode: always
+  threads:
+    virtual:
+      enabled: false
+
+sona:
+  music-dir: ${SONA_MUSIC_DIR:./music}
+  data-dir: ${SONA_DATA_DIR:./data}
+  public-url: ${SONA_PUBLIC_URL:http://localhost:6699}
+  scan-on-startup: ${SONA_SCAN_ON_STARTUP:true}
+  scraping-enabled: ${SONA_SCRAPING_ENABLED:true}
+  auth:
+    bootstrap-username: ${SONA_ADMIN_USERNAME:admin}
+    bootstrap-password: ${SONA_ADMIN_PASSWORD:}
+    session-days: ${SONA_SESSION_DAYS:30}
+    secure-cookie: ${SONA_SECURE_COOKIE:false}
