@@ -20,16 +20,29 @@ class SchemaMigration implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments arguments) {
-        Set<String> columns = jdbcClient.sql("PRAGMA table_info(users)")
-            .query((resultSet, rowNumber) -> resultSet.getString("name"))
-            .list()
-            .stream()
-            .collect(Collectors.toSet());
+        Set<String> columns = columns("users");
         if (!columns.contains("role")) {
             jdbcClient.sql("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'USER'").update();
         }
         if (!columns.contains("enabled")) {
             jdbcClient.sql("ALTER TABLE users ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1").update();
         }
+        var trackColumns = columns("tracks");
+        if (!trackColumns.contains("pool_type")) {
+            jdbcClient.sql("ALTER TABLE tracks ADD COLUMN pool_type TEXT NOT NULL DEFAULT 'NORMAL'").update();
+        }
+        var statColumns = columns("track_play_stats");
+        if (!statColumns.contains("completion_percent_sum")) {
+            jdbcClient.sql("ALTER TABLE track_play_stats ADD COLUMN completion_percent_sum REAL NOT NULL DEFAULT 0").update();
+            jdbcClient.sql("UPDATE track_play_stats SET completion_percent_sum = completion_count * 100.0").update();
+        }
+    }
+
+    private Set<String> columns(String table) {
+        return jdbcClient.sql("PRAGMA table_info(" + table + ")")
+            .query((resultSet, rowNumber) -> resultSet.getString("name"))
+            .list()
+            .stream()
+            .collect(Collectors.toSet());
     }
 }

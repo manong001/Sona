@@ -54,6 +54,37 @@ CREATE TABLE IF NOT EXISTS play_history (
 
 CREATE INDEX IF NOT EXISTS idx_play_history_user ON play_history(user_id, played_at DESC);
 
+CREATE TABLE IF NOT EXISTS playback_records (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    listened_ms INTEGER NOT NULL,
+    progress_percent REAL NOT NULL,
+    played_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_playback_records_track ON playback_records(track_id, played_at DESC);
+CREATE INDEX IF NOT EXISTS idx_playback_records_user ON playback_records(user_id, played_at DESC);
+
+CREATE TABLE IF NOT EXISTS hidden_tracks (
+    user_id TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, track_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS playback_state (
+    user_id TEXT PRIMARY KEY,
+    queue_type TEXT NOT NULL,
+    queue_context_id TEXT,
+    track_id TEXT NOT NULL,
+    progress_ms INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS tracks (
     id TEXT PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
@@ -73,6 +104,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     synced_lyrics TEXT,
     lyrics_source TEXT,
     metadata_status TEXT NOT NULL,
+    pool_type TEXT NOT NULL DEFAULT 'PENDING',
     manual_edited INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -85,7 +117,8 @@ CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 CREATE TABLE IF NOT EXISTS track_play_stats (
     track_id TEXT PRIMARY KEY,
     play_count INTEGER NOT NULL DEFAULT 0,
-    completion_count INTEGER NOT NULL DEFAULT 0
+    completion_count INTEGER NOT NULL DEFAULT 0,
+    completion_percent_sum REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS download_tasks (

@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 class UserRepository {
@@ -85,7 +86,15 @@ class UserRepository {
             .update() == 1;
     }
 
+    @Transactional
     boolean delete(String id) {
+        jdbcClient.sql("DELETE FROM playback_state WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM hidden_tracks WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM playback_records WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM play_history WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM favorites WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM playlists WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM sessions WHERE user_id = :id").param("id", id).update();
         return jdbcClient.sql("DELETE FROM users WHERE id = :id")
             .param("id", id)
             .update() == 1;

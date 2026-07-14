@@ -54,6 +54,14 @@ struct ScanStatus: Decodable {
     let message: String?
 }
 
+struct PlaybackState: Decodable {
+    let queueType: String
+    let queueContextId: String?
+    let trackId: String
+    let progressMs: Int64
+    let updatedAt: Int64
+}
+
 enum UserRole: String, Codable, CaseIterable, Identifiable {
     case admin = "ADMIN"
     case user = "USER"

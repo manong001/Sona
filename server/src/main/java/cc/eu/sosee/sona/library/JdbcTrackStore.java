@@ -97,11 +97,18 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
-    public TrackPageData findPage(String query, String cursor, int limit) {
+    public TrackPageData findPage(String query, String cursor, int limit, String userId) {
         var normalizedQuery = query == null ? "" : query.strip();
         var decodedCursor = cursor == null || cursor.isBlank() ? null : cursorCodec.decode(cursor);
 
-        var sql = new StringBuilder("SELECT * FROM tracks WHERE 1 = 1");
+        var sql = new StringBuilder("""
+            SELECT tracks.* FROM tracks
+            WHERE tracks.pool_type = 'NORMAL'
+              AND NOT EXISTS (
+                SELECT 1 FROM hidden_tracks
+                WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+              )
+            """);
         if (!normalizedQuery.isBlank()) {
             sql.append(" AND (title LIKE :query OR artist LIKE :query OR album LIKE :query)");
         }
@@ -110,7 +117,7 @@ class JdbcTrackStore implements TrackStore {
         }
         sql.append(" ORDER BY normalized_title, id LIMIT :limit");
 
-        var statement = jdbcClient.sql(sql.toString()).param("limit", limit + 1);
+        var statement = jdbcClient.sql(sql.toString()).param("limit", limit + 1).param("userId", userId);
         if (!normalizedQuery.isBlank()) {
             statement = statement.param("query", "%" + normalizedQuery + "%");
         }
@@ -131,21 +138,44 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
-    public List<TrackRecord> findRandom(int limit) {
+    public List<TrackRecord> findRandom(int limit, String userId) {
         return jdbcClient.sql("""
                 SELECT tracks.*
                 FROM tracks
                 LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
-                ORDER BY ABS(RANDOM() % 1000000) * (
-                    1.0 + 4.0 * CASE
+                WHERE tracks.pool_type = 'NORMAL'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                ORDER BY (ABS(RANDOM() % 1000000) / 1000000.0) / (
+                    0.15 + 0.85 * CASE
                         WHEN COALESCE(stats.play_count, 0) > 0
-                        THEN MIN(stats.completion_count, stats.play_count) * 1.0 / stats.play_count
-                        ELSE 0
+                        THEN MIN(100.0, stats.completion_percent_sum / stats.play_count) / 100.0
+                        ELSE 0.65
                     END
-                ) DESC
+                ) ASC
                 LIMIT :limit
                 """)
             .param("limit", limit)
+            .param("userId", userId)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
+    @Override
+    public List<TrackRecord> findDiscovery(int limit, String userId) {
+        return jdbcClient.sql("""
+                SELECT tracks.* FROM tracks
+                WHERE tracks.pool_type = 'DISCOVERY'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                ORDER BY RANDOM() LIMIT :limit
+                """)
+            .param("limit", limit)
+            .param("userId", userId)
             .query(ROW_MAPPER)
             .list();
     }

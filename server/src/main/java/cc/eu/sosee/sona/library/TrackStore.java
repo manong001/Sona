@@ -12,7 +12,9 @@ interface TrackStore {
 
     void save(TrackRecord track);
 
-    TrackPageData findPage(String query, String cursor, int limit);
+    TrackPageData findPage(String query, String cursor, int limit, String userId);
 
-    List<TrackRecord> findRandom(int limit);
+    List<TrackRecord> findRandom(int limit, String userId);
+
+    List<TrackRecord> findDiscovery(int limit, String userId);
 }

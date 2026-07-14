@@ -36,6 +36,8 @@ final class PlayerStore: ObservableObject {
     @Published private(set) var queueTitle = "随机播放"
     @Published private(set) var isLoadingQueue = false
     @Published private(set) var queueErrorMessage: String?
+    @Published private(set) var queueType = "RANDOM"
+    @Published private(set) var queueContextID: String?
 
     private let player = AVPlayer()
     private var activeAPI = APIClient.shared
@@ -45,6 +47,8 @@ final class PlayerStore: ObservableObject {
     private var artworkTask: Task<Void, Never>?
     private var randomQueueTask: Task<Void, Never>?
     private var nowPlayingArtwork: MPMediaItemArtwork?
+    private var listenedSeconds: Double = 0
+    private var hasRestoredState = false
 
     init() {
         configureAudioSession()
@@ -87,10 +91,14 @@ final class PlayerStore: ObservableObject {
         if let prioritizedQueueTitle {
             playbackQueue = prioritizedQueue(queue, startingWith: track)
             queueTitle = prioritizedQueueTitle
+            queueType = prioritizedQueueTitle == "发现" ? "DISCOVERY" : "PLAYLIST"
+            queueContextID = prioritizedQueueTitle
             isLoadingQueue = false
         } else {
             playbackQueue = [track]
             queueTitle = "随机播放"
+            queueType = "RANDOM"
+            queueContextID = nil
         }
 
         if currentTrack?.id == track.id {
@@ -105,6 +113,7 @@ final class PlayerStore: ObservableObject {
     }
 
     private func startPlayback(_ track: Track) {
+        submitCurrentPlayback()
         let item: AVPlayerItem
         if let offlineURL = offlineURLProvider?(track) {
             item = AVPlayerItem(url: offlineURL)
@@ -121,7 +130,7 @@ final class PlayerStore: ObservableObject {
         currentTrack = track
         elapsed = 0
         duration = Double(track.durationMs) / 1_000
-        recordPlaybackStart(track.id)
+        listenedSeconds = 0
         player.play()
         isPlaying = true
         loadNowPlayingArtwork(for: track)
@@ -154,6 +163,7 @@ final class PlayerStore: ObservableObject {
     }
 
     func stop() {
+        submitCurrentPlayback()
         player.pause()
         player.replaceCurrentItem(with: nil)
         artworkTask?.cancel()
@@ -163,6 +173,7 @@ final class PlayerStore: ObservableObject {
         isLoadingQueue = false
         queueErrorMessage = nil
         currentTrack = nil
+        listenedSeconds = 0
         elapsed = 0
         duration = 0
         isPlaying = false
@@ -212,6 +223,9 @@ final class PlayerStore: ObservableObject {
         ) { [weak self] time in
             Task { @MainActor in
                 self?.elapsed = max(0, time.seconds.isFinite ? time.seconds : 0)
+                if self?.isPlaying == true {
+                    self?.listenedSeconds += 0.5
+                }
             }
         }
     }
@@ -226,10 +240,7 @@ final class PlayerStore: ObservableObject {
                 guard let self,
                       let endedItem = notification.object as? AVPlayerItem,
                       endedItem === self.player.currentItem else { return }
-                if let trackID = self.currentTrack?.id {
-                    let api = self.activeAPI
-                    Task { try? await api.recordPlaybackCompletion(trackID: trackID) }
-                }
+                self.submitCurrentPlayback(forceProgress: 100)
                 self.advance(by: 1, automatic: true)
             }
         }
@@ -244,9 +255,8 @@ final class PlayerStore: ObservableObject {
         guard let index = currentIndex else { return }
 
         if automatic && playbackMode == .repeatOne {
-            if let trackID = currentTrack?.id {
-                recordPlaybackStart(trackID)
-            }
+            submitCurrentPlayback(forceProgress: 100)
+            listenedSeconds = 0
             seek(to: 0)
             resume()
             return
@@ -323,6 +333,8 @@ final class PlayerStore: ObservableObject {
                 }
                 self.playbackQueue = randomTracks
                 self.queueTitle = "随机播放"
+                self.queueType = "RANDOM"
+                self.queueContextID = nil
                 self.isLoadingQueue = false
                 guard let first = randomTracks.first else {
                     self.queueErrorMessage = "曲库中没有可播放的歌曲"
@@ -337,9 +349,55 @@ final class PlayerStore: ObservableObject {
         }
     }
 
-    private func recordPlaybackStart(_ trackID: String) {
+    private func submitCurrentPlayback(forceProgress: Double? = nil) {
+        guard let trackID = currentTrack?.id else { return }
+        let listenedMs = Int64(max(0, listenedSeconds) * 1_000)
+        listenedSeconds = 0
+        let progress = forceProgress ?? (duration > 0 ? min(100, elapsed / duration * 100) : 0)
         let api = activeAPI
-        Task { try? await api.recordPlayback(trackID: trackID) }
+        Task {
+            try? await api.recordPlayback(
+                trackID: trackID,
+                listenedMs: listenedMs,
+                progressPercent: progress
+            )
+        }
+    }
+
+    func saveState() {
+        guard let currentTrack else { return }
+        let api = activeAPI
+        let type = queueType
+        let context = queueContextID
+        let progress = Int64(max(0, elapsed) * 1_000)
+        Task {
+            try? await api.savePlaybackState(
+                queueType: type,
+                queueContextID: context,
+                trackID: currentTrack.id,
+                progressMs: progress
+            )
+        }
+    }
+
+    func restoreStateIfNeeded(offlineURLProvider: @escaping (Track) -> URL?) async {
+        guard !hasRestoredState, currentTrack == nil else { return }
+        hasRestoredState = true
+        do {
+            guard let state = try await activeAPI.playbackState() else { return }
+            let track = try await activeAPI.track(id: state.trackId)
+            self.offlineURLProvider = offlineURLProvider
+            queueType = state.queueType
+            queueContextID = state.queueContextId
+            queueTitle = state.queueType == "DISCOVERY" ? "发现" : (state.queueContextId ?? "随机播放")
+            playbackQueue = [track]
+            startPlayback(track)
+            seek(to: Double(state.progressMs) / 1_000)
+            pause()
+            if state.queueType == "RANDOM" { loadRandomQueue(keeping: track) }
+        } catch {
+            queueErrorMessage = error.localizedDescription
+        }
     }
 
     private func configureRemoteCommands() {

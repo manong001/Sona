@@ -4,6 +4,8 @@ struct MainTabView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var personal: PersonalStore
+    @EnvironmentObject private var offline: OfflineStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
     @State private var selectedTab: SonaTab = .home
@@ -14,6 +16,9 @@ struct MainTabView: View {
                 tabContent(HomeView(openDrawer: openDrawer))
                     .tabItem { Label("首页", systemImage: "house.fill") }
                     .tag(SonaTab.home)
+                tabContent(DiscoveryView(openDrawer: openDrawer))
+                    .tabItem { Label("发现", systemImage: "sparkles") }
+                    .tag(SonaTab.discovery)
                 tabContent(SearchView(openDrawer: openDrawer))
                     .tabItem { Label("搜索", systemImage: "magnifyingglass") }
                     .tag(SonaTab.search)
@@ -66,14 +71,14 @@ struct MainTabView: View {
                 await library.refresh()
             }
             await personal.refresh()
+            await player.restoreStateIfNeeded { offline.localURL(for: $0) }
         }
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }
             personal.notePlayback(trackID: newValue)
         }
-        .onDisappear {
-            personal.reset()
-            player.stop()
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { player.saveState() }
         }
     }
 
@@ -87,5 +92,79 @@ struct MainTabView: View {
 
     private func closeDrawer() {
         showsDrawer = false
+    }
+}
+
+private struct DiscoveryView: View {
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
+    let openDrawer: () -> Void
+    @State private var tracks: [Track] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && tracks.isEmpty {
+                    ProgressView("正在挑选新歌…")
+                } else if tracks.isEmpty {
+                    ContentUnavailableView(
+                        "暂无发现歌曲",
+                        systemImage: "sparkles",
+                        description: Text(errorMessage ?? "管理员将歌曲划入发现池后会显示在这里。")
+                    )
+                } else {
+                    List(tracks) { track in
+                        Button {
+                            player.play(
+                                track: track,
+                                queue: tracks,
+                                prioritizedQueueTitle: "发现",
+                                offlineURLProvider: { offline.localURL(for: $0) }
+                            )
+                        } label: {
+                            TrackRow(track: track, isFavorite: personal.favoriteIDs.contains(track.id))
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.sonaBackground)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .background(Color.sonaBackground)
+            .navigationTitle("发现")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: openDrawer) { Image(systemName: "person.crop.circle") }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("试听十首", systemImage: "play.fill") {
+                        guard let first = tracks.first else { return }
+                        player.play(
+                            track: first,
+                            queue: tracks,
+                            prioritizedQueueTitle: "发现",
+                            offlineURLProvider: { offline.localURL(for: $0) }
+                        )
+                    }
+                    .disabled(tracks.isEmpty)
+                }
+            }
+            .task { await load() }
+            .refreshable { await load() }
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            tracks = try await APIClient.shared.discoveryTracks(limit: 10)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

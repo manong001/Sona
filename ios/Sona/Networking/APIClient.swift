@@ -156,14 +156,45 @@ final class APIClient {
         try await request(path: "/api/v1/me/history")
     }
 
-    func recordPlayback(trackID: String) async throws {
-        try await requestVoid(path: "/api/v1/me/history/\(trackID)", method: "POST")
+    func recordPlayback(trackID: String, listenedMs: Int64, progressPercent: Double) async throws {
+        struct Body: Encodable {
+            let listenedMs: Int64
+            let progressPercent: Double
+        }
+        try await requestVoid(
+            path: "/api/v1/me/history/\(trackID)",
+            method: "POST",
+            body: try encoder.encode(Body(listenedMs: listenedMs, progressPercent: progressPercent))
+        )
     }
 
-    func recordPlaybackCompletion(trackID: String) async throws {
+    func playbackState() async throws -> PlaybackState? {
+        var request = URLRequest(url: url(for: "/api/v1/me/playback-state"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 204 { return nil }
+        try validate(response: response, data: data)
+        return try decoder.decode(PlaybackState.self, from: data)
+    }
+
+    func savePlaybackState(
+        queueType: String, queueContextID: String?, trackID: String, progressMs: Int64
+    ) async throws {
+        struct Body: Encodable {
+            let queueType: String
+            let queueContextId: String?
+            let trackId: String
+            let progressMs: Int64
+        }
         try await requestVoid(
-            path: "/api/v1/me/history/\(trackID)/complete",
-            method: "POST"
+            path: "/api/v1/me/playback-state",
+            method: "PUT",
+            body: try encoder.encode(Body(
+                queueType: queueType,
+                queueContextId: queueContextID,
+                trackId: trackID,
+                progressMs: progressMs
+            ))
         )
     }
 
@@ -187,6 +218,19 @@ final class APIClient {
         )!
         components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
         return try await request(url: components.url!)
+    }
+
+    func discoveryTracks(limit: Int = 10) async throws -> [Track] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/tracks/discovery"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        return try await request(url: components.url!)
+    }
+
+    func track(id: String) async throws -> Track {
+        try await request(path: "/api/v1/tracks/\(id)")
     }
 
     func startScan() async throws -> ScanStatus {

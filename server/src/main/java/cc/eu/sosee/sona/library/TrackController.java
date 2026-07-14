@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.library;
 
+import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import cc.eu.sosee.sona.config.SonaProperties;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -11,6 +12,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -53,12 +55,13 @@ class TrackController {
 
     @GetMapping
     TrackPageResponse list(
+        @AuthenticationPrincipal AuthenticatedUser user,
         @RequestParam(required = false) String q,
         @RequestParam(required = false) String cursor,
         @RequestParam(defaultValue = "50") int limit
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 100));
-        var page = trackStore.findPage(q, cursor, safeLimit);
+        var page = trackStore.findPage(q, cursor, safeLimit, user.id());
         return new TrackPageResponse(
             page.items().stream().map(TrackResponse::from).toList(),
             page.nextCursor()
@@ -66,9 +69,21 @@ class TrackController {
     }
 
     @GetMapping("/random")
-    List<TrackResponse> random(@RequestParam(defaultValue = "50") int limit) {
+    List<TrackResponse> random(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam(defaultValue = "50") int limit
+    ) {
         var safeLimit = Math.max(1, Math.min(limit, 100));
-        return trackStore.findRandom(safeLimit).stream().map(TrackResponse::from).toList();
+        return trackStore.findRandom(safeLimit, user.id()).stream().map(TrackResponse::from).toList();
+    }
+
+    @GetMapping("/discovery")
+    List<TrackResponse> discovery(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam(defaultValue = "10") int limit
+    ) {
+        var safeLimit = Math.max(1, Math.min(limit, 50));
+        return trackStore.findDiscovery(safeLimit, user.id()).stream().map(TrackResponse::from).toList();
     }
 
     @GetMapping("/{id}")

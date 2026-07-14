@@ -129,15 +129,37 @@ class PersonalController {
     @PostMapping("/history/{trackId}")
     ResponseEntity<Void> recordPlayback(
         @AuthenticationPrincipal AuthenticatedUser user,
-        @PathVariable String trackId
+        @PathVariable String trackId,
+        @Valid @RequestBody PlaybackRecordRequest request
     ) {
-        repository.recordPlayback(user.id(), trackId);
+        repository.recordPlayback(user.id(), trackId, request.listenedMs(), request.progressPercent());
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/history/{trackId}/complete")
-    ResponseEntity<Void> recordPlaybackCompletion(@PathVariable String trackId) {
-        repository.recordPlaybackCompletion(trackId);
+    @DeleteMapping("/tracks/{trackId}")
+    ResponseEntity<Void> hideTrack(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String trackId
+    ) {
+        repository.hideTrack(user.id(), trackId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/playback-state")
+    ResponseEntity<PersonalRepository.PlaybackStateData> playbackState(
+        @AuthenticationPrincipal AuthenticatedUser user
+    ) {
+        return ResponseEntity.ofNullable(repository.playbackState(user.id()));
+    }
+
+    @PutMapping("/playback-state")
+    ResponseEntity<Void> savePlaybackState(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody PlaybackStateRequest request
+    ) {
+        repository.savePlaybackState(
+            user.id(), request.queueType(), request.queueContextId(), request.trackId(), request.progressMs()
+        );
         return ResponseEntity.noContent().build();
     }
 
@@ -171,5 +193,16 @@ class PersonalController {
     }
 
     record CreatePlaylistRequest(@NotBlank @Size(max = 80) String name) {
+    }
+
+    record PlaybackRecordRequest(long listenedMs, double progressPercent) {
+    }
+
+    record PlaybackStateRequest(
+        @NotBlank String queueType,
+        String queueContextId,
+        @NotBlank String trackId,
+        long progressMs
+    ) {
     }
 }

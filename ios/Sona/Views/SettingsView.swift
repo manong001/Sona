@@ -3,21 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
-    @AppStorage("serverURL") private var serverURL = APIClient.defaultServerURL
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("服务器") {
-                    TextField("Base URL", text: $serverURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    Label("当前连接使用明文 HTTP", systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                }
-
                 if session.currentUser?.isAdmin == true {
                     Section("曲库维护") {
                         NavigationLink {

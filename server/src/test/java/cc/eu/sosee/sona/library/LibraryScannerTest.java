@@ -127,13 +127,18 @@ class LibraryScannerTest {
         }
 
         @Override
-        public TrackPageData findPage(String query, String cursor, int limit) {
+        public TrackPageData findPage(String query, String cursor, int limit, String userId) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public java.util.List<TrackRecord> findRandom(int limit) {
+        public java.util.List<TrackRecord> findRandom(int limit, String userId) {
             return tracks.values().stream().limit(limit).toList();
+        }
+
+        @Override
+        public java.util.List<TrackRecord> findDiscovery(int limit, String userId) {
+            return java.util.List.of();
         }
     }
 }

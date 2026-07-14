@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 class PersonalRepository {
@@ -48,6 +49,7 @@ class PersonalRepository {
             .list();
     }
 
+    @Transactional
     void addFavorite(String userId, String trackId) {
         jdbcClient.sql("""
                 INSERT OR IGNORE INTO favorites(user_id, track_id, created_at)
@@ -56,6 +58,9 @@ class PersonalRepository {
             .param("userId", userId)
             .param("trackId", trackId)
             .param("createdAt", clock.millis())
+            .update();
+        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE id = :trackId")
+            .param("trackId", trackId)
             .update();
     }
 
@@ -162,7 +167,12 @@ class PersonalRepository {
             .list();
     }
 
-    void recordPlayback(String userId, String trackId) {
+    @Transactional
+    void recordPlayback(String userId, String trackId, long listenedMs, double progressPercent) {
+        if (listenedMs < 5_000) {
+            return;
+        }
+        var boundedProgress = Math.max(0, Math.min(progressPercent, 100));
         jdbcClient.sql("""
                 INSERT INTO play_history(id, user_id, track_id, played_at)
                 VALUES (:id, :userId, :trackId, :playedAt)
@@ -173,11 +183,29 @@ class PersonalRepository {
             .param("playedAt", clock.millis())
             .update();
         jdbcClient.sql("""
-                INSERT INTO track_play_stats(track_id, play_count, completion_count)
-                VALUES (:trackId, 1, 0)
-                ON CONFLICT(track_id) DO UPDATE SET play_count = play_count + 1
+                INSERT INTO playback_records(
+                    id, user_id, track_id, listened_ms, progress_percent, played_at
+                ) VALUES (:id, :userId, :trackId, :listenedMs, :progressPercent, :playedAt)
+                """)
+            .param("id", UUID.randomUUID().toString())
+            .param("userId", userId)
+            .param("trackId", trackId)
+            .param("listenedMs", listenedMs)
+            .param("progressPercent", boundedProgress)
+            .param("playedAt", clock.millis())
+            .update();
+        jdbcClient.sql("""
+                INSERT INTO track_play_stats(
+                    track_id, play_count, completion_count, completion_percent_sum
+                ) VALUES (:trackId, 1, :completed, :progressPercent)
+                ON CONFLICT(track_id) DO UPDATE SET
+                    play_count = play_count + 1,
+                    completion_count = completion_count + :completed,
+                    completion_percent_sum = completion_percent_sum + :progressPercent
                 """)
             .param("trackId", trackId)
+            .param("completed", boundedProgress >= 95 ? 1 : 0)
+            .param("progressPercent", boundedProgress)
             .update();
         jdbcClient.sql("""
                 DELETE FROM play_history
@@ -193,13 +221,54 @@ class PersonalRepository {
             .update();
     }
 
-    void recordPlaybackCompletion(String trackId) {
+    void hideTrack(String userId, String trackId) {
         jdbcClient.sql("""
-                UPDATE track_play_stats
-                SET completion_count = MIN(play_count, completion_count + 1)
-                WHERE track_id = :trackId
+                INSERT OR IGNORE INTO hidden_tracks(user_id, track_id, created_at)
+                VALUES (:userId, :trackId, :createdAt)
                 """)
+            .param("userId", userId)
             .param("trackId", trackId)
+            .param("createdAt", clock.millis())
+            .update();
+    }
+
+    PlaybackStateData playbackState(String userId) {
+        return jdbcClient.sql("""
+                SELECT queue_type, queue_context_id, track_id, progress_ms, updated_at
+                FROM playback_state WHERE user_id = :userId
+                """)
+            .param("userId", userId)
+            .query((resultSet, rowNumber) -> new PlaybackStateData(
+                resultSet.getString("queue_type"),
+                resultSet.getString("queue_context_id"),
+                resultSet.getString("track_id"),
+                resultSet.getLong("progress_ms"),
+                resultSet.getLong("updated_at")
+            ))
+            .optional()
+            .orElse(null);
+    }
+
+    void savePlaybackState(
+        String userId, String queueType, String queueContextId, String trackId, long progressMs
+    ) {
+        jdbcClient.sql("""
+                INSERT INTO playback_state(
+                    user_id, queue_type, queue_context_id, track_id, progress_ms, updated_at
+                ) VALUES (:userId, :queueType, :queueContextId, :trackId, :progressMs, :updatedAt)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    queue_type = excluded.queue_type,
+                    queue_context_id = excluded.queue_context_id,
+                    track_id = excluded.track_id,
+                    progress_ms = excluded.progress_ms,
+                    updated_at = excluded.updated_at
+                """)
+            .param("userId", userId)
+            .param("queueType", queueType)
+            .param("queueContextId", queueContextId)
+            .param("trackId", trackId)
+            .param("progressMs", Math.max(0, progressMs))
+            .param("updatedAt", clock.millis())
             .update();
     }
 
@@ -251,6 +320,11 @@ class PersonalRepository {
     }
 
     record HistoryData(String trackId, long playedAt) {
+    }
+
+    record PlaybackStateData(
+        String queueType, String queueContextId, String trackId, long progressMs, long updatedAt
+    ) {
     }
 
     record FavoriteTrackData(

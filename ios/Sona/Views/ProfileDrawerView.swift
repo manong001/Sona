@@ -2,6 +2,7 @@ import SwiftUI
 
 enum SonaTab: Hashable {
     case home
+    case discovery
     case search
     case library
     case settings
