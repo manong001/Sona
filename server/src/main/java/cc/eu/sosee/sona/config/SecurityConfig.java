@@ -24,12 +24,18 @@ class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(requests -> requests
-                .requestMatchers("/api/v1/health", "/api/v1/auth/login").permitAll()
+                .requestMatchers("/error", "/api/v1/health", "/api/v1/auth/login").permitAll()
+                .requestMatchers("/api/v1/users/**", "/api/v1/library/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
-            .exceptionHandling(errors -> errors.authenticationEntryPoint(
-                (request, response, exception) -> response.sendError(HttpServletResponse.SC_UNAUTHORIZED)
-            ))
+            .exceptionHandling(errors -> errors
+                .authenticationEntryPoint(
+                    (request, response, exception) -> response.setStatus(HttpServletResponse.SC_UNAUTHORIZED)
+                )
+                .accessDeniedHandler(
+                    (request, response, exception) -> response.setStatus(HttpServletResponse.SC_FORBIDDEN)
+                )
+            )
             .addFilterBefore(authenticationFilter, AnonymousAuthenticationFilter.class)
             .build();
     }

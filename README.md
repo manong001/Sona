@@ -10,12 +10,16 @@ Sona 是一个面向自建曲库的 SwiftUI 原生音乐播放器。
 
 ## 已实现
 
-- 账号密码登录，服务端保存密码哈希和不透明会话令牌。
+- 管理员创建用户、停用/删除账号和重置密码，服务端保存密码哈希和不透明会话令牌。
+- 管理员与普通用户权限隔离；歌单、收藏和播放历史按用户保存在服务端。
 - SQLite 曲库，游标分页和歌曲/艺人/专辑搜索。
 - MP3、M4A/AAC/ALAC、FLAC、WAV、AIFF 扫描与 HTTP Range 播放。
 - 本地标签、嵌入封面、嵌入歌词和同名 `.lrc` 优先；MusicBrainz、LRCLIB、Cover Art Archive 保守补全。
-- iOS 后台播放、锁屏控制、歌词、离线下载和本地歌单。
+- iOS 后台播放、锁屏控制、歌词、离线下载和服务端歌单。
+- Spotify 风格的首页、搜索、音乐库、个人抽屉、迷你播放器和全屏播放页。
 - App 内触发扫描和查看扫描状态，无服务端管理页面。
+
+界面规范与还原基准见 [`docs/SPOTIFY_UI_DESIGN.md`](docs/SPOTIFY_UI_DESIGN.md)。
 
 ## Docker 部署
 
@@ -24,6 +28,8 @@ cp .env.example .env
 # 编辑 .env，至少替换 SONA_ADMIN_PASSWORD
 docker compose up -d --build
 ```
+
+已有部署直接执行上述构建命令即可，服务启动时会自动升级现有 `sona.db`，不需要删除数据库。用户管理入口位于 App 的“设置 → 用户管理”。
 
 默认映射：
 

@@ -5,7 +5,7 @@ final class SessionStore: ObservableObject {
     enum State {
         case checking
         case signedOut
-        case signedIn(String)
+        case signedIn(UserResponse)
     }
 
     @Published private(set) var state: State = .checking
@@ -18,10 +18,15 @@ final class SessionStore: ObservableObject {
         self.api = api
     }
 
+    var currentUser: UserResponse? {
+        guard case let .signedIn(user) = state else { return nil }
+        return user
+    }
+
     func restore() async {
         do {
             let user = try await api.currentUser()
-            state = .signedIn(user.username)
+            state = .signedIn(user)
         } catch {
             state = .signedOut
         }
@@ -37,7 +42,7 @@ final class SessionStore: ObservableObject {
         defer { isSubmitting = false }
         do {
             let user = try await api.login(username: username, password: password)
-            state = .signedIn(user.username)
+            state = .signedIn(user)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -45,6 +50,32 @@ final class SessionStore: ObservableObject {
 
     func logout() async {
         try? await api.logout()
+        state = .signedOut
+    }
+
+    func changePassword(currentPassword: String, newPassword: String) async -> Bool {
+        guard !currentPassword.isEmpty, newPassword.count >= 8 else {
+            errorMessage = "新密码至少需要 8 个字符"
+            return false
+        }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            try await api.changePassword(
+                currentPassword: currentPassword,
+                newPassword: newPassword
+            )
+            state = .signedOut
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func logoutAll() async {
+        try? await api.logoutAll()
         state = .signedOut
     }
 }

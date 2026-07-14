@@ -54,6 +54,22 @@ struct ScanStatus: Decodable {
     let message: String?
 }
 
+enum UserRole: String, Decodable {
+    case admin = "ADMIN"
+    case user = "USER"
+}
+
 struct UserResponse: Decodable {
+    let id: String
     let username: String
+    let role: UserRole
+
+    var isAdmin: Bool { role == .admin }
+}
+
+struct ManagedUser: Decodable, Identifiable {
+    let id: String
+    let username: String
+    let role: UserRole
+    let enabled: Bool
 }

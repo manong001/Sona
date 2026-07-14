@@ -4,38 +4,76 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
     @State private var showsLyrics = false
 
     var body: some View {
-        NavigationStack {
+        GeometryReader { proxy in
             ZStack {
                 LinearGradient(
-                    colors: [.sonaSurface, .black],
+                    colors: [Color.sonaSurface.opacity(0.98), Color(red: 0.05, green: 0.05, blue: 0.05)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
                 .ignoresSafeArea()
 
                 if let track = player.currentTrack {
-                    VStack(spacing: 24) {
-                        Spacer(minLength: 10)
-                        ArtworkView(path: track.artworkURL, cornerRadius: 14)
-                            .aspectRatio(1, contentMode: .fit)
-                            .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(track.title)
-                                .font(.title2.bold())
-                                .lineLimit(1)
-                            Text("\(track.artist) · \(track.album)")
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                            Text(track.qualityText)
-                                .font(.caption)
-                                .foregroundStyle(Color.sonaGreen)
+                    VStack(spacing: 0) {
+                        HStack {
+                            Button("关闭", systemImage: "chevron.down") { dismiss() }
+                                .labelStyle(.iconOnly)
+                                .font(.title3.weight(.semibold))
+                                .frame(width: 44, height: 44)
+                            Spacer()
+                            VStack(spacing: 2) {
+                                Text("正在播放")
+                                    .font(.caption.bold())
+                                Text(track.album)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.sonaSecondaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "ellipsis")
+                                .font(.title3.weight(.semibold))
+                                .frame(width: 44, height: 44)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        VStack(spacing: 8) {
+                        Spacer(minLength: 8)
+
+                        ArtworkView(path: track.artworkURL, cornerRadius: 8)
+                            .frame(
+                                width: min(proxy.size.width - 56, proxy.size.height * 0.42),
+                                height: min(proxy.size.width - 56, proxy.size.height * 0.42)
+                            )
+                            .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
+
+                        Spacer(minLength: 22)
+
+                        HStack(spacing: 14) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(track.title)
+                                    .font(.title3.bold())
+                                    .lineLimit(1)
+                                Text("\(track.artist) · \(track.album)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.sonaSecondaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button {
+                                Task { await personal.toggleFavorite(trackID: track.id) }
+                            } label: {
+                                Image(systemName: personal.favoriteIDs.contains(track.id) ? "heart.fill" : "heart")
+                                    .font(.title2)
+                                    .foregroundStyle(
+                                        personal.favoriteIDs.contains(track.id) ? Color.sonaGreen : .white
+                                    )
+                                    .frame(width: 44, height: 44)
+                            }
+                        }
+
+                        VStack(spacing: 5) {
                             Slider(
                                 value: Binding(
                                     get: { player.elapsed },
@@ -43,60 +81,93 @@ struct NowPlayingView: View {
                                 ),
                                 in: 0...max(player.duration, 1)
                             )
+                            .tint(.white)
                             HStack {
                                 Text(time(player.elapsed))
                                 Spacer()
                                 Text("-" + time(max(0, player.duration - player.elapsed)))
                             }
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Color.sonaSecondaryText)
                         }
+                        .padding(.top, 12)
 
-                        HStack(spacing: 42) {
+                        HStack {
                             Button {
-                                toggleOffline(track)
+                                player.toggleShuffle()
                             } label: {
-                                Group {
-                                    if offline.activeDownloads.contains(track.id) {
-                                        ProgressView()
-                                    } else {
-                                        Image(systemName: offline.downloadedIDs.contains(track.id)
-                                            ? "arrow.down.circle.fill"
-                                            : "arrow.down.circle")
-                                    }
-                                }
-                                .font(.title2)
+                                Image(systemName: "shuffle")
+                                    .foregroundStyle(player.playbackMode == .shuffle ? Color.sonaGreen : .white)
                             }
+                            Spacer()
+                            Button("上一曲", systemImage: "backward.fill") { player.previous() }
+                                .labelStyle(.iconOnly)
+                                .font(.system(size: 27))
+                                .disabled(!player.canGoPrevious)
+                            Spacer()
                             Button {
                                 player.togglePlayback()
                             } label: {
-                                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                    .font(.system(size: 70))
+                                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.system(size: 28, weight: .bold))
+                                    .foregroundStyle(.black)
+                                    .frame(width: 68, height: 68)
+                                    .background(.white, in: Circle())
                             }
+                            .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
+                            Spacer()
+                            Button("下一曲", systemImage: "forward.fill") { player.next() }
+                                .labelStyle(.iconOnly)
+                                .font(.system(size: 27))
+                                .disabled(!player.canGoNext)
+                            Spacer()
                             Button {
-                                showsLyrics = true
+                                player.toggleRepeatOne()
                             } label: {
-                                Image(systemName: "quote.bubble")
-                                    .font(.title2)
+                                Image(systemName: "repeat.1")
+                                    .foregroundStyle(player.playbackMode == .repeatOne ? Color.sonaGreen : .white)
+                            }
+                        }
+                        .font(.title3)
+                        .frame(height: 88)
+
+                        HStack {
+                            Button {
+                                toggleOffline(track)
+                            } label: {
+                                if offline.activeDownloads.contains(track.id) {
+                                    ProgressView()
+                                } else {
+                                    Label(
+                                        offline.downloadedIDs.contains(track.id) ? "已离线" : "离线下载",
+                                        systemImage: offline.downloadedIDs.contains(track.id)
+                                            ? "arrow.down.circle.fill"
+                                            : "arrow.down.circle"
+                                    )
+                                }
+                            }
+                            Spacer()
+                            Text(track.qualityText)
+                                .foregroundStyle(Color.sonaGreen)
+                            Spacer()
+                            Button("歌词", systemImage: "quote.bubble") {
+                                showsLyrics = true
                             }
                             .disabled(!track.hasLyrics)
                         }
-                        Spacer(minLength: 8)
+                        .font(.caption.weight(.semibold))
+
+                        Spacer(minLength: 10)
                     }
+                    .buttonStyle(.plain)
                     .padding(.horizontal, 28)
+                    .padding(.bottom, 16)
                 }
             }
-            .navigationTitle("正在播放")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭", systemImage: "chevron.down") { dismiss() }
-                }
-            }
-            .sheet(isPresented: $showsLyrics) {
-                if let track = player.currentTrack {
-                    LyricsView(track: track)
-                }
+        }
+        .sheet(isPresented: $showsLyrics) {
+            if let track = player.currentTrack {
+                LyricsView(track: track)
             }
         }
     }

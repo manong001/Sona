@@ -3,6 +3,7 @@ import SwiftUI
 struct TrackRow: View {
     let track: Track
     var showsOfflineBadge = false
+    var isFavorite = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -17,6 +18,10 @@ struct TrackRow: View {
                         Image(systemName: "arrow.down.circle.fill")
                             .foregroundStyle(Color.sonaGreen)
                     }
+                    if isFavorite {
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(Color.sonaGreen)
+                    }
                     Text("\(track.artist) · \(track.album)")
                         .lineLimit(1)
                 }
@@ -24,9 +29,10 @@ struct TrackRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(track.durationText)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+            Image(systemName: "ellipsis")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Color.sonaSecondaryText)
+                .frame(width: 28)
         }
         .contentShape(Rectangle())
     }

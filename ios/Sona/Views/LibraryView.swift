@@ -1,11 +1,10 @@
-import SwiftData
 import SwiftUI
 
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
-    @Query(sort: \Playlist.createdAt) private var playlists: [Playlist]
+    @EnvironmentObject private var personal: PersonalStore
     @State private var query = ""
 
     var body: some View {
@@ -23,24 +22,42 @@ struct LibraryView: View {
                     List(library.tracks) { track in
                         TrackRow(
                             track: track,
-                            showsOfflineBadge: offline.downloadedIDs.contains(track.id)
+                            showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                            isFavorite: personal.favoriteIDs.contains(track.id)
                         )
                         .onTapGesture {
-                            player.play(track: track, offlineURL: offline.localURL(for: track))
+                            player.play(
+                                track: track,
+                                queue: library.tracks,
+                                offlineURLProvider: offline.localURL(for:)
+                            )
                         }
                         .contextMenu {
-                            if playlists.isEmpty {
+                            Button {
+                                Task { await personal.toggleFavorite(trackID: track.id) }
+                            } label: {
+                                Label(
+                                    personal.favoriteIDs.contains(track.id) ? "取消收藏" : "收藏",
+                                    systemImage: personal.favoriteIDs.contains(track.id) ? "heart.slash" : "heart"
+                                )
+                            }
+                            if personal.playlists.isEmpty {
                                 Text("请先创建歌单")
                             } else {
                                 Menu("添加到歌单", systemImage: "text.badge.plus") {
-                                    ForEach(playlists) { playlist in
-                                        Button(playlist.name) { playlist.add(trackID: track.id) }
+                                    ForEach(personal.playlists) { playlist in
+                                        Button(playlist.name) {
+                                            Task {
+                                                await personal.setTrack(
+                                                    track.id,
+                                                    in: playlist.id,
+                                                    isIncluded: true
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        .task {
-                            await library.loadNextPageIfNeeded(after: track)
                         }
                     }
                     .listStyle(.plain)
@@ -59,7 +76,7 @@ struct LibraryView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Text("\(library.tracks.count) 首")
+                    Text(library.isLoading ? "已载入 \(library.tracks.count) 首…" : "\(library.tracks.count) 首")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

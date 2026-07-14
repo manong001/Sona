@@ -7,9 +7,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.List;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -31,11 +32,11 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
         FilterChain filterChain
     ) throws ServletException, IOException {
         var rawToken = findCookie(request);
-        authService.authenticate(rawToken).ifPresent(username -> {
+        authService.authenticate(rawToken).ifPresent(user -> {
             var authentication = new UsernamePasswordAuthenticationToken(
-                username,
+                user,
                 null,
-                Collections.emptyList()
+                List.of(new SimpleGrantedAuthority("ROLE_" + user.role().name()))
             );
             SecurityContextHolder.getContext().setAuthentication(authentication);
         });

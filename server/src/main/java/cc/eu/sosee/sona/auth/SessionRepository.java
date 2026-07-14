@@ -28,17 +28,22 @@ class SessionRepository {
             .update();
     }
 
-    Optional<String> findActiveUsername(String tokenHash) {
+    Optional<AuthenticatedUser> findActiveUser(String tokenHash) {
         return jdbcClient.sql("""
-                SELECT users.username
+                SELECT users.id, users.username, users.role
                 FROM sessions
                 JOIN users ON users.id = sessions.user_id
                 WHERE sessions.token_hash = :tokenHash
                   AND sessions.expires_at > :now
+                  AND users.enabled = 1
                 """)
             .param("tokenHash", tokenHash)
             .param("now", clock.millis())
-            .query(String.class)
+            .query((resultSet, rowNumber) -> new AuthenticatedUser(
+                resultSet.getString("id"),
+                resultSet.getString("username"),
+                UserRole.valueOf(resultSet.getString("role"))
+            ))
             .optional();
     }
 
@@ -53,5 +58,10 @@ class SessionRepository {
             .param("now", clock.millis())
             .update();
     }
-}
 
+    void deleteForUser(String userId) {
+        jdbcClient.sql("DELETE FROM sessions WHERE user_id = :userId")
+            .param("userId", userId)
+            .update();
+    }
+}

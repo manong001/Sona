@@ -38,17 +38,18 @@ class AuthService {
         this.clock = clock;
     }
 
-    Optional<SessionToken> login(String username, String password) {
+    Optional<AuthSession> login(String username, String password) {
         return userRepository.findByUsername(username)
+            .filter(UserAccount::enabled)
             .filter(account -> passwordEncoder.matches(password, account.passwordHash()))
             .map(this::createSession);
     }
 
-    Optional<String> authenticate(String rawToken) {
+    Optional<AuthenticatedUser> authenticate(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             return Optional.empty();
         }
-        return sessionRepository.findActiveUsername(hash(rawToken));
+        return sessionRepository.findActiveUser(hash(rawToken));
     }
 
     void logout(String rawToken) {
@@ -63,18 +64,40 @@ class AuthService {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
             return;
         }
-        userRepository.findByUsername(username)
-            .orElseGet(() -> userRepository.create(username, passwordEncoder.encode(password)));
+        var account = userRepository.findByUsername(username)
+            .orElseGet(() -> userRepository.create(
+                username,
+                passwordEncoder.encode(password),
+                UserRole.ADMIN
+            ));
+        userRepository.makeAdmin(account.id());
         sessionRepository.deleteExpired();
     }
 
-    private SessionToken createSession(UserAccount account) {
+    boolean changePassword(AuthenticatedUser user, String currentPassword, String newPassword) {
+        var account = userRepository.findById(user.id()).orElse(null);
+        if (account == null || !passwordEncoder.matches(currentPassword, account.passwordHash())) {
+            return false;
+        }
+        userRepository.updatePassword(user.id(), passwordEncoder.encode(newPassword));
+        sessionRepository.deleteForUser(user.id());
+        return true;
+    }
+
+    void logoutAll(AuthenticatedUser user) {
+        sessionRepository.deleteForUser(user.id());
+    }
+
+    private AuthSession createSession(UserAccount account) {
         var tokenBytes = new byte[32];
         SECURE_RANDOM.nextBytes(tokenBytes);
         var rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
         var maxAge = Duration.ofDays(properties.getAuth().getSessionDays());
         sessionRepository.create(hash(rawToken), account.id(), clock.instant().plus(maxAge).toEpochMilli());
-        return new SessionToken(rawToken, maxAge.toSeconds());
+        return new AuthSession(
+            new SessionToken(rawToken, maxAge.toSeconds()),
+            account.authenticatedUser()
+        );
     }
 
     private String hash(String value) {
@@ -86,4 +109,3 @@ class AuthService {
         }
     }
 }
-

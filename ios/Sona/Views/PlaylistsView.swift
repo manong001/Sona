@@ -1,16 +1,16 @@
-import SwiftData
 import SwiftUI
 
 struct PlaylistsView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Playlist.createdAt) private var playlists: [Playlist]
+    @EnvironmentObject private var personal: PersonalStore
     @State private var showsCreatePlaylist = false
     @State private var playlistName = ""
 
     var body: some View {
         NavigationStack {
             Group {
-                if playlists.isEmpty {
+                if personal.playlists.isEmpty && personal.isLoading {
+                    ProgressView("载入歌单…")
+                } else if personal.playlists.isEmpty {
                     ContentUnavailableView(
                         "还没有歌单",
                         systemImage: "rectangle.stack.badge.plus",
@@ -18,9 +18,9 @@ struct PlaylistsView: View {
                     )
                 } else {
                     List {
-                        ForEach(playlists) { playlist in
+                        ForEach(personal.playlists) { playlist in
                             NavigationLink {
-                                PlaylistDetailView(playlist: playlist)
+                                PlaylistDetailView(playlistID: playlist.id)
                             } label: {
                                 HStack(spacing: 14) {
                                     Image(systemName: "music.note.list")
@@ -39,11 +39,13 @@ struct PlaylistsView: View {
                         }
                         .onDelete { indexes in
                             for index in indexes {
-                                modelContext.delete(playlists[index])
+                                let id = personal.playlists[index].id
+                                Task { await personal.deletePlaylist(id: id) }
                             }
                         }
                     }
                     .listStyle(.plain)
+                    .refreshable { await personal.refresh() }
                 }
             }
             .navigationTitle("歌单")
@@ -61,8 +63,17 @@ struct PlaylistsView: View {
                 Button("创建") {
                     let name = playlistName.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !name.isEmpty {
-                        modelContext.insert(Playlist(name: name))
+                        Task { await personal.createPlaylist(name: name) }
                     }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let message = personal.errorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .padding(10)
+                        .background(.red.opacity(0.9), in: Capsule())
+                        .padding()
                 }
             }
         }
@@ -73,10 +84,15 @@ private struct PlaylistDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
-    let playlist: Playlist
+    @EnvironmentObject private var personal: PersonalStore
+    let playlistID: String
+
+    private var playlist: Playlist? {
+        personal.playlists.first { $0.id == playlistID }
+    }
 
     private var tracks: [Track] {
-        playlist.trackIDs.compactMap(library.track(id:))
+        playlist?.trackIDs.compactMap(library.track(id:)) ?? []
     }
 
     var body: some View {
@@ -91,21 +107,102 @@ private struct PlaylistDetailView: View {
                 List(tracks) { track in
                     TrackRow(
                         track: track,
-                        showsOfflineBadge: offline.downloadedIDs.contains(track.id)
+                        showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                        isFavorite: personal.favoriteIDs.contains(track.id)
                     )
                     .onTapGesture {
-                        player.play(track: track, offlineURL: offline.localURL(for: track))
+                        player.play(
+                            track: track,
+                            queue: tracks,
+                            offlineURLProvider: offline.localURL(for:)
+                        )
                     }
                     .swipeActions {
                         Button("移除", role: .destructive) {
-                            playlist.remove(trackID: track.id)
+                            Task {
+                                await personal.setTrack(
+                                    track.id,
+                                    in: playlistID,
+                                    isIncluded: false
+                                )
+                            }
                         }
                     }
                 }
                 .listStyle(.plain)
             }
         }
-        .navigationTitle(playlist.name)
+        .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.large)
+    }
+}
+
+struct PersonalView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
+
+    private var favoriteTracks: [Track] {
+        library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("收藏的歌曲") {
+                    if favoriteTracks.isEmpty {
+                        Text("长按曲库中的歌曲即可收藏")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(favoriteTracks) { track in
+                            TrackRow(
+                                track: track,
+                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                isFavorite: true
+                            )
+                            .onTapGesture {
+                                player.play(
+                                    track: track,
+                                    queue: favoriteTracks,
+                                    offlineURLProvider: offline.localURL(for:)
+                                )
+                            }
+                            .swipeActions {
+                                Button("取消收藏", role: .destructive) {
+                                    Task { await personal.toggleFavorite(trackID: track.id) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("最近播放") {
+                    if personal.history.isEmpty {
+                        Text("播放歌曲后会出现在这里")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(personal.history) { item in
+                            if let track = library.track(id: item.trackID) {
+                                TrackRow(
+                                    track: track,
+                                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                    isFavorite: personal.favoriteIDs.contains(track.id)
+                                )
+                                .onTapGesture {
+                                    player.play(
+                                        track: track,
+                                        queue: library.tracks,
+                                        offlineURLProvider: offline.localURL(for:)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("我的")
+            .refreshable { await personal.refresh() }
+        }
     }
 }
