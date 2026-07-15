@@ -3,6 +3,7 @@ package cc.eu.sosee.sona.personal;
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -76,6 +77,15 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @DeleteMapping("/favorites")
+    ResponseEntity<Void> removeFavorites(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody TrackIdsRequest request
+    ) {
+        repository.removeFavorites(user.id(), request.trackIds());
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/playlists")
     List<PersonalRepository.PlaylistData> playlists(@AuthenticationPrincipal AuthenticatedUser user) {
         return repository.playlists(user.id());
@@ -121,6 +131,17 @@ class PersonalController {
     ) {
         requireOwnedPlaylist(user.id(), playlistId);
         repository.removePlaylistTrack(playlistId, trackId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/playlists/{playlistId}/tracks")
+    ResponseEntity<Void> removePlaylistTracks(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId,
+        @Valid @RequestBody TrackIdsRequest request
+    ) {
+        requireOwnedPlaylist(user.id(), playlistId);
+        repository.removePlaylistTracks(playlistId, request.trackIds());
         return ResponseEntity.noContent().build();
     }
 
@@ -224,5 +245,10 @@ class PersonalController {
     }
 
     record PlaybackBatchRequest(@NotBlank String queueType, String queueContextId) {
+    }
+
+    record TrackIdsRequest(
+        @NotNull @Size(min = 1, max = 500) List<@NotBlank String> trackIds
+    ) {
     }
 }

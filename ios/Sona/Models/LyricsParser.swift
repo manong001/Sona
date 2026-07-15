@@ -34,6 +34,23 @@ enum LyricsParser {
         }?.id
     }
 
+    static func activeLine(
+        in lines: [LyricLine],
+        at elapsed: TimeInterval,
+        duration: TimeInterval
+    ) -> LyricLine? {
+        guard !lines.isEmpty else { return nil }
+        let synchronized = lines.filter { $0.time != nil }
+        if !synchronized.isEmpty {
+            return synchronized.last { ($0.time ?? 0) <= elapsed } ?? synchronized.first
+        }
+
+        let totalDuration = duration > 0 ? duration : Double(lines.count) * 4
+        let progress = min(max(elapsed / max(totalDuration, 1), 0), 1)
+        let index = min(Int(progress * Double(lines.count)), lines.count - 1)
+        return lines[index]
+    }
+
     private static func synchronizedLines(from value: String) -> [LyricLine] {
         let offsetSeconds = lyricOffset(in: value) / 1_000
         var parsed: [(time: TimeInterval, order: Int, text: String)] = []

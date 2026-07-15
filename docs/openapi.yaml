@@ -166,6 +166,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Favorites"
+    delete:
+      operationId: removeFavorites
+      description: 批量取消当前用户收藏，最多 500 首
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trackIds]
+              properties:
+                trackIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: {type: string}
+      responses:
+        "204": {description: 已批量取消收藏}
   /me/favorites/{trackId}:
     put:
       operationId: addFavorite
@@ -260,6 +278,27 @@ paths:
       responses:
         "204":
           description: 曲目已移出歌单
+  /me/playlists/{playlistId}/tracks:
+    delete:
+      operationId: removePlaylistTracks
+      description: 批量移出当前用户歌单中的歌曲，最多 500 首
+      parameters:
+        - $ref: "#/components/parameters/PlaylistId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trackIds]
+              properties:
+                trackIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: {type: string}
+      responses:
+        "204": {description: 已批量移出歌单}
   /me/history:
     get:
       operationId: playHistory
@@ -577,6 +616,7 @@ paths:
   /library/tracks/upload:
     post:
       operationId: uploadTracks
+      description: 上传 App 本地音频，扫描刮削后直接进入正常歌曲池（仅管理员）
       requestBody:
         required: true
         content:
@@ -605,7 +645,7 @@ paths:
   /downloads/search:
     get:
       operationId: searchDownloads
-      description: 在已配置的 musicdl 来源中搜索歌曲（仅管理员）
+      description: 在已配置的 musicdl 来源中搜索歌曲，按文件体积从大到小排列，未知体积置后（仅管理员）
       parameters:
         - name: q
           in: query
@@ -869,6 +909,7 @@ components:
           enum: [CN, KR, US, JP, OTHER]
         artists:
           type: array
+          description: 艺人归属列表；不切割联名名称，包含“林俊杰”的名称统一归属为“林俊杰”
           items:
             type: string
     ChartEntry:

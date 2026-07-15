@@ -286,6 +286,52 @@ class SonaApiIntegrationTest {
     }
 
     @Test
+    void batchRemovesFavoritesAndPlaylistTracks() throws Exception {
+        saveTrack("batch-remove-first", "Batch Remove First");
+        saveTrack("batch-remove-second", "Batch Remove Second");
+        var userId = jdbcClient.sql("SELECT id FROM users WHERE username = 'admin'")
+            .query(String.class)
+            .single();
+        for (var trackId : List.of("batch-remove-first", "batch-remove-second")) {
+            jdbcClient.sql("""
+                    INSERT INTO favorites(user_id, track_id, created_at)
+                    VALUES (:userId, :trackId, 1)
+                    """)
+                .param("userId", userId)
+                .param("trackId", trackId)
+                .update();
+        }
+        jdbcClient.sql("""
+                INSERT INTO playlists(id, user_id, name, created_at)
+                VALUES ('batch-remove-playlist', :userId, 'Batch Remove', 1)
+                """)
+            .param("userId", userId)
+            .update();
+        jdbcClient.sql("""
+                INSERT INTO playlist_tracks(playlist_id, track_id, position, added_at)
+                VALUES ('batch-remove-playlist', 'batch-remove-first', 0, 1),
+                       ('batch-remove-playlist', 'batch-remove-second', 1, 1)
+                """).update();
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+        var body = "{\"trackIds\":[\"batch-remove-first\",\"batch-remove-second\"]}";
+
+        assertThat(deleteJson("/api/v1/me/favorites", cookie, body).statusCode()).isEqualTo(204);
+        assertThat(deleteJson(
+            "/api/v1/me/playlists/batch-remove-playlist/tracks", cookie, body
+        ).statusCode()).isEqualTo(204);
+
+        assertThat(jdbcClient.sql("""
+                SELECT COUNT(*) FROM favorites
+                WHERE user_id = :userId AND track_id LIKE 'batch-remove-%'
+                """).param("userId", userId).query(Integer.class).single()).isZero();
+        assertThat(jdbcClient.sql("""
+                SELECT COUNT(*) FROM playlist_tracks
+                WHERE playlist_id = 'batch-remove-playlist'
+                """).query(Integer.class).single()).isZero();
+    }
+
+    @Test
     void childModeFiltersTracksAndHiddenTrackCannotBeFetchedDirectly() throws Exception {
         saveTrack("general-track", "General Track");
         saveTrack("child-track", "Child Track");
@@ -449,6 +495,14 @@ class SonaApiIntegrationTest {
             .header("Cookie", cookie)
             .header("Content-Type", "application/json")
             .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
+            .build());
+    }
+
+    private HttpResponse<String> deleteJson(String path, String cookie, String body) throws Exception {
+        return send(HttpRequest.newBuilder(uri(path))
+            .header("Cookie", cookie)
+            .header("Content-Type", "application/json")
+            .method("DELETE", HttpRequest.BodyPublishers.ofString(body))
             .build());
     }
 

@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.download;
 
 import cc.eu.sosee.sona.library.ScanCoordinator;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -36,7 +37,12 @@ class DownloadService {
 
     List<DownloadCandidate> search(String query) {
         requireEnabled();
-        return gateway.search(query.strip());
+        return gateway.search(query.strip()).stream()
+            .sorted(Comparator.comparing(
+                DownloadCandidate::fileSizeBytes,
+                Comparator.nullsLast(Comparator.reverseOrder())
+            ).thenComparing(DownloadCandidate::candidateId))
+            .toList();
     }
 
     List<DownloadTask> tasks() {

@@ -76,6 +76,16 @@ class PersonalRepository {
             .update();
     }
 
+    void removeFavorites(String userId, List<String> trackIds) {
+        jdbcClient.sql("""
+                DELETE FROM favorites
+                WHERE user_id = :userId AND track_id IN (:trackIds)
+                """)
+            .param("userId", userId)
+            .param("trackIds", trackIds)
+            .update();
+    }
+
     List<PlaylistData> playlists(String userId) {
         return jdbcClient.sql("""
                 SELECT id, name, created_at
@@ -143,6 +153,16 @@ class PersonalRepository {
                 """)
             .param("playlistId", playlistId)
             .param("trackId", trackId)
+            .update();
+    }
+
+    void removePlaylistTracks(String playlistId, List<String> trackIds) {
+        jdbcClient.sql("""
+                DELETE FROM playlist_tracks
+                WHERE playlist_id = :playlistId AND track_id IN (:trackIds)
+                """)
+            .param("playlistId", playlistId)
+            .param("trackIds", trackIds)
             .update();
     }
 

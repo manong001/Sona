@@ -32,13 +32,28 @@ func sonaAlbums(from tracks: [Track]) -> [SonaCollection] {
 }
 
 func sonaArtists(from tracks: [Track]) -> [SonaCollection] {
-    let appearances = tracks.flatMap { track in
-        (track.artists.isEmpty ? [track.artist] : track.artists).map { ($0, track) }
+    var displayNames: [String: String] = [:]
+    var groupedTracks: [String: [String: Track]] = [:]
+    for track in tracks {
+        let rawArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = rawArtist.contains("林俊杰") ? "林俊杰" : rawArtist
+        guard !artist.isEmpty else { continue }
+        let key = artist.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: .current
+        )
+        if displayNames[key] == nil { displayNames[key] = artist }
+        groupedTracks[key, default: [:]][track.id] = track
     }
-    return Dictionary(grouping: appearances, by: \.0)
-        .map { artist, artistTracks in
-            let uniqueTracks = Dictionary(uniqueKeysWithValues: artistTracks.map { ($0.1.id, $0.1) })
-                .values.map { $0 }
+    return groupedTracks
+        .map { key, tracksByID in
+            let artist = displayNames[key] ?? "未知艺人"
+            let uniqueTracks = tracksByID.values.sorted {
+                let leftIsCanonical = $0.artist.trimmingCharacters(in: .whitespacesAndNewlines) == artist
+                let rightIsCanonical = $1.artist.trimmingCharacters(in: .whitespacesAndNewlines) == artist
+                if leftIsCanonical != rightIsCanonical { return leftIsCanonical }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
             return SonaCollection(
                 id: "artist-\(artist)",
                 title: artist,
@@ -179,12 +194,15 @@ struct SonaMediaCard: View {
 }
 
 struct SonaTrackListView: View {
+    @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var isSelecting = false
     @State private var selectedIDs = Set<String>()
+    @State private var showsImporter = false
+    @State private var importMessage: String?
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let loadsMoreFromLibrary: Bool
@@ -361,8 +379,19 @@ struct SonaTrackListView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
             if collection.id == "liked-songs" {
+                if session.currentUser?.isAdmin == true {
+                    Menu("导入", systemImage: "square.and.arrow.down") {
+                        Button("扫描服务器音乐目录", systemImage: "externaldrive") {
+                            Task { await importServerDirectory() }
+                        }
+                        Button("从 App 本地导入", systemImage: "iphone") {
+                            showsImporter = true
+                        }
+                    }
+                }
                 Button(isSelecting ? "完成" : "多选") {
                     isSelecting.toggle()
                     if !isSelecting { selectedIDs.removeAll() }
@@ -371,7 +400,7 @@ struct SonaTrackListView: View {
                     Button("移除 \(selectedIDs.count) 首", role: .destructive) {
                         let ids = selectedIDs
                         Task {
-                            for id in ids { await personal.toggleFavorite(trackID: id) }
+                            await personal.removeFavorites(trackIDs: ids)
                             selectedIDs.removeAll()
                             isSelecting = false
                         }
@@ -380,5 +409,38 @@ struct SonaTrackListView: View {
             }
         }
         .toolbarBackground(.hidden, for: .navigationBar)
+        .fileImporter(
+            isPresented: $showsImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            Task { await importLocalFiles(result) }
+        }
+        .alert("导入结果", isPresented: Binding(
+            get: { importMessage != nil },
+            set: { if !$0 { importMessage = nil } }
+        )) {
+            Button("好") { importMessage = nil }
+        } message: {
+            Text(importMessage ?? "")
+        }
+    }
+
+    private func importServerDirectory() async {
+        await library.scan()
+        await personal.refresh()
+        importMessage = library.errorMessage ?? "服务器音乐目录已导入正常歌曲池"
+    }
+
+    private func importLocalFiles(_ result: Result<[URL], Error>) async {
+        do {
+            let urls = try result.get()
+            try await APIClient.shared.uploadTracks(urls: urls)
+            await library.scan()
+            await personal.refresh()
+            importMessage = "已导入 \(urls.count) 首到正常歌曲池"
+        } catch {
+            importMessage = error.localizedDescription
+        }
     }
 }

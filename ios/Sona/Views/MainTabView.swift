@@ -35,10 +35,8 @@ struct MainTabView: View {
             .toolbarBackground(Color.sonaBackgroundDeep.opacity(0.98), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
 
-            if player.currentTrack != nil {
-                MiniPlayerView {
-                    showsNowPlaying = true
-                }
+            MiniPlayerView {
+                showsNowPlaying = true
             }
 
             if showsDrawer {

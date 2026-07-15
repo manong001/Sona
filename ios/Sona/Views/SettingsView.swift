@@ -130,7 +130,8 @@ struct SettingsView: View {
                     do {
                         let urls = try result.get()
                         try await APIClient.shared.uploadTracks(urls: urls)
-                        importMessage = "已上传 \(urls.count) 首，正在刮削并等待管理员分类"
+                        await library.scan()
+                        importMessage = "已导入 \(urls.count) 首到正常歌曲池"
                     } catch {
                         importMessage = error.localizedDescription
                     }

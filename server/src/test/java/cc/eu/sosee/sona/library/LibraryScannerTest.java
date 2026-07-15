@@ -12,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -21,7 +22,7 @@ class LibraryScannerTest {
     Path temporaryDirectory;
 
     @Test
-    void importsThenSkipsUnchangedTrack() throws Exception {
+    void importsThenRetriesUnchangedTrackThatStillNeedsReview() throws Exception {
         var musicDirectory = Files.createDirectories(temporaryDirectory.resolve("music"));
         var audioPath = Files.writeString(musicDirectory.resolve("01. 邓紫棋 - All About U.flac"), "audio");
         var store = new InMemoryTrackStore();
@@ -31,12 +32,13 @@ class LibraryScannerTest {
         var second = scanner.scan();
 
         assertThat(first).isEqualTo(new ScanResult(1, 1, 0, 0, 0));
-        assertThat(second).isEqualTo(new ScanResult(1, 0, 0, 1, 0));
+        assertThat(second).isEqualTo(new ScanResult(1, 0, 1, 0, 0));
         var track = store.findByPath(audioPath).orElseThrow();
         assertThat(track.title()).isEqualTo("All About U");
         assertThat(track.artist()).isEqualTo("邓紫棋");
         assertThat(track.trackNumber()).isEqualTo(1);
         assertThat(track.metadataStatus()).isEqualTo("NEEDS_REVIEW");
+        assertThat(track.poolType()).isEqualTo("NORMAL");
     }
 
     @Test
@@ -82,6 +84,35 @@ class LibraryScannerTest {
         assertThat(track.metadataStatus()).isEqualTo("SCRAPED");
     }
 
+    @Test
+    void retriesUnchangedTrackWithoutScrapedDataAndFillsMetadataLater() throws Exception {
+        var musicDirectory = Files.createDirectories(temporaryDirectory.resolve("music"));
+        var audioPath = Files.writeString(musicDirectory.resolve("测试艺人 - 待补全.mp3"), "audio");
+        var attempts = new AtomicInteger();
+        MetadataScraper scraper = request -> attempts.incrementAndGet() == 1
+            ? ScrapedMetadata.empty()
+            : new ScrapedMetadata(
+                "补全专辑", null, null, new byte[] {4, 5, 6}, "image/jpeg"
+            );
+        var store = new InMemoryTrackStore();
+        AudioMetadataExtractor extractor = path -> new AudioMetadata(
+            "待补全", "测试艺人", "", null, 180_000, "test", 44_100, 16,
+            null, null, ""
+        );
+        var scanner = scanner(musicDirectory, store, scraper, extractor);
+
+        var first = scanner.scan();
+        var second = scanner.scan();
+
+        assertThat(first).isEqualTo(new ScanResult(1, 1, 0, 0, 0));
+        assertThat(second).isEqualTo(new ScanResult(1, 0, 1, 0, 0));
+        var track = store.findByPath(audioPath).orElseThrow();
+        assertThat(track.album()).isEqualTo("补全专辑");
+        assertThat(track.artworkPath()).isRegularFile();
+        assertThat(track.metadataStatus()).isEqualTo("SCRAPED");
+        assertThat(attempts).hasValue(2);
+    }
+
     private LibraryScanner scanner(Path musicDirectory, TrackStore store) throws Exception {
         return scanner(musicDirectory, store, request -> ScrapedMetadata.empty());
     }
@@ -91,12 +122,21 @@ class LibraryScannerTest {
         TrackStore store,
         MetadataScraper metadataScraper
     ) throws Exception {
-        var properties = new SonaProperties();
-        properties.setMusicDir(musicDirectory);
-        properties.setDataDir(temporaryDirectory.resolve("data"));
         AudioMetadataExtractor extractor = path -> new AudioMetadata(
             "", "", "", null, 180_000, "test", 44_100, 16, null, null, ""
         );
+        return scanner(musicDirectory, store, metadataScraper, extractor);
+    }
+
+    private LibraryScanner scanner(
+        Path musicDirectory,
+        TrackStore store,
+        MetadataScraper metadataScraper,
+        AudioMetadataExtractor extractor
+    ) throws Exception {
+        var properties = new SonaProperties();
+        properties.setMusicDir(musicDirectory);
+        properties.setDataDir(temporaryDirectory.resolve("data"));
         return new LibraryScanner(
             properties,
             store,

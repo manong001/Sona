@@ -128,6 +128,15 @@ final class APIClient {
         )
     }
 
+    func removeFavorites(trackIDs: [String]) async throws {
+        struct Body: Encodable { let trackIds: [String] }
+        try await requestVoid(
+            path: "/api/v1/me/favorites",
+            method: "DELETE",
+            body: try encoder.encode(Body(trackIds: trackIDs))
+        )
+    }
+
     func playlists() async throws -> [Playlist] {
         try await request(path: "/api/v1/me/playlists")
     }
@@ -149,6 +158,15 @@ final class APIClient {
         try await requestVoid(
             path: "/api/v1/me/playlists/\(playlistID)/tracks/\(trackID)",
             method: isIncluded ? "PUT" : "DELETE"
+        )
+    }
+
+    func removePlaylistTracks(playlistID: String, trackIDs: [String]) async throws {
+        struct Body: Encodable { let trackIds: [String] }
+        try await requestVoid(
+            path: "/api/v1/me/playlists/\(playlistID)/tracks",
+            method: "DELETE",
+            body: try encoder.encode(Body(trackIds: trackIDs))
         )
     }
 

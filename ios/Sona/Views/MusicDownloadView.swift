@@ -6,10 +6,14 @@ struct MusicDownloadView: View {
     @State private var candidates: [DownloadCandidate] = []
     @State private var tasks: [MusicDownloadTask] = []
     @State private var queuedCandidateIDs: Set<String> = []
+    @State private var selectedSource: String?
+    @State private var visibleCandidateCount = 20
     @State private var selectedSection = 0
     @State private var isSearching = false
     @State private var isLoadingTasks = false
     @State private var errorMessage: String?
+
+    private let candidatePageSize = 20
 
     var body: some View {
         VStack(spacing: 0) {
@@ -101,12 +105,9 @@ struct MusicDownloadView: View {
                     if !sources.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
+                                sourceChip(title: "全部", source: nil)
                                 ForEach(sources) { source in
-                                    Text(source.name)
-                                        .font(.caption.weight(.semibold))
-                                        .padding(.horizontal, 12)
-                                        .frame(height: 30)
-                                        .background(Color.sonaChip, in: Capsule())
+                                    sourceChip(title: source.name, source: source.id)
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -122,15 +123,19 @@ struct MusicDownloadView: View {
                             Spacer()
                         }
                         .padding(.top, 70)
-                    } else if candidates.isEmpty {
+                    } else if filteredCandidates.isEmpty {
                         ContentUnavailableView(
-                            "搜索你的下一首歌",
+                            candidates.isEmpty ? "搜索你的下一首歌" : "该平台暂无结果",
                             systemImage: "music.note.list",
-                            description: Text("支持咪咕、网易云、QQ、酷我和千千音乐")
+                            description: Text(
+                                candidates.isEmpty
+                                    ? "支持咪咕、网易云、QQ、酷我和千千音乐"
+                                    : "请选择其他平台或重新搜索"
+                            )
                         )
                         .padding(.top, 55)
                     } else {
-                        ForEach(candidates) { candidate in
+                        ForEach(visibleCandidates) { candidate in
                             DownloadCandidateRow(
                                 candidate: candidate,
                                 isQueuing: queuedCandidateIDs.contains(candidate.id)
@@ -139,6 +144,13 @@ struct MusicDownloadView: View {
                             }
                             Divider().overlay(Color.white.opacity(0.08))
                                 .padding(.leading, 84)
+                        }
+                        if hasMoreCandidates {
+                            ProgressView("载入更多音源…")
+                                .tint(.sonaGreen)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 20)
+                                .onAppear { loadNextCandidatePage() }
                         }
                     }
                 }
@@ -183,6 +195,43 @@ struct MusicDownloadView: View {
             .joined(separator: "|")
     }
 
+    private var filteredCandidates: [DownloadCandidate] {
+        guard let selectedSource else { return candidates }
+        return candidates.filter { $0.source == selectedSource }
+    }
+
+    private var visibleCandidates: [DownloadCandidate] {
+        Array(filteredCandidates.prefix(visibleCandidateCount))
+    }
+
+    private var hasMoreCandidates: Bool {
+        visibleCandidateCount < filteredCandidates.count
+    }
+
+    private func sourceChip(title: String, source: String?) -> some View {
+        let isSelected = selectedSource == source
+        return Button {
+            selectedSource = source
+            visibleCandidateCount = candidatePageSize
+        } label: {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isSelected ? Color.black : Color.white)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(isSelected ? Color.sonaGreen : Color.sonaChip, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func loadNextCandidatePage() {
+        visibleCandidateCount = min(
+            visibleCandidateCount + candidatePageSize,
+            filteredCandidates.count
+        )
+    }
+
     private func loadSources() async {
         do {
             sources = try await APIClient.shared.musicDownloadSources()
@@ -199,6 +248,7 @@ struct MusicDownloadView: View {
         defer { isSearching = false }
         do {
             candidates = try await APIClient.shared.searchMusicDownloads(query: keyword).items
+            visibleCandidateCount = candidatePageSize
         } catch {
             errorMessage = error.localizedDescription
         }

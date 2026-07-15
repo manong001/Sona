@@ -195,6 +195,17 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    func removeFavorites(trackIDs: Set<String>) async {
+        guard !trackIDs.isEmpty else { return }
+        do {
+            try await api.removeFavorites(trackIDs: Array(trackIDs))
+            favoriteIDs.subtract(trackIDs)
+            favoriteTracks.removeAll { trackIDs.contains($0.id) }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func loadNextFavoritePageIfNeeded(currentTrack: Track) async {
         guard let index = favoriteTracks.firstIndex(where: { $0.id == currentTrack.id }) else { return }
         let threshold = max(favoriteTracks.count - 10, 0)
@@ -255,6 +266,26 @@ final class PersonalStore: ObservableObject {
                 id: playlist.id,
                 name: playlist.name,
                 trackIDs: trackIDs,
+                createdAt: playlist.createdAt
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func removeTracks(_ trackIDs: Set<String>, from playlistID: String) async {
+        guard !trackIDs.isEmpty else { return }
+        do {
+            try await api.removePlaylistTracks(
+                playlistID: playlistID,
+                trackIDs: Array(trackIDs)
+            )
+            guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+            let playlist = playlists[index]
+            playlists[index] = Playlist(
+                id: playlist.id,
+                name: playlist.name,
+                trackIDs: playlist.trackIDs.filter { !trackIDs.contains($0) },
                 createdAt: playlist.createdAt
             )
         } catch {

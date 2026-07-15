@@ -72,7 +72,8 @@ class LibraryScanner {
             var existing = trackStore.findByPath(normalizedPath);
             if (existing.isPresent()
                 && existing.get().fileSize() == attributes.size()
-                && existing.get().modifiedAt() == attributes.lastModifiedTime().toMillis()) {
+                && existing.get().modifiedAt() == attributes.lastModifiedTime().toMillis()
+                && !needsScrapeRetry(existing.get())) {
                 counts[3]++;
                 return;
             }
@@ -148,7 +149,7 @@ class LibraryScanner {
                 existing.map(TrackRecord::manualEdited).orElse(false),
                 existing.map(TrackRecord::createdAt).orElse(now),
                 now,
-                existing.map(TrackRecord::poolType).orElse("PENDING"),
+                existing.map(TrackRecord::poolType).orElse("NORMAL"),
                 existing.map(TrackRecord::audienceType).orElse("GENERAL"),
                 firstText(existing.map(TrackRecord::genre).orElse(""), metadata.genre(), "未分类"),
                 existing.map(TrackRecord::region).orElse("OTHER")
@@ -185,6 +186,11 @@ class LibraryScanner {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private boolean needsScrapeRetry(TrackRecord track) {
+        return "NEEDS_REVIEW".equals(track.metadataStatus())
+            || !"SCRAPED".equals(track.metadataStatus()) && track.artworkPath() == null;
     }
 
     private String blankToNull(String value) {

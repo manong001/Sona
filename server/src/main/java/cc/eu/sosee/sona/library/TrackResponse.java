@@ -1,6 +1,5 @@
 package cc.eu.sosee.sona.library;
 
-import java.util.Arrays;
 import java.util.List;
 
 record TrackResponse(
@@ -27,6 +26,7 @@ record TrackResponse(
 
     static TrackResponse from(TrackRecord track) {
         var basePath = "/api/v1/tracks/" + track.id();
+        var canonicalArtist = ArtistNames.canonical(track.artist());
         return new TrackResponse(
             track.id(),
             track.title(),
@@ -46,16 +46,8 @@ record TrackResponse(
             track.audienceType(),
             track.genre(),
             track.region(),
-            artists(track.artist())
+            canonicalArtist.isEmpty() ? List.of() : List.of(canonicalArtist)
         );
-    }
-
-    private static List<String> artists(String value) {
-        return Arrays.stream(value.split("(?i)\\s*(?:、|,|，|/|&|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bx\\b)\\s*"))
-            .map(String::strip)
-            .filter(artist -> !artist.isBlank())
-            .distinct()
-            .toList();
     }
 
     private static String extension(TrackRecord track) {

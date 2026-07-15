@@ -6,7 +6,8 @@ struct MiniPlayerView: View {
     @AppStorage("miniPlayerSide") private var anchoredSide = "right"
     @AppStorage("miniPlayerY") private var storedY = 0.0
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
-    @GestureState private var dragTranslation: CGSize = .zero
+    @State private var dragState: FloatingMiniPlayerDragState?
+    @State private var lyricLines: [LyricLine] = []
     @State private var showsQueue = false
     let open: () -> Void
 
@@ -16,43 +17,50 @@ struct MiniPlayerView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            if let track = player.currentTrack {
-                if miniPlayerMode == "fixed" {
-                    VStack {
-                        Spacer()
-                        fixedBar(for: track)
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 52)
-                    }
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
+            let track = player.currentTrack
+            if miniPlayerMode == "fixed" {
+                VStack {
+                    Spacer()
+                    fixedBar(for: track)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 52)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
                 let bounds = movementBounds(in: proxy.size)
                 let baseX = anchoredSide == "left" ? bounds.minX : bounds.maxX
                 let preferredY = storedY > 0 ? CGFloat(storedY) : bounds.maxY
                 let baseY = clamped(preferredY, from: bounds.minY, to: bounds.maxY)
+                let basePosition = CGPoint(x: baseX, y: baseY)
+                let displayedPosition = dragState?.position ?? basePosition
 
                 ZStack(alignment: .bottom) {
-                    Button(action: open) {
+                    Button {
+                        if track != nil { open() }
+                    } label: {
                         cdArtwork(for: track)
                     }
                     .buttonStyle(.plain)
+                    .disabled(track == nil)
 
                     HStack {
                         Button(
-                            personal.favoriteIDs.contains(track.id) ? "取消收藏" : "收藏",
-                            systemImage: personal.favoriteIDs.contains(track.id) ? "heart.fill" : "heart"
+                            track.map { personal.favoriteIDs.contains($0.id) } == true ? "取消收藏" : "收藏",
+                            systemImage: track.map { personal.favoriteIDs.contains($0.id) } == true ? "heart.fill" : "heart"
                         ) {
+                            guard let track else { return }
                             Task { await personal.toggleFavorite(trackID: track.id) }
                         }
                         .labelStyle(.iconOnly)
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(
-                            personal.favoriteIDs.contains(track.id) ? Color.sonaGreen : .white
+                            track.map { personal.favoriteIDs.contains($0.id) } == true ? Color.sonaGreen : .white
                         )
                         .frame(width: 29, height: 29)
                         .background(.black.opacity(0.9), in: Circle())
                         .overlay(Circle().stroke(Color.sonaGreen, lineWidth: 2))
                         .buttonStyle(.plain)
+                        .disabled(track == nil)
 
                         Spacer()
 
@@ -71,62 +79,125 @@ struct MiniPlayerView: View {
                 }
                     .frame(width: diameter, height: diameter)
                     .contentShape(Circle())
-                    .position(
-                        x: clamped(baseX + dragTranslation.width, from: bounds.minX, to: bounds.maxX),
-                        y: clamped(baseY + dragTranslation.height, from: bounds.minY, to: bounds.maxY)
-                    )
-                    .gesture(
-                        DragGesture(minimumDistance: 6)
-                            .updating($dragTranslation) { value, state, _ in
-                                state = value.translation
+                    .position(displayedPosition)
+                    .simultaneousGesture(
+                        DragGesture(
+                            minimumDistance: 0,
+                            coordinateSpace: .named("miniPlayerSurface")
+                        )
+                            .onChanged { value in
+                                var state: FloatingMiniPlayerDragState
+                                if let dragState {
+                                    state = dragState
+                                } else {
+                                    state = FloatingMiniPlayerDragState(position: basePosition)
+                                    state.begin(at: value.startLocation)
+                                }
+                                state.move(to: value.location, within: bounds)
+                                var transaction = Transaction()
+                                transaction.disablesAnimations = true
+                                withTransaction(transaction) { dragState = state }
                             }
                             .onEnded { value in
-                                let endX = clamped(
-                                    baseX + value.translation.width,
-                                    from: bounds.minX,
-                                    to: bounds.maxX
+                                var state = dragState ?? FloatingMiniPlayerDragState(
+                                    position: basePosition
                                 )
-                                anchoredSide = endX < proxy.size.width / 2 ? "left" : "right"
-                                storedY = Double(clamped(
-                                    baseY + value.translation.height,
-                                    from: bounds.minY,
-                                    to: bounds.maxY
-                                ))
+                                let result = state.snap(to: value.location, within: bounds)
+                                withAnimation(.interactiveSpring(
+                                    response: 0.28,
+                                    dampingFraction: 0.82,
+                                    blendDuration: 0.12
+                                )) {
+                                    dragState = nil
+                                    anchoredSide = result.side.rawValue
+                                    storedY = Double(result.position.y)
+                                }
                             }
                     )
-                    .animation(.spring(response: 0.3, dampingFraction: 0.78), value: anchoredSide)
-                    .accessibilityLabel("迷你播放器，\(track.title)")
-                    .accessibilityHint("轻点打开播放页，拖动后会吸附屏幕边缘")
+                    .accessibilityLabel("迷你播放器，\(track?.title ?? "暂无播放")")
+                    .accessibilityHint(
+                        track == nil ? "选择一首歌曲开始播放，拖动后会吸附屏幕边缘" :
+                            "轻点打开播放页，拖动后会吸附屏幕边缘"
+                    )
                     .accessibilityAction(named: player.isPlaying ? "暂停" : "播放") {
-                        player.togglePlayback()
+                        if track != nil { player.togglePlayback() }
                     }
-                    .accessibilityAction(named: "上一曲") { player.previous() }
-                    .accessibilityAction(named: "下一曲") { player.next() }
-                }
+                    .accessibilityAction(named: "上一曲") {
+                        if track != nil { player.previous() }
+                    }
+                    .accessibilityAction(named: "下一曲") {
+                        if track != nil { player.next() }
+                    }
             }
         }
+        .coordinateSpace(name: "miniPlayerSurface")
         .sheet(isPresented: $showsQueue) {
             PlaybackQueueView()
         }
+        .task(id: player.currentTrack?.id) {
+            await loadLyrics(for: player.currentTrack)
+        }
     }
 
-    private func fixedBar(for track: Track) -> some View {
-        HStack(spacing: 12) {
-            Button(action: open) {
-                ArtworkView(path: track.artworkURL, cornerRadius: 7)
+    private func fixedBar(for track: Track?) -> some View {
+        let isFavorite = track.map { personal.favoriteIDs.contains($0.id) } == true
+        let detail = currentLyric ?? track?.artist ?? "选择一首歌曲开始播放"
+        return HStack(spacing: 8) {
+            Button {
+                if track != nil { open() }
+            } label: {
+                ArtworkView(path: track?.artworkURL, cornerRadius: 7)
                     .frame(width: 48, height: 48)
             }
+            .disabled(track == nil)
             VStack(alignment: .leading, spacing: 3) {
-                Text(track.title).font(.subheadline.bold()).lineLimit(1)
-                Text(track.artist).font(.caption).foregroundStyle(Color.sonaSecondaryText).lineLimit(1)
+                Text(track?.title ?? "暂无播放").font(.subheadline.bold()).lineLimit(1)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+                    .lineLimit(1)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: detail)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer()
-            Button(player.isPlaying ? "暂停" : "播放", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
-                player.togglePlayback()
+            HStack(spacing: 2) {
+                Button(
+                    isFavorite ? "取消收藏" : "收藏",
+                    systemImage: isFavorite ? "heart.fill" : "heart"
+                ) {
+                    guard let track else { return }
+                    Task { await personal.toggleFavorite(trackID: track.id) }
+                }
+                .foregroundStyle(isFavorite ? Color.sonaGreen : .white)
+                .disabled(track == nil)
+
+                Button("上一曲", systemImage: "backward.fill") {
+                    player.previous()
+                }
+                .disabled(track == nil || !player.canGoPrevious)
+
+                Button(
+                    player.isPlaying ? "暂停" : "播放",
+                    systemImage: player.isPlaying ? "pause.fill" : "play.fill"
+                ) {
+                    player.togglePlayback()
+                }
+                .disabled(track == nil)
+
+                Button("下一曲", systemImage: "forward.fill") {
+                    player.next()
+                }
+                .disabled(track == nil || !player.canGoNext)
+
+                Button("播放列表", systemImage: "list.bullet") {
+                    showsQueue = true
+                }
+                .disabled(track == nil)
             }
             .labelStyle(.iconOnly)
-            Button("下一曲", systemImage: "forward.fill") { player.next() }
-                .labelStyle(.iconOnly)
+            .font(.system(size: 14, weight: .semibold))
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .frame(height: 62)
@@ -134,13 +205,34 @@ struct MiniPlayerView: View {
         .contentShape(Rectangle())
     }
 
-    private func cdArtwork(for track: Track) -> some View {
+    private var currentLyric: String? {
+        LyricsParser.activeLine(
+            in: lyricLines,
+            at: player.elapsed,
+            duration: player.duration
+        )?.text
+    }
+
+    @MainActor
+    private func loadLyrics(for track: Track?) async {
+        lyricLines = []
+        guard let track, track.hasLyrics else { return }
+        do {
+            let lyrics = try await APIClient.shared.lyrics(for: track)
+            guard !Task.isCancelled, player.currentTrack?.id == track.id else { return }
+            lyricLines = LyricsParser.parse(synced: lyrics.synced, plain: lyrics.plain)
+        } catch {
+            lyricLines = []
+        }
+    }
+
+    private func cdArtwork(for track: Track?) -> some View {
         ZStack {
             Circle()
                 .fill(.black)
                 .shadow(color: .black.opacity(0.55), radius: 10, y: 5)
 
-            ArtworkView(path: track.artworkURL, cornerRadius: diameter / 2)
+            ArtworkView(path: track?.artworkURL, cornerRadius: diameter / 2)
                 .frame(width: diameter - 6, height: diameter - 6)
                 .clipShape(Circle())
 
@@ -148,7 +240,7 @@ struct MiniPlayerView: View {
                 .stroke(.white.opacity(0.28), lineWidth: 1)
 
             Circle()
-                .trim(from: 0, to: playbackProgress)
+                .trim(from: 0, to: track == nil ? 0 : playbackProgress)
                 .stroke(Color.sonaGreen, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
 
@@ -156,7 +248,7 @@ struct MiniPlayerView: View {
                 .fill(.black.opacity(0.88))
                 .frame(width: 25, height: 25)
                 .overlay {
-                    Image(systemName: player.isPlaying ? "waveform" : "play.fill")
+                    Image(systemName: track == nil ? "music.note" : (player.isPlaying ? "waveform" : "play.fill"))
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white)
                 }

@@ -263,12 +263,15 @@ struct MusicLibraryView: View {
 }
 
 private struct ManagedPlaylistDetailView: View {
+    @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var isSelecting = false
     @State private var selectedIDs = Set<String>()
+    @State private var showsImporter = false
+    @State private var importMessage: String?
     let playlistID: String
 
     private var playlist: Playlist? {
@@ -326,7 +329,18 @@ private struct ManagedPlaylistDetailView: View {
         }
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
+            if session.currentUser?.isAdmin == true {
+                Menu("导入", systemImage: "square.and.arrow.down") {
+                    Button("扫描服务器音乐目录", systemImage: "externaldrive") {
+                        Task { await importServerDirectory() }
+                    }
+                    Button("从 App 本地导入", systemImage: "iphone") {
+                        showsImporter = true
+                    }
+                }
+            }
             Button(isSelecting ? "完成" : "多选") {
                 isSelecting.toggle()
                 if !isSelecting { selectedIDs.removeAll() }
@@ -335,9 +349,7 @@ private struct ManagedPlaylistDetailView: View {
                 Button("移除 \(selectedIDs.count) 首", role: .destructive) {
                     let ids = selectedIDs
                     Task {
-                        for id in ids {
-                            await personal.setTrack(id, in: playlistID, isIncluded: false)
-                        }
+                        await personal.removeTracks(ids, from: playlistID)
                         selectedIDs.removeAll()
                         isSelecting = false
                     }
@@ -345,5 +357,38 @@ private struct ManagedPlaylistDetailView: View {
             }
         }
         .toolbarBackground(.hidden, for: .navigationBar)
+        .fileImporter(
+            isPresented: $showsImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            Task { await importLocalFiles(result) }
+        }
+        .alert("导入结果", isPresented: Binding(
+            get: { importMessage != nil },
+            set: { if !$0 { importMessage = nil } }
+        )) {
+            Button("好") { importMessage = nil }
+        } message: {
+            Text(importMessage ?? "")
+        }
+    }
+
+    private func importServerDirectory() async {
+        await library.scan()
+        await personal.refresh()
+        importMessage = library.errorMessage ?? "服务器音乐目录已导入正常歌曲池"
+    }
+
+    private func importLocalFiles(_ result: Result<[URL], Error>) async {
+        do {
+            let urls = try result.get()
+            try await APIClient.shared.uploadTracks(urls: urls)
+            await library.scan()
+            await personal.refresh()
+            importMessage = "已导入 \(urls.count) 首到正常歌曲池"
+        } catch {
+            importMessage = error.localizedDescription
+        }
     }
 }
