@@ -197,3 +197,18 @@ CREATE TABLE IF NOT EXISTS import_records (
 );
 
 CREATE INDEX IF NOT EXISTS idx_import_records_user ON import_records(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS directory_import_indexes (
+    directory_path TEXT PRIMARY KEY,
+    indexed_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS directory_track_memberships (
+    directory_path TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    PRIMARY KEY (directory_path, track_id),
+    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_directory_track_memberships_track
+    ON directory_track_memberships(track_id);

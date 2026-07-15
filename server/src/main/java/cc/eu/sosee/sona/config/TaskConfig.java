@@ -14,7 +14,7 @@ class TaskConfig {
         executor.setThreadNamePrefix("sona-library-scan-");
         executor.setCorePoolSize(1);
         executor.setMaxPoolSize(1);
-        executor.setQueueCapacity(0);
+        executor.setQueueCapacity(20);
         executor.initialize();
         return executor;
     }

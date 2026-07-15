@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -47,6 +48,15 @@ class DownloadController {
     @GetMapping
     List<DownloadTask> tasks(@AuthenticationPrincipal AuthenticatedUser user) {
         return service.tasks(user.username());
+    }
+
+    @DeleteMapping("/{id}")
+    ResponseEntity<Void> delete(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        service.delete(id, user.username());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping

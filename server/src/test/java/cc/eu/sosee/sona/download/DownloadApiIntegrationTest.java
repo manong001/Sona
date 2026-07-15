@@ -103,6 +103,10 @@ class DownloadApiIntegrationTest {
             Thread.sleep(100);
         }
         assertThat(state).isEqualTo("COMPLETED");
+
+        assertThat(sendJson("DELETE", "/api/v1/downloads/" + taskId, adminCookie, "").statusCode())
+            .isEqualTo(204);
+        assertThat(get("/api/v1/downloads", adminCookie).body()).doesNotContain(taskId);
     }
 
     @Test

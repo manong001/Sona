@@ -22,6 +22,14 @@ struct FavoritesResponse: Decodable {
 
 struct DirectoryImportResponse: Decodable {
     let importedCount: Int
+    let importRecordID: String?
+    let scanning: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case importedCount
+        case importRecordID = "importRecordId"
+        case scanning
+    }
 }
 
 enum ImportRecordType: String, Codable {

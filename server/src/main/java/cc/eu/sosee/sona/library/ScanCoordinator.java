@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.library;
 
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
@@ -50,6 +51,22 @@ public class ScanCoordinator {
 
     ScanStatus status() {
         return status.get();
+    }
+
+    public CompletableFuture<ScanResult> enqueue(String relativeDirectory) {
+        var result = new CompletableFuture<ScanResult>();
+        try {
+            taskExecutor.execute(() -> {
+                try {
+                    result.complete(libraryScanner.scan(relativeDirectory));
+                } catch (Exception exception) {
+                    result.completeExceptionally(exception);
+                }
+            });
+        } catch (RuntimeException exception) {
+            result.completeExceptionally(exception);
+        }
+        return result;
     }
 
     public void trigger() {

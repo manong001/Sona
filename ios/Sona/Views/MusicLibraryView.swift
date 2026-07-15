@@ -409,75 +409,19 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {
-        let record = try? await APIClient.shared.createImportRecord(
-            type: .playlistDirectory,
-            source: directory.name,
-            target: playlist?.name ?? "当前歌单",
-            total: 0
-        )
-        if let record {
-            let _ = try? await APIClient.shared.updateImportRecord(
-                id: record.id,
-                update: ImportRecordUpdate(state: .running, message: "正在扫描目录…")
-            )
-        }
         isImportingServerDirectory = true
-        importProgressMessage = "正在扫描“\(directory.name)”…"
+        importProgressMessage = "正在加入已入库歌曲…"
         defer { isImportingServerDirectory = false }
-        await library.scan(directory: directory.path)
-        if let errorMessage = library.errorMessage {
-            if let record {
-                let _ = try? await APIClient.shared.updateImportRecord(
-                    id: record.id,
-                    update: scanRecordUpdate(
-                        state: .failed,
-                        status: library.scanStatus,
-                        failed: max(library.scanStatus?.failed ?? 0, 1),
-                        message: errorMessage
-                    )
-                )
-            }
-            importMessage = errorMessage
-            return
-        }
         do {
-            importProgressMessage = "正在加入歌单…"
-            if let record {
-                let _ = try? await APIClient.shared.updateImportRecord(
-                    id: record.id,
-                    update: ImportRecordUpdate(state: .running, message: "正在加入歌单…")
-                )
-            }
             let result = try await APIClient.shared.importPlaylistDirectory(
                 playlistID: playlistID,
                 directory: directory.path
             )
-            if let record {
-                let _ = try? await APIClient.shared.updateImportRecord(
-                    id: record.id,
-                    update: scanRecordUpdate(
-                        state: .completed,
-                        status: library.scanStatus,
-                        succeeded: result.importedCount,
-                        added: result.importedCount,
-                        message: "已加入歌单"
-                    )
-                )
-            }
             await personal.refresh()
-            importMessage = "“\(directory.name)”已加入歌单 \(result.importedCount) 首"
+            importMessage = result.scanning == true
+                ? "“\(directory.name)”已快速加入歌单 \(result.importedCount) 首，后台正在补入新歌曲"
+                : "“\(directory.name)”已加入歌单 \(result.importedCount) 首"
         } catch {
-            if let record {
-                let _ = try? await APIClient.shared.updateImportRecord(
-                    id: record.id,
-                    update: scanRecordUpdate(
-                        state: .failed,
-                        status: library.scanStatus,
-                        failed: max(library.scanStatus?.failed ?? 0, 1),
-                        message: error.localizedDescription
-                    )
-                )
-            }
             importMessage = error.localizedDescription
         }
     }

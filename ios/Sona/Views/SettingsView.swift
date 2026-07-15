@@ -92,7 +92,9 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(importHistoryItems) { item in
-                            ImportHistoryRow(item: item)
+                            ImportHistoryRow(item: item) {
+                                Task { await deleteImportHistoryItem(item) }
+                            }
                         }
                     }
                 }
@@ -336,6 +338,22 @@ struct SettingsView: View {
     }
 
     @MainActor
+    private func deleteImportHistoryItem(_ item: ImportHistoryItem) async {
+        do {
+            switch item {
+            case let .record(record):
+                try await APIClient.shared.deleteImportRecord(id: record.id)
+                importRecords.removeAll { $0.id == record.id }
+            case let .download(task):
+                try await APIClient.shared.deleteMusicDownloadTask(taskID: task.id)
+                downloadTasks.removeAll { $0.id == task.id }
+            }
+        } catch {
+            importMessage = "删除导入记录失败：\(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
     private func checkForUpdate() async {
         isCheckingUpdate = true
         releaseInfo = nil
@@ -466,6 +484,7 @@ private enum ImportHistoryItem: Identifiable {
 
 private struct ImportHistoryRow: View {
     let item: ImportHistoryItem
+    let delete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -491,6 +510,13 @@ private struct ImportHistoryRow: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 3)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if !item.isRunning {
+                Button(role: .destructive, action: delete) {
+                    Label("删除", systemImage: "trash")
+                }
+            }
+        }
     }
 
     private var title: String {

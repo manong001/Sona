@@ -423,6 +423,10 @@ final class APIClient {
         )
     }
 
+    func deleteImportRecord(id: String) async throws {
+        try await requestVoid(path: "/api/v1/me/import-records/\(id)", method: "DELETE")
+    }
+
     func startScan() async throws -> ScanStatus {
         try await startScan(directory: "")
     }
@@ -481,6 +485,10 @@ final class APIClient {
 
     func musicDownloadTasks() async throws -> [MusicDownloadTask] {
         try await request(path: "/api/v1/downloads")
+    }
+
+    func deleteMusicDownloadTask(taskID: String) async throws {
+        try await requestVoid(path: "/api/v1/downloads/\(taskID)", method: "DELETE")
     }
 
     func latestAppRelease() async throws -> AppReleaseInfo {

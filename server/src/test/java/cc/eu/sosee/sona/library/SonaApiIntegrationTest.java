@@ -387,9 +387,13 @@ class SonaApiIntegrationTest {
         );
 
         assertThat(favorites.statusCode()).isEqualTo(200);
-        assertThat(favorites.body()).contains("\"importedCount\":2");
+        assertThat(favorites.body()).contains(
+            "\"importedCount\":2", "\"importRecordId\":", "\"scanning\":true"
+        );
         assertThat(playlist.statusCode()).isEqualTo(200);
-        assertThat(playlist.body()).contains("\"importedCount\":2");
+        assertThat(playlist.body()).contains(
+            "\"importedCount\":2", "\"importRecordId\":", "\"scanning\":true"
+        );
         assertThat(jdbcClient.sql("""
                 SELECT track_id FROM favorites
                 WHERE user_id = :userId AND track_id LIKE 'directory-import-%'
@@ -430,6 +434,10 @@ class SonaApiIntegrationTest {
         assertThat(records.body()).contains(
             "\"type\":\"LOCAL_FILES\"", "\"state\":\"COMPLETED\"", "\"source\":\"3 个本地文件\""
         );
+
+        var deleted = delete("/api/v1/me/import-records/" + id, cookie);
+        assertThat(deleted.statusCode()).isEqualTo(204);
+        assertThat(get("/api/v1/me/import-records", cookie).body()).doesNotContain(id);
     }
 
     @Test
@@ -592,6 +600,13 @@ class SonaApiIntegrationTest {
         return send(HttpRequest.newBuilder(uri(path))
             .header("Cookie", cookie)
             .GET()
+            .build());
+    }
+
+    private HttpResponse<String> delete(String path, String cookie) throws Exception {
+        return send(HttpRequest.newBuilder(uri(path))
+            .header("Cookie", cookie)
+            .DELETE()
             .build());
     }
 

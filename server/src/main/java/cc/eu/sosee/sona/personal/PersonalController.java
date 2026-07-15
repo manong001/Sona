@@ -1,7 +1,6 @@
 package cc.eu.sosee.sona.personal;
 
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
-import cc.eu.sosee.sona.library.ServerMusicDirectoryService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -40,14 +39,14 @@ class PersonalController {
     private static final Set<String> IMPORT_STATES = Set.of("RUNNING", "COMPLETED", "FAILED");
 
     private final PersonalRepository repository;
-    private final ServerMusicDirectoryService directoryService;
+    private final DirectoryImportService directoryImportService;
 
     PersonalController(
         PersonalRepository repository,
-        ServerMusicDirectoryService directoryService
+        DirectoryImportService directoryImportService
     ) {
         this.repository = repository;
-        this.directoryService = directoryService;
+        this.directoryImportService = directoryImportService;
     }
 
     @GetMapping("/favorites")
@@ -93,6 +92,17 @@ class PersonalController {
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(NOT_FOUND, "Import record not found");
         }
+    }
+
+    @DeleteMapping("/import-records/{id}")
+    ResponseEntity<Void> deleteImportRecord(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        if (!repository.deleteImportRecord(user.id(), id)) {
+            throw new ResponseStatusException(NOT_FOUND, "Import record not found");
+        }
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/favorites/tracks")
@@ -144,8 +154,10 @@ class PersonalController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @Valid @RequestBody DirectoryImportRequest request
     ) {
-        var directory = directoryService.resolve(request.path());
-        return new DirectoryImportResponse(repository.addFavoritesFromDirectory(user.id(), directory));
+        var result = directoryImportService.importFavorites(user.id(), request.path());
+        return new DirectoryImportResponse(
+            result.importedCount(), result.importRecordId(), result.scanning()
+        );
     }
 
     @GetMapping("/playlists")
@@ -214,10 +226,12 @@ class PersonalController {
         @Valid @RequestBody DirectoryImportRequest request
     ) {
         requireOwnedPlaylist(user.id(), playlistId);
-        var directory = directoryService.resolve(request.path());
-        return new DirectoryImportResponse(repository.addPlaylistTracksFromDirectory(
-            playlistId, directory
-        ));
+        var result = directoryImportService.importPlaylist(
+            user.id(), playlistId, "歌单", request.path()
+        );
+        return new DirectoryImportResponse(
+            result.importedCount(), result.importRecordId(), result.scanning()
+        );
     }
 
     @GetMapping("/history")
@@ -330,7 +344,7 @@ class PersonalController {
     record DirectoryImportRequest(@NotNull @Size(max = 2048) String path) {
     }
 
-    record DirectoryImportResponse(int importedCount) {
+    record DirectoryImportResponse(int importedCount, String importRecordId, boolean scanning) {
     }
 
     record CreateImportRecordRequest(

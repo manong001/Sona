@@ -69,6 +69,12 @@ class DownloadService {
         return queued;
     }
 
+    void delete(String id, String requestedBy) {
+        if (!repository.delete(id, requestedBy)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "下载记录不存在");
+        }
+    }
+
     private void submit(DownloadTask task) {
         try {
             taskExecutor.execute(() -> run(task));

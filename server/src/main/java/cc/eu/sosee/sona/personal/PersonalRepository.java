@@ -110,6 +110,13 @@ class PersonalRepository {
         return importRecord(userId, id);
     }
 
+    boolean deleteImportRecord(String userId, String id) {
+        return jdbcClient.sql("DELETE FROM import_records WHERE id = :id AND user_id = :userId")
+            .param("id", id)
+            .param("userId", userId)
+            .update() == 1;
+    }
+
     private ImportRecordData importRecord(String userId, String id) {
         return jdbcClient.sql("SELECT * FROM import_records WHERE id = :id AND user_id = :userId")
             .param("id", id)
@@ -278,15 +285,62 @@ class PersonalRepository {
             .update();
     }
 
+    @Transactional
+    void refreshDirectoryIndex(Path directory) {
+        var directoryPath = directory.toAbsolutePath().normalize().toString();
+        var trackIds = pathTrackIds(directory);
+        jdbcClient.sql("DELETE FROM directory_track_memberships WHERE directory_path = :directoryPath")
+            .param("directoryPath", directoryPath)
+            .update();
+        for (var trackId : trackIds) {
+            jdbcClient.sql("""
+                    INSERT OR IGNORE INTO directory_track_memberships(directory_path, track_id)
+                    VALUES (:directoryPath, :trackId)
+                    """)
+                .param("directoryPath", directoryPath)
+                .param("trackId", trackId)
+                .update();
+        }
+        jdbcClient.sql("""
+                INSERT OR REPLACE INTO directory_import_indexes(directory_path, indexed_at)
+                VALUES (:directoryPath, :indexedAt)
+                """)
+            .param("directoryPath", directoryPath)
+            .param("indexedAt", clock.millis())
+            .update();
+    }
+
     private List<String> trackIdsInDirectory(Path directory) {
+        var directoryPath = directory.toAbsolutePath().normalize().toString();
+        var indexed = jdbcClient.sql("""
+                SELECT COUNT(*) FROM directory_import_indexes
+                WHERE directory_path = :directoryPath
+                """)
+            .param("directoryPath", directoryPath)
+            .query(Integer.class)
+            .single() > 0;
+        if (!indexed) {
+            refreshDirectoryIndex(directory);
+        }
+        return jdbcClient.sql("""
+                SELECT track_id FROM directory_track_memberships
+                WHERE directory_path = :directoryPath
+                ORDER BY track_id
+                """)
+            .param("directoryPath", directoryPath)
+            .query(String.class)
+            .list();
+    }
+
+    private List<String> pathTrackIds(Path directory) {
         var prefix = directory.toAbsolutePath().normalize() + directory.getFileSystem().getSeparator();
         return jdbcClient.sql("""
                 SELECT id FROM tracks
                 WHERE pool_type <> 'PENDING'
-                  AND substr(path, 1, length(:prefix)) = :prefix
+                  AND path GLOB :pathPattern
                 ORDER BY path, id
                 """)
-            .param("prefix", prefix)
+            .param("pathPattern", prefix + "*")
             .query(String.class)
             .list();
     }

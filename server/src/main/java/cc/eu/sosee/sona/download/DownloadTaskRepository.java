@@ -89,6 +89,13 @@ class DownloadTaskRepository {
             .optional();
     }
 
+    boolean delete(String id, String requestedBy) {
+        return jdbcClient.sql("DELETE FROM download_tasks WHERE id = :id AND requested_by = :requestedBy")
+            .param("id", id)
+            .param("requestedBy", requestedBy)
+            .update() == 1;
+    }
+
     void update(String id, DownloadTaskState state, List<String> files, String message) {
         jdbcClient.sql("""
                 UPDATE download_tasks
