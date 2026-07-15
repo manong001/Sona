@@ -35,9 +35,9 @@ class DownloadService {
         return gateway.sources();
     }
 
-    List<DownloadCandidate> search(String query) {
+    List<DownloadCandidate> search(String query, List<String> sources) {
         requireEnabled();
-        return gateway.search(query.strip()).stream()
+        return gateway.search(query.strip(), sources).stream()
             .sorted(Comparator.comparing(
                 DownloadCandidate::fileSizeBytes,
                 Comparator.nullsLast(Comparator.reverseOrder())
@@ -45,8 +45,8 @@ class DownloadService {
             .toList();
     }
 
-    List<DownloadTask> tasks() {
-        return repository.findRecent();
+    List<DownloadTask> tasks(String requestedBy) {
+        return repository.findRecent(requestedBy);
     }
 
     DownloadTask queue(DownloadCandidate candidate, String requestedBy) {

@@ -10,5 +10,9 @@ public interface DownloaderGateway {
 
     List<DownloadCandidate> search(String query);
 
+    default List<DownloadCandidate> search(String query, List<String> sources) {
+        return search(query);
+    }
+
     List<String> download(String candidateId);
 }

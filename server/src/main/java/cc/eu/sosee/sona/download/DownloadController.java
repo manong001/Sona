@@ -34,13 +34,19 @@ class DownloadController {
     }
 
     @GetMapping("/search")
-    SearchResponse search(@RequestParam @NotBlank @Size(max = 120) String q) {
-        return new SearchResponse(service.search(q));
+    SearchResponse search(
+        @RequestParam @NotBlank @Size(max = 120) String q,
+        @RequestParam(required = false) String sources
+    ) {
+        var selectedSources = sources == null || sources.isBlank()
+            ? List.<String>of()
+            : List.of(sources.split(",")).stream().map(String::strip).filter(value -> !value.isEmpty()).toList();
+        return new SearchResponse(service.search(q, selectedSources));
     }
 
     @GetMapping
-    List<DownloadTask> tasks() {
-        return service.tasks();
+    List<DownloadTask> tasks(@AuthenticationPrincipal AuthenticatedUser user) {
+        return service.tasks(user.username());
     }
 
     @PostMapping

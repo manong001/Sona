@@ -174,3 +174,26 @@ CREATE TABLE IF NOT EXISTS download_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_download_tasks_created ON download_tasks(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS import_records (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    target TEXT NOT NULL,
+    state TEXT NOT NULL,
+    total INTEGER NOT NULL DEFAULT 0,
+    succeeded INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    discovered INTEGER NOT NULL DEFAULT 0,
+    imported INTEGER NOT NULL DEFAULT 0,
+    updated INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    added INTEGER NOT NULL DEFAULT 0,
+    message TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_records_user ON import_records(user_id, created_at DESC);

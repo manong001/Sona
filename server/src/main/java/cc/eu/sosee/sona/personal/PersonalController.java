@@ -12,10 +12,12 @@ import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -32,6 +34,11 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @RequestMapping("/api/v1/me")
 class PersonalController {
 
+    private static final Set<String> IMPORT_TYPES = Set.of(
+        "LOCAL_FILES", "FAVORITE_DIRECTORY", "PLAYLIST_DIRECTORY"
+    );
+    private static final Set<String> IMPORT_STATES = Set.of("RUNNING", "COMPLETED", "FAILED");
+
     private final PersonalRepository repository;
     private final ServerMusicDirectoryService directoryService;
 
@@ -46,6 +53,46 @@ class PersonalController {
     @GetMapping("/favorites")
     FavoriteResponse favorites(@AuthenticationPrincipal AuthenticatedUser user) {
         return new FavoriteResponse(repository.favoriteTrackIds(user.id()));
+    }
+
+    @GetMapping("/import-records")
+    List<PersonalRepository.ImportRecordData> importRecords(
+        @AuthenticationPrincipal AuthenticatedUser user
+    ) {
+        return repository.importRecords(user.id());
+    }
+
+    @PostMapping("/import-records")
+    PersonalRepository.ImportRecordData createImportRecord(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody CreateImportRecordRequest request
+    ) {
+        if (!IMPORT_TYPES.contains(request.type())) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid import type");
+        }
+        return repository.createImportRecord(
+            user.id(), request.type(), request.source().strip(), request.target().strip(), request.total()
+        );
+    }
+
+    @PatchMapping("/import-records/{id}")
+    PersonalRepository.ImportRecordData updateImportRecord(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @Valid @RequestBody UpdateImportRecordRequest request
+    ) {
+        if (!IMPORT_STATES.contains(request.state())) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid import state");
+        }
+        try {
+            return repository.updateImportRecord(
+                user.id(), id, request.state(), request.total(), request.succeeded(), request.failed(),
+                request.discovered(), request.imported(), request.updated(), request.skipped(),
+                request.added(), request.message()
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(NOT_FOUND, "Import record not found");
+        }
     }
 
     @GetMapping("/favorites/tracks")
@@ -284,5 +331,27 @@ class PersonalController {
     }
 
     record DirectoryImportResponse(int importedCount) {
+    }
+
+    record CreateImportRecordRequest(
+        @NotBlank @Size(max = 40) String type,
+        @NotBlank @Size(max = 180) String source,
+        @NotBlank @Size(max = 180) String target,
+        @PositiveOrZero int total
+    ) {
+    }
+
+    record UpdateImportRecordRequest(
+        @NotBlank @Size(max = 20) String state,
+        @PositiveOrZero Integer total,
+        @PositiveOrZero Integer succeeded,
+        @PositiveOrZero Integer failed,
+        @PositiveOrZero Integer discovered,
+        @PositiveOrZero Integer imported,
+        @PositiveOrZero Integer updated,
+        @PositiveOrZero Integer skipped,
+        @PositiveOrZero Integer added,
+        @Size(max = 500) String message
+    ) {
     }
 }

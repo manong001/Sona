@@ -10,6 +10,8 @@ struct MusicDownloadView: View {
     @State private var visibleCandidateCount = 20
     @State private var selectedSection = 0
     @State private var isSearching = false
+    @State private var isLoadingOtherSources = false
+    @State private var searchGeneration = 0
     @State private var isLoadingTasks = false
     @State private var errorMessage: String?
 
@@ -130,6 +132,14 @@ struct MusicDownloadView: View {
                             Spacer()
                         }
                         .padding(.top, 70)
+                    } else if filteredCandidates.isEmpty && isLoadingOtherSources {
+                        HStack {
+                            Spacer()
+                            ProgressView("正在搜索其他平台…")
+                                .tint(.sonaGreen)
+                            Spacer()
+                        }
+                        .padding(.top, 70)
                     } else if filteredCandidates.isEmpty {
                         ContentUnavailableView(
                             candidates.isEmpty ? "搜索你的下一首歌" : "该平台暂无结果",
@@ -157,7 +167,13 @@ struct MusicDownloadView: View {
                                 .tint(.sonaGreen)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 20)
-                                .onAppear { loadNextCandidatePage() }
+                            .onAppear { loadNextCandidatePage() }
+                        }
+                        if isLoadingOtherSources {
+                            ProgressView("正在补充其他平台结果…")
+                                .tint(.sonaGreen)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
                         }
                     }
                 }
@@ -251,17 +267,69 @@ struct MusicDownloadView: View {
         let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty, !isSearching else { return }
         isSearching = true
+        isLoadingOtherSources = false
         errorMessage = nil
-        Task { await search(keyword: keyword) }
+        candidates = []
+        visibleCandidateCount = candidatePageSize
+        searchGeneration += 1
+        let generation = searchGeneration
+        Task { await search(keyword: keyword, generation: generation) }
     }
 
-    private func search(keyword: String) async {
-        defer { isSearching = false }
+    private func search(keyword: String, generation: Int) async {
+        let sourceIDs = sources.map(\.id)
+        guard let primarySource = sourceIDs.first(where: { $0 == "QQMusicClient" }) ?? sourceIDs.first else {
+            if generation == searchGeneration {
+                isSearching = false
+                errorMessage = "没有可用的音乐来源"
+            }
+            return
+        }
+        let remainingSources = sourceIDs.filter { $0 != primarySource }
+        var primaryError: Error?
         do {
-            candidates = try await APIClient.shared.searchMusicDownloads(query: keyword).items
-            visibleCandidateCount = candidatePageSize
+            let result = try await APIClient.shared.searchMusicDownloads(
+                query: keyword,
+                sources: [primarySource]
+            )
+            guard generation == searchGeneration else { return }
+            candidates = result.items
         } catch {
-            errorMessage = error.localizedDescription
+            primaryError = error
+        }
+        guard generation == searchGeneration else { return }
+        isSearching = false
+        isLoadingOtherSources = !remainingSources.isEmpty
+
+        await withTaskGroup(of: [DownloadCandidate].self) { group in
+            for source in remainingSources {
+                group.addTask {
+                    do {
+                        return try await APIClient.shared.searchMusicDownloads(
+                            query: keyword,
+                            sources: [source]
+                        ).items
+                    } catch {
+                        return []
+                    }
+                }
+            }
+            for await result in group {
+                guard generation == searchGeneration else {
+                    group.cancelAll()
+                    return
+                }
+                let existingIDs = Set(candidates.map(\.id))
+                candidates.append(contentsOf: result.filter { !existingIDs.contains($0.id) })
+                if !result.isEmpty {
+                    errorMessage = nil
+                }
+            }
+        }
+        guard generation == searchGeneration else { return }
+        isLoadingOtherSources = false
+        if candidates.isEmpty, let primaryError {
+            errorMessage = primaryError.localizedDescription
         }
     }
 

@@ -43,9 +43,20 @@ class MusicDlGateway implements DownloaderGateway {
 
     @Override
     public List<DownloadCandidate> search(String query) {
+        return search(query, List.of());
+    }
+
+    @Override
+    public List<DownloadCandidate> search(String query, List<String> sources) {
         requireEnabled();
         var response = searchClient.get()
-            .uri(builder -> builder.path("/v1/search").queryParam("q", query).build())
+            .uri(builder -> {
+                builder.path("/v1/search").queryParam("q", query);
+                if (!sources.isEmpty()) {
+                    builder.queryParam("sources", String.join(",", sources));
+                }
+                return builder.build();
+            })
             .header("X-Sona-Token", token)
             .accept(MediaType.APPLICATION_JSON)
             .retrieve()

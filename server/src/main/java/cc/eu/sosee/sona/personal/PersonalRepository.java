@@ -34,6 +34,111 @@ class PersonalRepository {
             .list();
     }
 
+    List<ImportRecordData> importRecords(String userId) {
+        return jdbcClient.sql("""
+                SELECT * FROM import_records
+                WHERE user_id = :userId
+                ORDER BY created_at DESC
+                LIMIT 100
+                """)
+            .param("userId", userId)
+            .query(PersonalRepository::importRecord)
+            .list();
+    }
+
+    ImportRecordData createImportRecord(
+        String userId, String type, String source, String target, int total
+    ) {
+        var id = UUID.randomUUID().toString();
+        var now = clock.millis();
+        jdbcClient.sql("""
+                INSERT INTO import_records(
+                    id, user_id, type, source, target, state, total, created_at, updated_at
+                ) VALUES (
+                    :id, :userId, :type, :source, :target, 'RUNNING', :total, :createdAt, :updatedAt
+                )
+                """)
+            .param("id", id)
+            .param("userId", userId)
+            .param("type", type)
+            .param("source", source)
+            .param("target", target)
+            .param("total", total)
+            .param("createdAt", now)
+            .param("updatedAt", now)
+            .update();
+        return importRecord(userId, id);
+    }
+
+    ImportRecordData updateImportRecord(
+        String userId, String id, String state, Integer total, Integer succeeded, Integer failed,
+        Integer discovered, Integer imported, Integer updated, Integer skipped, Integer added,
+        String message
+    ) {
+        var changed = jdbcClient.sql("""
+                UPDATE import_records
+                SET state = :state,
+                    total = COALESCE(:total, total),
+                    succeeded = COALESCE(:succeeded, succeeded),
+                    failed = COALESCE(:failed, failed),
+                    discovered = COALESCE(:discovered, discovered),
+                    imported = COALESCE(:imported, imported),
+                    updated = COALESCE(:updated, updated),
+                    skipped = COALESCE(:skipped, skipped),
+                    added = COALESCE(:added, added),
+                    message = :message,
+                    updated_at = :updatedAt
+                WHERE id = :id AND user_id = :userId
+                """)
+            .param("state", state)
+            .param("total", total)
+            .param("succeeded", succeeded)
+            .param("failed", failed)
+            .param("discovered", discovered)
+            .param("imported", imported)
+            .param("updated", updated)
+            .param("skipped", skipped)
+            .param("added", added)
+            .param("message", message)
+            .param("updatedAt", clock.millis())
+            .param("id", id)
+            .param("userId", userId)
+            .update();
+        if (changed == 0) {
+            throw new IllegalArgumentException("Import record not found");
+        }
+        return importRecord(userId, id);
+    }
+
+    private ImportRecordData importRecord(String userId, String id) {
+        return jdbcClient.sql("SELECT * FROM import_records WHERE id = :id AND user_id = :userId")
+            .param("id", id)
+            .param("userId", userId)
+            .query(PersonalRepository::importRecord)
+            .single();
+    }
+
+    private static ImportRecordData importRecord(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new ImportRecordData(
+            resultSet.getString("id"),
+            resultSet.getString("type"),
+            resultSet.getString("source"),
+            resultSet.getString("target"),
+            resultSet.getString("state"),
+            resultSet.getInt("total"),
+            resultSet.getInt("succeeded"),
+            resultSet.getInt("failed"),
+            resultSet.getInt("discovered"),
+            resultSet.getInt("imported"),
+            resultSet.getInt("updated"),
+            resultSet.getInt("skipped"),
+            resultSet.getInt("added"),
+            resultSet.getString("message"),
+            resultSet.getLong("created_at"),
+            resultSet.getLong("updated_at")
+        );
+    }
+
     List<FavoriteTrackData> favoriteTracks(String userId, int offset, int limit) {
         return jdbcClient.sql("""
                 SELECT tracks.*
@@ -454,6 +559,26 @@ class PersonalRepository {
         String streamURL,
         boolean hasLyrics,
         String metadataStatus
+    ) {
+    }
+
+    record ImportRecordData(
+        String id,
+        String type,
+        String source,
+        String target,
+        String state,
+        int total,
+        int succeeded,
+        int failed,
+        int discovered,
+        int imported,
+        int updated,
+        int skipped,
+        int added,
+        String message,
+        long createdAt,
+        long updatedAt
     ) {
     }
 }

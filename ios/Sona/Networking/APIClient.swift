@@ -361,27 +361,66 @@ final class APIClient {
         try await requestVoid(path: path, method: "DELETE")
     }
 
-    func uploadTracks(urls: [URL]) async throws {
+    func uploadTracks(urls: [URL]) async -> LocalUploadResult {
+        var succeeded = 0
+        var errors: [String] = []
         for url in urls {
-            let accessible = url.startAccessingSecurityScopedResource()
-            defer { if accessible { url.stopAccessingSecurityScopedResource() } }
-            let boundary = "Sona-\(UUID().uuidString)"
-            var body = Data()
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(url.lastPathComponent)\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
-            body.append(try Data(contentsOf: url))
-            body.append("\r\n".data(using: .utf8)!)
-            body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-            var request = URLRequest(url: self.url(for: "/api/v1/library/tracks/upload"))
-            request.httpMethod = "POST"
-            request.httpBody = body
-            request.setValue(
-                "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type"
-            )
-            let (data, response) = try await session.data(for: request)
-            try validate(response: response, data: data)
+            do {
+                let accessible = url.startAccessingSecurityScopedResource()
+                defer { if accessible { url.stopAccessingSecurityScopedResource() } }
+                let boundary = "Sona-\(UUID().uuidString)"
+                var body = Data()
+                body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                body.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(url.lastPathComponent)\"\r\n".data(using: .utf8)!)
+                body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+                body.append(try Data(contentsOf: url))
+                body.append("\r\n".data(using: .utf8)!)
+                body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+                var request = URLRequest(url: self.url(for: "/api/v1/library/tracks/upload"))
+                request.httpMethod = "POST"
+                request.httpBody = body
+                request.setValue(
+                    "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type"
+                )
+                let (data, response) = try await session.data(for: request)
+                try validate(response: response, data: data)
+                succeeded += 1
+            } catch {
+                errors.append(error.localizedDescription)
+            }
         }
+        return LocalUploadResult(
+            succeeded: succeeded,
+            failed: urls.count - succeeded,
+            message: errors.first
+        )
+    }
+
+    func importRecords() async throws -> [ImportRecord] {
+        try await request(path: "/api/v1/me/import-records")
+    }
+
+    func createImportRecord(
+        type: ImportRecordType, source: String, target: String, total: Int
+    ) async throws -> ImportRecord {
+        struct Body: Encodable {
+            let type: ImportRecordType
+            let source: String
+            let target: String
+            let total: Int
+        }
+        return try await request(
+            path: "/api/v1/me/import-records", method: "POST",
+            body: try encoder.encode(Body(type: type, source: source, target: target, total: total))
+        )
+    }
+
+    @discardableResult
+    func updateImportRecord(id: String, update: ImportRecordUpdate) async throws -> ImportRecord {
+        try await request(
+            path: "/api/v1/me/import-records/\(id)", method: "PATCH",
+            body: try encoder.encode(update)
+        )
     }
 
     func startScan() async throws -> ScanStatus {
@@ -418,12 +457,17 @@ final class APIClient {
         try await request(path: "/api/v1/downloads/sources")
     }
 
-    func searchMusicDownloads(query: String) async throws -> DownloadSearchResponse {
+    func searchMusicDownloads(
+        query: String, sources: [String] = []
+    ) async throws -> DownloadSearchResponse {
         var components = URLComponents(
             url: url(for: "/api/v1/downloads/search"),
             resolvingAgainstBaseURL: false
         )!
         components.queryItems = [URLQueryItem(name: "q", value: query)]
+        if !sources.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "sources", value: sources.joined(separator: ",")))
+        }
         return try await request(url: components.url!, timeout: 180)
     }
 

@@ -70,10 +70,14 @@ class DownloadTaskRepository {
         return task;
     }
 
-    List<DownloadTask> findRecent() {
+    List<DownloadTask> findRecent(String requestedBy) {
         return jdbcClient.sql("""
-                SELECT * FROM download_tasks ORDER BY created_at DESC LIMIT 100
+                SELECT * FROM download_tasks
+                WHERE requested_by = :requestedBy
+                ORDER BY created_at DESC
+                LIMIT 100
                 """)
+            .param("requestedBy", requestedBy)
             .query(this::map)
             .list();
     }

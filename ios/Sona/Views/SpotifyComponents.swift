@@ -204,6 +204,8 @@ struct SonaTrackListView: View {
     @State private var showsImporter = false
     @State private var showsServerDirectoryPicker = false
     @State private var importMessage: String?
+    @State private var isImportingServerDirectory = false
+    @State private var importProgressMessage = ""
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let loadsMoreFromLibrary: Bool
@@ -378,6 +380,10 @@ struct SonaTrackListView: View {
                 }
                 .padding(.bottom, 24)
             }
+
+            if isImportingServerDirectory {
+                DirectoryImportProgressOverlay(message: importProgressMessage)
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -433,16 +439,72 @@ struct SonaTrackListView: View {
     }
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {
+        let record = try? await APIClient.shared.createImportRecord(
+            type: .favoriteDirectory,
+            source: directory.name,
+            target: "收藏",
+            total: 0
+        )
+        if let record {
+            let _ = try? await APIClient.shared.updateImportRecord(
+                id: record.id,
+                update: ImportRecordUpdate(state: .running, message: "正在扫描目录…")
+            )
+        }
+        isImportingServerDirectory = true
+        importProgressMessage = "正在扫描“\(directory.name)”…"
+        defer { isImportingServerDirectory = false }
         await library.scan(directory: directory.path)
         if let errorMessage = library.errorMessage {
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: scanRecordUpdate(
+                        state: .failed,
+                        status: library.scanStatus,
+                        failed: max(library.scanStatus?.failed ?? 0, 1),
+                        message: errorMessage
+                    )
+                )
+            }
             importMessage = errorMessage
             return
         }
         do {
+            importProgressMessage = "正在加入收藏…"
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: ImportRecordUpdate(state: .running, message: "正在加入收藏…")
+                )
+            }
             let result = try await APIClient.shared.importFavorites(directory: directory.path)
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: scanRecordUpdate(
+                        state: .completed,
+                        status: library.scanStatus,
+                        succeeded: result.importedCount,
+                        added: result.importedCount,
+                        message: "已加入收藏"
+                    )
+                )
+            }
             await personal.refresh()
             importMessage = "“\(directory.name)”已加入收藏 \(result.importedCount) 首"
         } catch {
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: scanRecordUpdate(
+                        state: .failed,
+                        status: library.scanStatus,
+                        failed: max(library.scanStatus?.failed ?? 0, 1),
+                        message: error.localizedDescription
+                    )
+                )
+            }
             importMessage = error.localizedDescription
         }
     }
@@ -450,12 +512,102 @@ struct SonaTrackListView: View {
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
         do {
             let urls = try result.get()
-            try await APIClient.shared.uploadTracks(urls: urls)
+            let record = try? await APIClient.shared.createImportRecord(
+                type: .localFiles,
+                source: "\(urls.count) 个本地文件",
+                target: "正常歌曲池",
+                total: urls.count
+            )
+            let upload = await APIClient.shared.uploadTracks(urls: urls)
+            guard upload.succeeded > 0 else {
+                if let record {
+                    let _ = try? await APIClient.shared.updateImportRecord(
+                        id: record.id,
+                        update: ImportRecordUpdate(
+                            state: .failed,
+                            succeeded: 0,
+                            failed: upload.failed,
+                            message: upload.message ?? "文件上传失败"
+                        )
+                    )
+                }
+                importMessage = upload.message ?? "文件上传失败"
+                return
+            }
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: ImportRecordUpdate(
+                        state: .running,
+                        succeeded: upload.succeeded,
+                        failed: upload.failed,
+                        message: "正在扫描曲库…"
+                    )
+                )
+            }
             await library.scan()
+            if let errorMessage = library.errorMessage {
+                if let record {
+                    let _ = try? await APIClient.shared.updateImportRecord(
+                        id: record.id,
+                        update: scanRecordUpdate(
+                            state: .failed,
+                            status: library.scanStatus,
+                            succeeded: upload.succeeded,
+                            failed: upload.failed + max(library.scanStatus?.failed ?? 0, 1),
+                            message: errorMessage
+                        )
+                    )
+                }
+                importMessage = errorMessage
+                return
+            }
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: scanRecordUpdate(
+                        state: .completed,
+                        status: library.scanStatus,
+                        succeeded: upload.succeeded,
+                        failed: upload.failed,
+                        message: upload.failed > 0 ? "部分文件上传失败" : "已完成"
+                    )
+                )
+            }
             await personal.refresh()
-            importMessage = "已导入 \(urls.count) 首到正常歌曲池"
+            importMessage = upload.failed == 0
+                ? "已导入 \(upload.succeeded) 首到正常歌曲池"
+                : "已导入 \(upload.succeeded) 首，失败 \(upload.failed) 首"
         } catch {
             importMessage = error.localizedDescription
         }
+    }
+}
+
+struct DirectoryImportProgressOverlay: View {
+    let message: String
+
+    var body: some View {
+        Color.black.opacity(0.45)
+            .ignoresSafeArea()
+            .overlay {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(Color.sonaGreen)
+                    Text(message)
+                        .font(.body.weight(.medium))
+                        .multilineTextAlignment(.center)
+                    Text("目录较大时可能需要几分钟")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+                .padding(24)
+                .frame(maxWidth: 260)
+                .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 18))
+                .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("服务器目录导入中，\(message)")
     }
 }

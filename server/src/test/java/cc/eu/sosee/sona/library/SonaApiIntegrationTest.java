@@ -408,6 +408,31 @@ class SonaApiIntegrationTest {
     }
 
     @Test
+    void keepsImportRecordsForTheCurrentUser() throws Exception {
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+
+        var created = postJson("/api/v1/me/import-records", cookie, """
+                {"type":"LOCAL_FILES","source":"3 个本地文件","target":"正常歌曲池","total":3}
+                """);
+        assertThat(created.statusCode()).isEqualTo(200);
+        assertThat(created.body()).contains("\"state\":\"RUNNING\"");
+        var id = created.body().replaceFirst("(?s).*\"id\":\"([^\"]+)\".*", "$1");
+
+        var completed = patchJson("/api/v1/me/import-records/" + id, cookie, """
+                {"state":"COMPLETED","succeeded":2,"failed":1,"message":"1 个文件上传失败"}
+                """);
+        assertThat(completed.statusCode()).isEqualTo(200);
+        assertThat(completed.body()).contains("\"succeeded\":2", "\"failed\":1");
+
+        var records = get("/api/v1/me/import-records", cookie);
+        assertThat(records.statusCode()).isEqualTo(200);
+        assertThat(records.body()).contains(
+            "\"type\":\"LOCAL_FILES\"", "\"state\":\"COMPLETED\"", "\"source\":\"3 个本地文件\""
+        );
+    }
+
+    @Test
     void childModeFiltersTracksAndHiddenTrackCannotBeFetchedDirectly() throws Exception {
         saveTrack("general-track", "General Track");
         saveTrack("child-track", "Child Track");

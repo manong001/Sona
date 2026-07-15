@@ -105,6 +105,16 @@ class DownloadApiIntegrationTest {
         assertThat(state).isEqualTo("COMPLETED");
     }
 
+    @Test
+    void searchesARequestedMusicSourceWithoutWaitingForOtherSources() throws Exception {
+        var adminCookie = login("admin", "test-password");
+
+        var search = get("/api/v1/downloads/search?q=test&sources=QQMusicClient", adminCookie);
+
+        assertThat(search.statusCode()).isEqualTo(200);
+        assertThat(search.body()).contains("candidate-small", "QQ音乐").doesNotContain("candidate-1");
+    }
+
     private String login(String username, String password) throws Exception {
         var response = sendJson(
             "POST",
@@ -151,23 +161,33 @@ class DownloadApiIntegrationTest {
         }
         try {
             sidecar = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-            sidecar.createContext("/v1/search", exchange -> respond(exchange, 200, """
-                {"items":[
-                {"candidateId":"candidate-small","source":"QQMusicClient",
-                "sourceName":"QQ音乐","title":"小文件","artist":"测试歌手",
-                "fileSizeBytes":100,"hasLyrics":false},
-                {"candidateId":"candidate-unknown","source":"MiguMusicClient",
-                "sourceName":"咪咕音乐","title":"未知体积","artist":"测试歌手",
-                "fileSizeBytes":null,"hasLyrics":false},
-                {"candidateId":"candidate-1","source":"NeteaseMusicClient",
-                "sourceName":"网易云音乐","title":"测试歌曲","artist":"测试歌手",
-                "album":"测试专辑","extension":"flac","quality":"FLAC · 1411 kbps",
-                "durationMs":180000,"fileSizeBytes":12345,"artworkUrl":null,
-                "hasLyrics":true,"lyrics":"[00:01.00]歌词"},
-                {"candidateId":"candidate-large","source":"KuwoMusicClient",
-                "sourceName":"酷我音乐","title":"大文件","artist":"测试歌手",
-                "fileSizeBytes":99999,"hasLyrics":false}]}
-                """));
+            sidecar.createContext("/v1/search", exchange -> {
+                if (exchange.getRequestURI().getQuery().contains("sources=QQMusicClient")) {
+                    respond(exchange, 200, """
+                        {"items":[{"candidateId":"candidate-small","source":"QQMusicClient",
+                        "sourceName":"QQ音乐","title":"小文件","artist":"测试歌手",
+                        "fileSizeBytes":100,"hasLyrics":false}]}
+                        """);
+                    return;
+                }
+                respond(exchange, 200, """
+                    {"items":[
+                    {"candidateId":"candidate-small","source":"QQMusicClient",
+                    "sourceName":"QQ音乐","title":"小文件","artist":"测试歌手",
+                    "fileSizeBytes":100,"hasLyrics":false},
+                    {"candidateId":"candidate-unknown","source":"MiguMusicClient",
+                    "sourceName":"咪咕音乐","title":"未知体积","artist":"测试歌手",
+                    "fileSizeBytes":null,"hasLyrics":false},
+                    {"candidateId":"candidate-1","source":"NeteaseMusicClient",
+                    "sourceName":"网易云音乐","title":"测试歌曲","artist":"测试歌手",
+                    "album":"测试专辑","extension":"flac","quality":"FLAC · 1411 kbps",
+                    "durationMs":180000,"fileSizeBytes":12345,"artworkUrl":null,
+                    "hasLyrics":true,"lyrics":"[00:01.00]歌词"},
+                    {"candidateId":"candidate-large","source":"KuwoMusicClient",
+                    "sourceName":"酷我音乐","title":"大文件","artist":"测试歌手",
+                    "fileSizeBytes":99999,"hasLyrics":false}]}
+                    """);
+            });
             sidecar.createContext("/v1/downloads", exchange -> respond(
                 exchange,
                 200,

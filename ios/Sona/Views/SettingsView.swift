@@ -18,6 +18,9 @@ struct SettingsView: View {
     @State private var isDownloadingUpdate = false
     @State private var downloadProgress = 0.0
     @State private var downloadedPackage: SharedPackage?
+    @State private var importRecords: [ImportRecord] = []
+    @State private var downloadTasks: [MusicDownloadTask] = []
+    @State private var isLoadingImportRecords = false
 
     var body: some View {
         NavigationStack {
@@ -73,6 +76,23 @@ struct SettingsView: View {
                         Picker("儿童主题", selection: $childTheme) {
                             Text("🚀 星空小勇士").tag("boy")
                             Text("🦄 糖果小公主").tag("girl")
+                        }
+                    }
+                }
+
+                Section("导入记录") {
+                    if isLoadingImportRecords && importHistoryItems.isEmpty {
+                        HStack {
+                            ProgressView()
+                            Text("正在加载导入记录…")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if importHistoryItems.isEmpty {
+                        Text("还没有导入记录")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(importHistoryItems) { item in
+                            ImportHistoryRow(item: item)
                         }
                     }
                 }
@@ -174,22 +194,22 @@ struct SettingsView: View {
             .onAppear {
                 appIconPreference = UIApplication.shared.alternateIconName == "SpotifyIcon"
                     ? "spotify" : "girl"
+                Task { await loadImportRecords() }
+            }
+            .task(id: activeImportRecordKey) {
+                guard importHistoryItems.contains(where: { $0.isRunning }) else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    await loadImportRecords()
+                    if !importHistoryItems.contains(where: { $0.isRunning }) { break }
+                }
             }
             .fileImporter(
                 isPresented: $showsImporter,
                 allowedContentTypes: [.audio],
                 allowsMultipleSelection: true
             ) { result in
-                Task {
-                    do {
-                        let urls = try result.get()
-                        try await APIClient.shared.uploadTracks(urls: urls)
-                        await library.scan()
-                        importMessage = "已导入 \(urls.count) 首到正常歌曲池"
-                    } catch {
-                        importMessage = error.localizedDescription
-                    }
-                }
+                Task { await importLocalFiles(result) }
             }
             .alert("导入结果", isPresented: Binding(
                 get: { importMessage != nil }, set: { if !$0 { importMessage = nil } }
@@ -209,6 +229,110 @@ struct SettingsView: View {
 
     private var currentBuild: Int {
         Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") ?? 0
+    }
+
+    private var importHistoryItems: [ImportHistoryItem] {
+        (importRecords.map(ImportHistoryItem.record) + downloadTasks.map(ImportHistoryItem.download))
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private var activeImportRecordKey: String {
+        importHistoryItems
+            .filter(\.isRunning)
+            .map { "\($0.id):\($0.updatedAt)" }
+            .joined(separator: "|")
+    }
+
+    @MainActor
+    private func loadImportRecords() async {
+        guard !isLoadingImportRecords else { return }
+        isLoadingImportRecords = true
+        defer { isLoadingImportRecords = false }
+        async let recordsRequest = APIClient.shared.importRecords()
+        async let tasksRequest = APIClient.shared.musicDownloadTasks()
+        do {
+            let (records, tasks) = try await (recordsRequest, tasksRequest)
+            importRecords = records
+            downloadTasks = tasks
+        } catch {
+            importMessage = "加载导入记录失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func importLocalFiles(_ result: Result<[URL], Error>) async {
+        do {
+            let urls = try result.get()
+            let record = try? await APIClient.shared.createImportRecord(
+                type: .localFiles,
+                source: "\(urls.count) 个本地文件",
+                target: "正常歌曲池",
+                total: urls.count
+            )
+            let upload = await APIClient.shared.uploadTracks(urls: urls)
+            guard upload.succeeded > 0 else {
+                if let record {
+                    let _ = try? await APIClient.shared.updateImportRecord(
+                        id: record.id,
+                        update: ImportRecordUpdate(
+                            state: .failed,
+                            succeeded: 0,
+                            failed: upload.failed,
+                            message: upload.message ?? "文件上传失败"
+                        )
+                    )
+                }
+                await loadImportRecords()
+                importMessage = upload.message ?? "文件上传失败"
+                return
+            }
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: ImportRecordUpdate(
+                        state: .running,
+                        succeeded: upload.succeeded,
+                        failed: upload.failed,
+                        message: "正在扫描曲库…"
+                    )
+                )
+            }
+            await library.scan()
+            if let errorMessage = library.errorMessage {
+                if let record {
+                    let _ = try? await APIClient.shared.updateImportRecord(
+                        id: record.id,
+                        update: scanRecordUpdate(
+                            state: .failed,
+                            status: library.scanStatus,
+                            succeeded: upload.succeeded,
+                            failed: upload.failed + max(library.scanStatus?.failed ?? 0, 1),
+                            message: errorMessage
+                        )
+                    )
+                }
+                await loadImportRecords()
+                importMessage = errorMessage
+                return
+            }
+            if let record {
+                let _ = try? await APIClient.shared.updateImportRecord(
+                    id: record.id,
+                    update: scanRecordUpdate(
+                        state: .completed,
+                        status: library.scanStatus,
+                        succeeded: upload.succeeded,
+                        failed: upload.failed,
+                        message: upload.failed > 0 ? "部分文件上传失败" : "已完成"
+                    )
+                )
+            }
+            await loadImportRecords()
+            importMessage = upload.failed == 0
+                ? "已导入 \(upload.succeeded) 首到正常歌曲池"
+                : "已导入 \(upload.succeeded) 首，失败 \(upload.failed) 首"
+        } catch {
+            importMessage = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -304,6 +428,138 @@ struct SettingsView: View {
         case "FAILED": "失败"
         default: "空闲"
         }
+    }
+}
+
+private enum ImportHistoryItem: Identifiable {
+    case record(ImportRecord)
+    case download(MusicDownloadTask)
+
+    var id: String {
+        switch self {
+        case let .record(record): "record-\(record.id)"
+        case let .download(task): "download-\(task.id)"
+        }
+    }
+
+    var createdAt: Int64 {
+        switch self {
+        case let .record(record): record.createdAt
+        case let .download(task): task.createdAt
+        }
+    }
+
+    var updatedAt: Int64 {
+        switch self {
+        case let .record(record): record.updatedAt
+        case let .download(task): task.updatedAt
+        }
+    }
+
+    var isRunning: Bool {
+        switch self {
+        case let .record(record): record.state == .running
+        case let .download(task): task.state == .queued || task.state == .running
+        }
+    }
+}
+
+private struct ImportHistoryRow: View {
+    let item: ImportHistoryItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text(stateTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(stateColor)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let message {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(isFailed ? .red : .secondary)
+                    .lineLimit(2)
+            }
+            Text(dateText)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var title: String {
+        switch item {
+        case let .record(record): record.type.title
+        case .download: "在线音乐下载"
+        }
+    }
+
+    private var icon: String {
+        switch item {
+        case let .record(record):
+            switch record.type {
+            case .localFiles: "square.and.arrow.down"
+            case .favoriteDirectory: "heart.fill"
+            case .playlistDirectory: "music.note.list"
+            }
+        case .download: "arrow.down.circle"
+        }
+    }
+
+    private var stateTitle: String {
+        switch item {
+        case let .record(record): record.state.title
+        case let .download(task): task.state.title
+        }
+    }
+
+    private var stateColor: Color {
+        if isFailed { return .red }
+        return item.isRunning ? .orange : .green
+    }
+
+    private var isFailed: Bool {
+        switch item {
+        case let .record(record): record.state == .failed
+        case let .download(task): task.state == .failed
+        }
+    }
+
+    private var detail: String {
+        switch item {
+        case let .record(record):
+            var values = ["\(record.source) → \(record.target)"]
+            if record.total > 0 { values.append("总计 \(record.total)") }
+            values.append("成功 \(record.succeeded)")
+            values.append("失败 \(record.failed)")
+            if record.discovered > 0 {
+                values.append("扫描：新增 \(record.imported) / 更新 \(record.updated) / 跳过 \(record.skipped)")
+            }
+            if record.added > 0 { values.append("已加入 \(record.added)") }
+            return values.joined(separator: " · ")
+        case let .download(task):
+            let succeeded = task.state == .completed ? task.files.count : 0
+            let failed = task.state == .failed ? 1 : 0
+            return "\(task.sourceName) · \(task.title) → 正常歌曲池 · 成功 \(succeeded) · 失败 \(failed)"
+        }
+    }
+
+    private var message: String? {
+        switch item {
+        case let .record(record): record.message
+        case let .download(task): task.message
+        }
+    }
+
+    private var dateText: String {
+        Date(timeIntervalSince1970: TimeInterval(item.createdAt) / 1_000)
+            .formatted(date: .abbreviated, time: .shortened)
     }
 }
 
