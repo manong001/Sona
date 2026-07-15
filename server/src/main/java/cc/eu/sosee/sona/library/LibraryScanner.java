@@ -100,7 +100,9 @@ class LibraryScanner {
             var parsed = fileNameParser.parse(normalizedPath);
             var titleFromTag = hasText(metadata.title());
             var artistFromTag = hasText(metadata.artist());
-            var title = firstText(metadata.title(), parsed.title(), "Unknown Title");
+            var title = fileNameParser.stripTrackNumberPrefix(
+                firstText(metadata.title(), parsed.title(), "Unknown Title")
+            );
             var artist = firstText(metadata.artist(), parsed.artist(), "Unknown Artist");
             var album = firstText(metadata.album(), "Unknown Album");
             var trackNumber = metadata.trackNumber() != null ? metadata.trackNumber() : parsed.trackNumber();
@@ -124,7 +126,7 @@ class LibraryScanner {
                 lyrics.plain() == null && lyrics.synced() == null
             ));
             if (!titleFromTag && hasText(scraped.title())) {
-                title = scraped.title().strip();
+                title = fileNameParser.stripTrackNumberPrefix(scraped.title());
             }
             if (!artistFromTag && hasText(scraped.artist())) {
                 artist = scraped.artist().strip();

@@ -78,4 +78,25 @@ final class SessionStore: ObservableObject {
         try? await api.logoutAll()
         state = .signedOut
     }
+
+    func selectAvatar(_ preset: AvatarPreset) async -> Bool {
+        await updateAvatar { try await api.setOwnAvatarPreset(preset) }
+    }
+
+    func uploadAvatar(_ imageData: Data) async -> Bool {
+        await updateAvatar { try await api.uploadOwnAvatar(imageData: imageData) }
+    }
+
+    private func updateAvatar(_ operation: () async throws -> UserResponse) async -> Bool {
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            state = .signedIn(try await operation())
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
 }

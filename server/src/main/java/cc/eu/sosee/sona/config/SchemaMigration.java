@@ -28,6 +28,9 @@ class SchemaMigration implements ApplicationRunner {
             if (!columns.contains("enabled")) {
                 jdbcClient.sql("ALTER TABLE users ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1").update();
             }
+            if (!columns.contains("avatar")) {
+                jdbcClient.sql("ALTER TABLE users ADD COLUMN avatar TEXT").update();
+            }
         }
         if (tableExists("tracks")) {
             var trackColumns = columns("tracks");
@@ -54,6 +57,9 @@ class SchemaMigration implements ApplicationRunner {
         }
         if (tableExists("playback_state") && !columns("playback_state").contains("queue_track_ids")) {
             jdbcClient.sql("ALTER TABLE playback_state ADD COLUMN queue_track_ids TEXT NOT NULL DEFAULT ''").update();
+        }
+        if (tableExists("download_tasks") && !columns("download_tasks").contains("target_playlist_id")) {
+            jdbcClient.sql("ALTER TABLE download_tasks ADD COLUMN target_playlist_id TEXT").update();
         }
     }
 

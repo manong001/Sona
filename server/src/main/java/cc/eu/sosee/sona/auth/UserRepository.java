@@ -21,7 +21,7 @@ class UserRepository {
 
     Optional<UserAccount> findByUsername(String username) {
         return jdbcClient.sql("""
-                SELECT id, username, password_hash, role, enabled
+                SELECT id, username, password_hash, role, enabled, avatar
                 FROM users
                 WHERE username = :username COLLATE NOCASE
                 """)
@@ -32,7 +32,7 @@ class UserRepository {
 
     Optional<UserAccount> findById(String id) {
         return jdbcClient.sql("""
-                SELECT id, username, password_hash, role, enabled
+                SELECT id, username, password_hash, role, enabled, avatar
                 FROM users
                 WHERE id = :id
                 """)
@@ -43,7 +43,7 @@ class UserRepository {
 
     List<UserAccount> findAll() {
         return jdbcClient.sql("""
-                SELECT id, username, password_hash, role, enabled
+                SELECT id, username, password_hash, role, enabled, avatar
                 FROM users
                 ORDER BY CASE role WHEN 'ADMIN' THEN 0 ELSE 1 END, username COLLATE NOCASE
                 """)
@@ -52,7 +52,9 @@ class UserRepository {
     }
 
     UserAccount create(String username, String passwordHash, UserRole role) {
-        var account = new UserAccount(UUID.randomUUID().toString(), username, passwordHash, role, true);
+        var account = new UserAccount(
+            UUID.randomUUID().toString(), username, passwordHash, role, true, null
+        );
         jdbcClient.sql("""
                 INSERT INTO users(id, username, password_hash, role, enabled, created_at)
                 VALUES (:id, :username, :passwordHash, :role, 1, :createdAt)
@@ -93,6 +95,26 @@ class UserRepository {
             .update() == 1;
     }
 
+    boolean updateProfile(String id, String username, UserRole role, boolean enabled) {
+        return jdbcClient.sql("""
+                UPDATE users
+                SET username = :username, role = :role, enabled = :enabled
+                WHERE id = :id
+                """)
+            .param("username", username)
+            .param("role", role.name())
+            .param("enabled", enabled ? 1 : 0)
+            .param("id", id)
+            .update() == 1;
+    }
+
+    boolean setAvatar(String id, String avatar) {
+        return jdbcClient.sql("UPDATE users SET avatar = :avatar WHERE id = :id")
+            .param("avatar", avatar)
+            .param("id", id)
+            .update() == 1;
+    }
+
     @Transactional
     boolean delete(String id) {
         jdbcClient.sql("DELETE FROM random_track_exposures WHERE user_id = :id").param("id", id).update();
@@ -117,7 +139,8 @@ class UserRepository {
             resultSet.getString("username"),
             resultSet.getString("password_hash"),
             UserRole.valueOf(resultSet.getString("role")),
-            resultSet.getBoolean("enabled")
+            resultSet.getBoolean("enabled"),
+            resultSet.getString("avatar")
         );
     }
 }

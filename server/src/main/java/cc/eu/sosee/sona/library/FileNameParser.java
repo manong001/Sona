@@ -7,6 +7,12 @@ final class FileNameParser {
 
     private static final Pattern TRACK_PREFIX = Pattern.compile("^(\\d+)\\.\\s*(.+)$");
 
+    String stripTrackNumberPrefix(String title) {
+        var stripped = title.strip();
+        var matcher = TRACK_PREFIX.matcher(stripped);
+        return matcher.matches() ? matcher.group(2).strip() : stripped;
+    }
+
     ParsedFileName parse(Path path) {
         var filename = path.getFileName().toString();
         var extensionIndex = filename.lastIndexOf('.');
@@ -29,4 +35,3 @@ final class FileNameParser {
         return new ParsedFileName(artist, title, trackNumber);
     }
 }
-

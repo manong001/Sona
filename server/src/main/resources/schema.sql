@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'USER',
     enabled INTEGER NOT NULL DEFAULT 1,
+    avatar TEXT,
     created_at INTEGER NOT NULL
 );
 
@@ -165,6 +166,7 @@ CREATE TABLE IF NOT EXISTS download_tasks (
     album TEXT NOT NULL,
     quality TEXT NOT NULL,
     artwork_url TEXT,
+    target_playlist_id TEXT,
     requested_by TEXT NOT NULL,
     state TEXT NOT NULL,
     files_json TEXT NOT NULL DEFAULT '[]',

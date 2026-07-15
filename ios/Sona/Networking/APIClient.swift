@@ -100,6 +100,42 @@ final class APIClient {
         )
     }
 
+    func updateUserProfile(
+        id: String, username: String, role: UserRole, enabled: Bool,
+        avatarPreset: String?
+    ) async throws -> ManagedUser {
+        struct Body: Encodable {
+            let username: String
+            let role: UserRole
+            let enabled: Bool
+            let avatarPreset: String?
+        }
+        return try await request(
+            path: "/api/v1/users/\(id)/profile",
+            method: "PUT",
+            body: try encoder.encode(Body(
+                username: username, role: role, enabled: enabled,
+                avatarPreset: avatarPreset
+            ))
+        )
+    }
+
+    func uploadUserAvatar(userID: String, imageData: Data) async throws -> ManagedUser {
+        try await uploadAvatar(path: "/api/v1/users/\(userID)/avatar", imageData: imageData)
+    }
+
+    func setOwnAvatarPreset(_ preset: AvatarPreset) async throws -> UserResponse {
+        struct Body: Encodable { let preset: String }
+        return try await request(
+            path: "/api/v1/auth/avatar", method: "PUT",
+            body: try encoder.encode(Body(preset: preset.rawValue))
+        )
+    }
+
+    func uploadOwnAvatar(imageData: Data) async throws -> UserResponse {
+        try await uploadAvatar(path: "/api/v1/auth/avatar", imageData: imageData)
+    }
+
     func resetPassword(userID: String, password: String) async throws {
         struct Body: Encodable { let password: String }
         try await requestVoid(
@@ -447,6 +483,17 @@ final class APIClient {
         try await request(path: "/api/v1/me/import-records")
     }
 
+    func waitForImportRecord(id: String) async throws -> ImportRecord {
+        for _ in 0..<300 {
+            guard let record = try await importRecords().first(where: { $0.id == id }) else {
+                throw APIError.invalidResponse
+            }
+            if record.state != .running { return record }
+            try await Task.sleep(for: .seconds(1))
+        }
+        throw APIError.importTimedOut
+    }
+
     func createImportRecord(
         type: ImportRecordType, source: String, target: String, total: Int
     ) async throws -> ImportRecord {
@@ -528,6 +575,42 @@ final class APIClient {
             method: "POST",
             body: try encoder.encode(candidate)
         )
+    }
+
+    func previewDownloadPlaylist(url: String) async throws -> DownloadPlaylistPreview {
+        struct Body: Encodable { let url: String }
+        return try await request(
+            path: "/api/v1/downloads/playlists/preview",
+            method: "POST",
+            body: try encoder.encode(Body(url: url)),
+            timeout: 300
+        )
+    }
+
+    func queueDownloadPlaylist(
+        name: String, items: [DownloadCandidate]
+    ) async throws -> PlaylistDownloadQueueResponse {
+        struct Body: Encodable {
+            let name: String
+            let items: [DownloadCandidate]
+        }
+        return try await request(
+            path: "/api/v1/downloads/playlists",
+            method: "POST",
+            body: try encoder.encode(Body(name: name, items: items)),
+            timeout: 60
+        )
+    }
+
+    func achievements() async throws -> AchievementSummary {
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/achievements"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "timezone", value: TimeZone.current.identifier)
+        ]
+        return try await request(url: components.url!)
     }
 
     func musicDownloadTasks() async throws -> [MusicDownloadTask] {
@@ -636,6 +719,28 @@ final class APIClient {
         try validate(response: response, data: data)
     }
 
+    private func uploadAvatar<T: Decodable>(path: String, imageData: Data) async throws -> T {
+        let boundary = "SonaAvatar-\(UUID().uuidString)"
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"avatar.jpg\"\r\n"
+                .data(using: .utf8)!
+        )
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        var request = URLRequest(url: url(for: path))
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type"
+        )
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return try decoder.decode(T.self, from: data)
+    }
+
     private func validate(response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
@@ -659,6 +764,7 @@ final class APIClient {
 
 enum APIError: LocalizedError {
     case invalidResponse
+    case importTimedOut
     case unauthorized
     case forbidden
     case server(status: Int, detail: String?)
@@ -667,6 +773,8 @@ enum APIError: LocalizedError {
         switch self {
         case .invalidResponse:
             return "服务器响应无效"
+        case .importTimedOut:
+            return "等待目录扫描完成超时，请稍后刷新歌单"
         case .unauthorized:
             return "账号、密码错误或登录已失效"
         case .forbidden:

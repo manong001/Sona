@@ -4,8 +4,42 @@ struct TrackRow: View {
     let track: Track
     var showsOfflineBadge = false
     var isFavorite = false
+    var deleteTitle: String?
+    var deleteAction: (() -> Void)?
+    var tapAction: (() -> Void)?
 
     var body: some View {
+        HStack(spacing: 0) {
+            if let tapAction {
+                trackContent
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: tapAction)
+            } else {
+                trackContent
+            }
+
+            if let deleteTitle, let deleteAction {
+                Menu {
+                    Button(deleteTitle, systemImage: "trash", role: .destructive) {
+                        deleteAction()
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.sonaSecondaryText)
+                        .frame(width: 28, height: 40)
+                }
+            } else {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.sonaSecondaryText)
+                    .frame(width: 28)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var trackContent: some View {
         HStack(spacing: 12) {
             ArtworkView(path: track.artworkURL, cornerRadius: 6)
                 .frame(width: 52, height: 52)
@@ -29,11 +63,6 @@ struct TrackRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            Image(systemName: "ellipsis")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Color.sonaSecondaryText)
-                .frame(width: 28)
         }
-        .contentShape(Rectangle())
     }
 }

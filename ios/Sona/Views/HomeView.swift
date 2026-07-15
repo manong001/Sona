@@ -339,7 +339,9 @@ struct HomeView: View {
                             NavigationLink {
                                 SonaTrackListView(
                                     collection: collection,
-                                    playbackQueue: playbackQueue(for: collection)
+                                    playbackQueue: playbackQueue(for: collection),
+                                    dailyRecommendationQueues: collection.id.hasPrefix("daily-")
+                                        ? dailyCollections.map(\.tracks) : nil
                                 )
                             } label: {
                                 SonaMediaCard(collection: collection)

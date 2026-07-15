@@ -47,6 +47,8 @@ final class PlayerStore: ObservableObject {
     private var itemEndObserver: NSObjectProtocol?
     private var artworkTask: Task<Void, Never>?
     private var randomQueueTask: Task<Void, Never>?
+    private var dailyRecommendationQueues: [[Track]]?
+    private var dailyRecommendationQueueIndex: Int?
     private var nowPlayingArtwork: MPMediaItemArtwork?
     private var listenedSeconds: Double = 0
     private var hasRestoredState = false
@@ -88,6 +90,8 @@ final class PlayerStore: ObservableObject {
         activeAPI = api
         self.offlineURLProvider = offlineURLProvider
         randomQueueTask?.cancel()
+        dailyRecommendationQueues = nil
+        dailyRecommendationQueueIndex = nil
         queueErrorMessage = nil
 
         if let prioritizedQueueTitle {
@@ -111,6 +115,33 @@ final class PlayerStore: ObservableObject {
 
         if prioritizedQueueTitle == nil {
             loadRandomQueue(keeping: track)
+        }
+    }
+
+    func playDailyRecommendations(
+        track: Track,
+        queues: [[Track]],
+        queueIndex: Int,
+        api: APIClient = .shared,
+        offlineURLProvider: @escaping (Track) -> URL?
+    ) {
+        guard queues.indices.contains(queueIndex), !queues[queueIndex].isEmpty else { return }
+        activeAPI = api
+        self.offlineURLProvider = offlineURLProvider
+        randomQueueTask?.cancel()
+        queueErrorMessage = nil
+        dailyRecommendationQueues = queues
+        dailyRecommendationQueueIndex = queueIndex
+        playbackQueue = prioritizedQueue(queues[queueIndex], startingWith: track)
+        queueTitle = "每日推荐 \(queueIndex + 1)"
+        queueType = "DAILY"
+        queueContextID = "daily-\(queueIndex)"
+        isLoadingQueue = false
+
+        if currentTrack?.id == track.id {
+            resume()
+        } else {
+            startPlayback(track)
         }
     }
 
@@ -204,6 +235,8 @@ final class PlayerStore: ObservableObject {
         player.replaceCurrentItem(with: nil)
         artworkTask?.cancel()
         randomQueueTask?.cancel()
+        dailyRecommendationQueues = nil
+        dailyRecommendationQueueIndex = nil
         playbackQueue = []
         queueTitle = "随机播放"
         isLoadingQueue = false
@@ -313,12 +346,35 @@ final class PlayerStore: ObservableObject {
                     queueType: completedType, queueContextID: completedContext
                 ) }
             }
+            if automatic, advanceToNextDailyRecommendationQueue() {
+                return
+            }
             replaceWithRandomQueue()
             return
         }
 
         guard let last = playbackQueue.last else { return }
         startPlayback(last)
+    }
+
+    private func advanceToNextDailyRecommendationQueue() -> Bool {
+        guard let queues = dailyRecommendationQueues,
+              let currentQueueIndex = dailyRecommendationQueueIndex else { return false }
+        var nextQueueIndex = currentQueueIndex + 1
+        while queues.indices.contains(nextQueueIndex) {
+            let nextQueue = queues[nextQueueIndex]
+            if let first = nextQueue.first {
+                dailyRecommendationQueueIndex = nextQueueIndex
+                playbackQueue = prioritizedQueue(nextQueue, startingWith: first)
+                queueTitle = "每日推荐 \(nextQueueIndex + 1)"
+                queueType = "DAILY"
+                queueContextID = "daily-\(nextQueueIndex)"
+                startPlayback(first)
+                return true
+            }
+            nextQueueIndex += 1
+        }
+        return false
     }
 
     private func setPlaybackMode(_ mode: PlaybackMode) {
@@ -361,6 +417,8 @@ final class PlayerStore: ObservableObject {
 
     private func replaceWithRandomQueue() {
         guard !isLoadingQueue else { return }
+        dailyRecommendationQueues = nil
+        dailyRecommendationQueueIndex = nil
         isPlaying = false
         isLoadingQueue = true
         queueErrorMessage = nil

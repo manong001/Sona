@@ -12,8 +12,10 @@ struct MusicDownloadView: View {
     @State private var isSearching = false
     @State private var isLoadingOtherSources = false
     @State private var searchGeneration = 0
+    @State private var searchTask: Task<Void, Never>?
     @State private var isLoadingTasks = false
     @State private var errorMessage: String?
+    @State private var showsPlaylistImport = false
 
     private let candidatePageSize = 20
 
@@ -41,6 +43,10 @@ struct MusicDownloadView: View {
                 Button("刷新", systemImage: "arrow.clockwise") {
                     Task { await loadTasks(showLoading: true) }
                 }
+            } else {
+                Button("导入歌单", systemImage: "link.badge.plus") {
+                    showsPlaylistImport = true
+                }
             }
         }
         .task {
@@ -58,6 +64,15 @@ struct MusicDownloadView: View {
                 if !tasks.contains(where: { $0.state == .queued || $0.state == .running }) {
                     break
                 }
+            }
+        }
+        .onDisappear { searchTask?.cancel() }
+        .sheet(isPresented: $showsPlaylistImport) {
+            PlaylistDownloadImportView { result in
+                tasks = result.tasks + tasks.filter { existing in
+                    !result.tasks.contains(where: { $0.id == existing.id })
+                }
+                selectedSection = 1
             }
         }
         .overlay(alignment: .bottom) {
@@ -93,7 +108,7 @@ struct MusicDownloadView: View {
                     .buttonStyle(.plain)
                 }
                 Button(action: submitSearch) {
-                    Text("搜索")
+                    Text(isSearching ? "重新搜索" : "搜索")
                         .font(.subheadline.weight(.semibold))
                         .frame(minWidth: 52, minHeight: 34)
                         .contentShape(Rectangle())
@@ -101,7 +116,7 @@ struct MusicDownloadView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.sonaGreen)
                 .foregroundStyle(.black)
-                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(.horizontal, 14)
             .frame(height: 50)
@@ -265,7 +280,8 @@ struct MusicDownloadView: View {
 
     private func submitSearch() {
         let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty, !isSearching else { return }
+        guard !keyword.isEmpty else { return }
+        searchTask?.cancel()
         isSearching = true
         isLoadingOtherSources = false
         errorMessage = nil
@@ -273,63 +289,55 @@ struct MusicDownloadView: View {
         visibleCandidateCount = candidatePageSize
         searchGeneration += 1
         let generation = searchGeneration
-        Task { await search(keyword: keyword, generation: generation) }
+        searchTask = Task { await search(keyword: keyword, generation: generation) }
     }
 
     private func search(keyword: String, generation: Int) async {
         let sourceIDs = sources.map(\.id)
-        guard let primarySource = sourceIDs.first(where: { $0 == "QQMusicClient" }) ?? sourceIDs.first else {
-            if generation == searchGeneration {
-                isSearching = false
-                errorMessage = "没有可用的音乐来源"
-            }
-            return
-        }
-        let remainingSources = sourceIDs.filter { $0 != primarySource }
-        var primaryError: Error?
-        do {
-            let result = try await APIClient.shared.searchMusicDownloads(
-                query: keyword,
-                sources: [primarySource]
-            )
-            guard generation == searchGeneration else { return }
-            candidates = result.items
-        } catch {
-            primaryError = error
-        }
-        guard generation == searchGeneration else { return }
-        isSearching = false
-        isLoadingOtherSources = !remainingSources.isEmpty
+        let sourceGroups = sourceIDs.isEmpty ? [[]] : sourceIDs.map { [$0] }
+        var errors: [String] = []
+        isLoadingOtherSources = sourceGroups.count > 1
 
-        await withTaskGroup(of: [DownloadCandidate].self) { group in
-            for source in remainingSources {
+        await withTaskGroup(of: ([DownloadCandidate], String?).self) { group in
+            for sourceGroup in sourceGroups {
                 group.addTask {
                     do {
-                        return try await APIClient.shared.searchMusicDownloads(
+                        let items = try await APIClient.shared.searchMusicDownloads(
                             query: keyword,
-                            sources: [source]
+                            sources: sourceGroup
                         ).items
+                        return (items, nil)
                     } catch {
-                        return []
+                        return ([], error.localizedDescription)
                     }
                 }
             }
-            for await result in group {
+            var completedSourceCount = 0
+            for await (result, error) in group {
+                guard !Task.isCancelled else {
+                    group.cancelAll()
+                    return
+                }
                 guard generation == searchGeneration else {
                     group.cancelAll()
                     return
                 }
+                completedSourceCount += 1
+                isSearching = false
+                isLoadingOtherSources = completedSourceCount < sourceGroups.count
                 let existingIDs = Set(candidates.map(\.id))
                 candidates.append(contentsOf: result.filter { !existingIDs.contains($0.id) })
                 if !result.isEmpty {
                     errorMessage = nil
                 }
+                if let error { errors.append(error) }
             }
         }
         guard generation == searchGeneration else { return }
+        isSearching = false
         isLoadingOtherSources = false
-        if candidates.isEmpty, let primaryError {
-            errorMessage = primaryError.localizedDescription
+        if candidates.isEmpty, let error = errors.first {
+            errorMessage = error
         }
     }
 
@@ -363,6 +371,140 @@ struct MusicDownloadView: View {
             if let index = tasks.firstIndex(where: { $0.id == task.id }) {
                 tasks[index] = updated
             }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct PlaylistDownloadImportView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var url = ""
+    @State private var preview: DownloadPlaylistPreview?
+    @State private var isParsing = false
+    @State private var isQueuing = false
+    @State private var errorMessage: String?
+    let queued: (PlaylistDownloadQueueResponse) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("粘贴歌单链接", text: $url, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                    Text("支持咪咕、网易云、QQ、酷我和千千音乐公开歌单")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                    Button {
+                        Task { await parse() }
+                    } label: {
+                        if isParsing {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Label("解析并预览", systemImage: "doc.text.magnifyingglass")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.sonaGreen)
+                    .foregroundStyle(.black)
+                    .disabled(trimmedURL.isEmpty || isParsing || isQueuing)
+                }
+                .padding(16)
+
+                if let preview {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(preview.name).font(.headline)
+                            Text("已识别 \(preview.items.count) 首歌曲")
+                                .font(.caption)
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        }
+                        Spacer()
+                        Button {
+                            Task { await queue(preview) }
+                        } label: {
+                            if isQueuing {
+                                ProgressView()
+                            } else {
+                                Text("全部导入")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.sonaGreen)
+                        .foregroundStyle(.black)
+                        .disabled(isQueuing)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                    List(preview.items) { candidate in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(candidate.title).font(.subheadline.weight(.semibold))
+                            Text("\(candidate.artist) · \(candidate.sourceName)")
+                                .font(.caption)
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        }
+                        .listRowBackground(Color.sonaBackground)
+                    }
+                    .listStyle(.plain)
+                } else {
+                    ContentUnavailableView(
+                        "等待歌单链接",
+                        systemImage: "music.note.list",
+                        description: Text("解析完成后可确认曲目，再批量下载并创建同名歌单。")
+                    )
+                    .frame(maxHeight: .infinity)
+                }
+            }
+            .background(Color.sonaBackground)
+            .navigationTitle("歌单链接导入")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .alert("导入失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "未知错误")
+            }
+        }
+    }
+
+    private var trimmedURL: String {
+        url.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func parse() async {
+        isParsing = true
+        errorMessage = nil
+        defer { isParsing = false }
+        do {
+            preview = try await APIClient.shared.previewDownloadPlaylist(url: trimmedURL)
+        } catch {
+            preview = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func queue(_ preview: DownloadPlaylistPreview) async {
+        isQueuing = true
+        errorMessage = nil
+        defer { isQueuing = false }
+        do {
+            let result = try await APIClient.shared.queueDownloadPlaylist(
+                name: preview.name,
+                items: preview.items
+            )
+            queued(result)
+            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }

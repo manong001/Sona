@@ -185,6 +185,8 @@ struct UserResponse: Decodable {
     let id: String
     let username: String
     let role: UserRole
+    let avatarPreset: String?
+    let avatarURL: String?
 
     var isAdmin: Bool { role == .admin }
 }
@@ -194,4 +196,38 @@ struct ManagedUser: Decodable, Identifiable {
     let username: String
     let role: UserRole
     let enabled: Bool
+    let avatarPreset: String?
+    let avatarURL: String?
+}
+
+enum AvatarPreset: String, CaseIterable, Identifiable {
+    case aurora, cosmos, forest, ocean, sunset, candy, ember, midnight
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .aurora: "极光"
+        case .cosmos: "宇宙"
+        case .forest: "森林"
+        case .ocean: "海洋"
+        case .sunset: "落日"
+        case .candy: "糖果"
+        case .ember: "余烬"
+        case .midnight: "午夜"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .aurora: "🌌"
+        case .cosmos: "🚀"
+        case .forest: "🌲"
+        case .ocean: "🐳"
+        case .sunset: "🌅"
+        case .candy: "🍬"
+        case .ember: "🔥"
+        case .midnight: "🌙"
+        }
+    }
 }

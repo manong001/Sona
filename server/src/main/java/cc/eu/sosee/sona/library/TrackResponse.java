@@ -30,7 +30,7 @@ record TrackResponse(
         return new TrackResponse(
             track.id(),
             track.title(),
-            track.artist(),
+            canonicalArtist,
             track.album(),
             track.trackNumber(),
             track.durationMs(),

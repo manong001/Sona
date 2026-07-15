@@ -410,34 +410,42 @@ private struct ManagedPlaylistDetailView: View {
                 LazyVStack(spacing: 0) {
                     playlistActions
                     ForEach(tracks) { track in
-                        Button {
+                        HStack {
                             if isSelecting {
-                                if !selectedIDs.insert(track.id).inserted { selectedIDs.remove(track.id) }
-                                return
+                                Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(Color.sonaGreen)
                             }
-                            player.play(
+                            TrackRow(
                                 track: track,
-                                queue: tracks,
-                                prioritizedQueueTitle: playlist?.name ?? "歌单",
-                                queueContextID: playlistID,
-                                offlineURLProvider: offline.localURL(for:)
-                            )
-                        } label: {
-                            HStack {
-                                if isSelecting {
-                                    Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(Color.sonaGreen)
+                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                isFavorite: personal.favoriteIDs.contains(track.id),
+                                deleteTitle: "从歌单中移除",
+                                deleteAction: {
+                                    Task {
+                                        await personal.setTrack(
+                                            track.id, in: playlistID, isIncluded: false
+                                        )
+                                    }
+                                },
+                                tapAction: {
+                                    if isSelecting {
+                                        if !selectedIDs.insert(track.id).inserted {
+                                            selectedIDs.remove(track.id)
+                                        }
+                                    } else {
+                                        player.play(
+                                            track: track,
+                                            queue: tracks,
+                                            prioritizedQueueTitle: playlist?.name ?? "歌单",
+                                            queueContextID: playlistID,
+                                            offlineURLProvider: offline.localURL(for:)
+                                        )
+                                    }
                                 }
-                                TrackRow(
-                                    track: track,
-                                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                                    isFavorite: personal.favoriteIDs.contains(track.id)
-                                )
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            )
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
                         .contextMenu {
                             Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
                                 Task {
@@ -541,10 +549,21 @@ private struct ManagedPlaylistDetailView: View {
                 playlistID: playlistID,
                 directory: directory.path
             )
+            var importedCount = result.importedCount
+            if result.scanning == true, let importRecordID = result.importRecordID {
+                importProgressMessage = "正在扫描目录并加入歌单…"
+                let record = try await APIClient.shared.waitForImportRecord(id: importRecordID)
+                importedCount = max(importedCount, record.added)
+                if record.state == .failed {
+                    await library.refresh()
+                    await personal.refresh()
+                    importMessage = record.message ?? "目录扫描失败"
+                    return
+                }
+            }
+            await library.refresh()
             await personal.refresh()
-            importMessage = result.scanning == true
-                ? "“\(directory.name)”已快速加入歌单 \(result.importedCount) 首，后台正在补入新歌曲"
-                : "“\(directory.name)”已加入歌单 \(result.importedCount) 首"
+            importMessage = "“\(directory.name)”已加入歌单 \(importedCount) 首"
         } catch {
             importMessage = error.localizedDescription
         }

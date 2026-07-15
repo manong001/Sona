@@ -8,6 +8,10 @@ struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
+    @State private var showsAccountSecurity = false
+    @State private var showsAvatarEditor = false
+    @State private var showsUserManagement = false
+    @State private var showsAchievements = false
     @State private var selectedTab: SonaTab = .home
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
@@ -51,6 +55,10 @@ struct MainTabView: View {
                 GeometryReader { proxy in
                     ProfileDrawerView(
                         selectTab: { selectedTab = $0 },
+                        manageAccount: { showsAccountSecurity = true },
+                        editAvatar: { showsAvatarEditor = true },
+                        showAchievements: { showsAchievements = true },
+                        manageUsers: { showsUserManagement = true },
                         close: closeDrawer
                     )
                     .frame(width: min(proxy.size.width * 0.76, 330))
@@ -83,6 +91,18 @@ struct MainTabView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: childMode)
         .sheet(isPresented: $showsNowPlaying) {
             NowPlayingView()
+        }
+        .sheet(isPresented: $showsAccountSecurity) {
+            NavigationStack { AccountSecurityView() }
+        }
+        .sheet(isPresented: $showsAvatarEditor) {
+            NavigationStack { OwnAvatarEditorView() }
+        }
+        .sheet(isPresented: $showsUserManagement) {
+            NavigationStack { UserManagementView() }
+        }
+        .sheet(isPresented: $showsAchievements) {
+            NavigationStack { AchievementsView() }
         }
         .task {
             if library.tracks.isEmpty {

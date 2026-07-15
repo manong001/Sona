@@ -18,7 +18,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.springframework.http.HttpStatus.CONFLICT;
@@ -31,15 +33,18 @@ class UserController {
     private final UserRepository userRepository;
     private final SessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
+    private final UserAvatarService avatarService;
 
     UserController(
         UserRepository userRepository,
         SessionRepository sessionRepository,
-        PasswordEncoder passwordEncoder
+        PasswordEncoder passwordEncoder,
+        UserAvatarService avatarService
     ) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.passwordEncoder = passwordEncoder;
+        this.avatarService = avatarService;
     }
 
     @GetMapping
@@ -90,6 +95,40 @@ class UserController {
         return ManagedUserResponse.from(userRepository.findById(id).orElseThrow());
     }
 
+    @PutMapping("/{id}/profile")
+    ManagedUserResponse updateProfile(
+        @AuthenticationPrincipal AuthenticatedUser actor,
+        @PathVariable String id,
+        @Valid @RequestBody EditUserProfileRequest request
+    ) {
+        rejectSelfManagement(actor, id);
+        userRepository.findByUsername(request.username())
+            .filter(existing -> !existing.id().equals(id))
+            .ifPresent(existing -> {
+                throw new ResponseStatusException(CONFLICT, "Username already exists");
+            });
+        if (!userRepository.updateProfile(id, request.username(), request.role(), request.enabled())) {
+            throw new ResponseStatusException(NOT_FOUND, "User not found");
+        }
+        if (!request.enabled()) {
+            sessionRepository.deleteForUser(id);
+        }
+        var account = request.avatarPreset() == null
+            ? userRepository.findById(id).orElseThrow()
+            : avatarService.selectPreset(id, request.avatarPreset());
+        return ManagedUserResponse.from(account);
+    }
+
+    @PostMapping(path = "/{id}/avatar", consumes = "multipart/form-data")
+    ManagedUserResponse uploadAvatar(
+        @AuthenticationPrincipal AuthenticatedUser actor,
+        @PathVariable String id,
+        @RequestParam("file") MultipartFile file
+    ) {
+        rejectSelfManagement(actor, id);
+        return ManagedUserResponse.from(avatarService.upload(id, file));
+    }
+
     @PutMapping("/{id}/password")
     ResponseEntity<Void> resetPassword(
         @AuthenticationPrincipal AuthenticatedUser actor,
@@ -110,6 +149,7 @@ class UserController {
         @PathVariable String id
     ) {
         rejectSelfManagement(actor, id);
+        avatarService.delete(id);
         if (!userRepository.delete(id)) {
             throw new ResponseStatusException(NOT_FOUND, "User not found");
         }
@@ -139,15 +179,39 @@ class UserController {
     record ResetPasswordRequest(@NotBlank @Size(min = 8, max = 64) String password) {
     }
 
-    record ManagedUserResponse(String id, String username, UserRole role, boolean enabled) {
+    record EditUserProfileRequest(
+        @NotBlank @Size(min = 2, max = 32)
+        @Pattern(regexp = "^[^\\s/]+$") String username,
+        @NotNull UserRole role,
+        boolean enabled,
+        String avatarPreset
+    ) {
+    }
+
+    record ManagedUserResponse(
+        String id, String username, UserRole role, boolean enabled,
+        String avatarPreset, String avatarURL
+    ) {
 
         static ManagedUserResponse from(UserAccount account) {
             return new ManagedUserResponse(
                 account.id(),
                 account.username(),
                 account.role(),
-                account.enabled()
+                account.enabled(),
+                preset(account.avatar()),
+                url(account)
             );
+        }
+
+        private static String preset(String avatar) {
+            return avatar != null && avatar.startsWith("preset:") ? avatar.substring(7) : null;
+        }
+
+        private static String url(UserAccount account) {
+            return account.avatar() != null && account.avatar().startsWith("upload:")
+                ? "/api/v1/avatars/" + account.id() + "?v=" + account.avatar().substring(7)
+                : null;
         }
     }
 }

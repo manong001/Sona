@@ -173,13 +173,35 @@ struct MiniPlayerView: View {
                 .disabled(track == nil)
                 .buttonStyle(.plain)
 
-                Button(
-                    player.isPlaying ? "暂停" : "播放",
-                    systemImage: player.isPlaying ? "pause.fill" : "play.fill"
-                ) {
-                    player.togglePlayback()
+                HStack(spacing: 12) {
+                    Button(
+                        track.map { personal.favoriteIDs.contains($0.id) } == true
+                            ? "取消收藏" : "收藏",
+                        systemImage: track.map { personal.favoriteIDs.contains($0.id) } == true
+                            ? "heart.fill" : "heart"
+                    ) {
+                        guard let track else { return }
+                        Task { await personal.toggleFavorite(trackID: track.id) }
+                    }
+                    .foregroundStyle(
+                        track.map { personal.favoriteIDs.contains($0.id) } == true
+                            ? Color.sonaGreen : .white
+                    )
+                    .disabled(track == nil)
+
+                    Button(
+                        player.isPlaying ? "暂停" : "播放",
+                        systemImage: player.isPlaying ? "pause.fill" : "play.fill"
+                    ) {
+                        player.togglePlayback()
+                    }
+                    .disabled(track == nil)
+
+                    Button("播放列表", systemImage: "list.bullet") {
+                        showsQueue = true
+                    }
                 }
-                .disabled(track == nil)
+                .frame(height: 44)
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
@@ -191,7 +213,7 @@ struct MiniPlayerView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
         .clipShape(RoundedRectangle(cornerRadius: 13))
         .contentShape(Rectangle())
-        .simultaneousGesture(
+        .highPriorityGesture(
             DragGesture(minimumDistance: 20)
                 .onEnded { value in
                     guard track != nil,

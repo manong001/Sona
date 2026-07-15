@@ -54,8 +54,8 @@ func sonaArtists(from tracks: [Track]) -> [SonaCollection] {
     var displayNames: [String: String] = [:]
     var groupedTracks: [String: [String: Track]] = [:]
     for track in tracks {
-        let rawArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        let artist = rawArtist.contains("林俊杰") ? "林俊杰" : rawArtist
+        let artist = (track.artists.first ?? track.artist)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artist.isEmpty else { continue }
         let key = artist.folding(
             options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
@@ -95,12 +95,18 @@ func sonaUniqueHistoryTracks(_ history: [HistoryItem], library: LibraryStore) ->
 }
 
 struct SonaAvatarButton: View {
+    @EnvironmentObject private var session: SessionStore
     let username: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            SonaAvatarView(username: username, size: 38)
+            SonaAvatarView(
+                username: username,
+                avatarPreset: session.currentUser?.avatarPreset,
+                avatarURL: session.currentUser?.avatarURL,
+                size: 38
+            )
         }
         .buttonStyle(.plain)
         .accessibilityLabel("打开账户菜单")
@@ -109,24 +115,49 @@ struct SonaAvatarButton: View {
 
 struct SonaAvatarView: View {
     let username: String
+    var avatarPreset: String?
+    var avatarURL: String?
     var size: CGFloat = 44
 
     var body: some View {
-        Circle()
-            .fill(
-                LinearGradient(
-                    colors: [.sonaGreen.opacity(0.95), Color(red: 0.02, green: 0.28, blue: 0.14)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay {
-                Text(String(username.trimmingCharacters(in: .whitespaces).first ?? "S").uppercased())
-                    .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.82))
+        Group {
+            if let avatarURL, avatarPreset == nil {
+                ArtworkView(path: avatarURL, cornerRadius: size / 2)
+            } else {
+                Circle()
+                    .fill(avatarGradient)
+                    .overlay {
+                        if let preset = AvatarPreset(rawValue: avatarPreset ?? "") {
+                            Text(preset.symbol)
+                                .font(.system(size: size * 0.48))
+                        } else {
+                            Text(String(
+                                username.trimmingCharacters(in: .whitespaces).first ?? "S"
+                            ).uppercased())
+                                .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
+                                .foregroundStyle(.black.opacity(0.82))
+                        }
+                    }
             }
+        }
             .frame(width: size, height: size)
+            .clipShape(Circle())
             .overlay(Circle().stroke(.white.opacity(0.12), lineWidth: 1))
+    }
+
+    private var avatarGradient: LinearGradient {
+        let colors: [Color] = switch AvatarPreset(rawValue: avatarPreset ?? "") {
+        case .aurora: [.green, .purple]
+        case .cosmos: [.indigo, .blue]
+        case .forest: [.green, .brown]
+        case .ocean: [.cyan, .blue]
+        case .sunset: [.orange, .pink]
+        case .candy: [.pink, .purple]
+        case .ember: [.red, .orange]
+        case .midnight: [.black, .indigo]
+        case nil: [.sonaGreen.opacity(0.95), Color(red: 0.02, green: 0.28, blue: 0.14)]
+        }
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
 
@@ -257,17 +288,21 @@ struct SonaTrackListView: View {
     @State private var importMessage: String?
     @State private var isImportingServerDirectory = false
     @State private var importProgressMessage = ""
+    @State private var removedTrackIDs = Set<String>()
     let collection: SonaCollection
     let playbackQueue: [Track]?
+    let dailyRecommendationQueues: [[Track]]?
     let loadsMoreFromLibrary: Bool
 
     init(
         collection: SonaCollection,
         playbackQueue: [Track]? = nil,
+        dailyRecommendationQueues: [[Track]]? = nil,
         loadsMoreFromLibrary: Bool = false
     ) {
         self.collection = collection
         self.playbackQueue = playbackQueue
+        self.dailyRecommendationQueues = dailyRecommendationQueues
         self.loadsMoreFromLibrary = loadsMoreFromLibrary
     }
 
@@ -278,7 +313,8 @@ struct SonaTrackListView: View {
             }
             return library.tracks.filter { personal.favoriteIDs.contains($0.id) }
         }
-        return loadsMoreFromLibrary ? library.tracks : collection.tracks
+        let values = loadsMoreFromLibrary ? library.tracks : collection.tracks
+        return values.filter { !removedTrackIDs.contains($0.id) }
     }
 
     private var queue: [Track] {
@@ -343,13 +379,7 @@ struct SonaTrackListView: View {
                                     }
                                 } else {
                                     guard let first = tracks.first else { return }
-                                    player.play(
-                                        track: first,
-                                        queue: queue,
-                                        prioritizedQueueTitle: prioritizedQueueTitle,
-                                        queueContextID: queueContextID,
-                                        offlineURLProvider: offline.localURL(for:)
-                                    )
+                                    play(first)
                                 }
                             } label: {
                                 if collection.id == "liked-songs" {
@@ -384,34 +414,32 @@ struct SonaTrackListView: View {
                     .padding(.bottom, 18)
 
                     ForEach(tracks) { track in
-                        Button {
+                        HStack {
                             if isSelecting {
-                                if !selectedIDs.insert(track.id).inserted { selectedIDs.remove(track.id) }
-                                return
+                                Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(Color.sonaGreen)
                             }
-                            player.play(
+                            TrackRow(
                                 track: track,
-                                queue: queue,
-                                prioritizedQueueTitle: prioritizedQueueTitle,
-                                queueContextID: queueContextID,
-                                offlineURLProvider: offline.localURL(for:)
-                            )
-                        } label: {
-                            HStack {
-                                if isSelecting {
-                                    Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(Color.sonaGreen)
+                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                isFavorite: personal.favoriteIDs.contains(track.id),
+                                deleteTitle: collection.id.hasPrefix("artist-") ? "删除歌曲" : nil,
+                                deleteAction: collection.id.hasPrefix("artist-") ? {
+                                    Task { await deleteArtistTrack(track) }
+                                } : nil,
+                                tapAction: {
+                                    if isSelecting {
+                                        if !selectedIDs.insert(track.id).inserted {
+                                            selectedIDs.remove(track.id)
+                                        }
+                                    } else {
+                                        play(track)
+                                    }
                                 }
-                                TrackRow(
-                                    track: track,
-                                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                                    isFavorite: personal.favoriteIDs.contains(track.id)
-                                )
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            )
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
                         .contextMenu {
                             Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
                                 player.playNext(track)
@@ -506,6 +534,36 @@ struct SonaTrackListView: View {
             Button("好") { importMessage = nil }
         } message: {
             Text(importMessage ?? "")
+        }
+    }
+
+    private func play(_ track: Track) {
+        if let dailyRecommendationQueues,
+           let queueIndex = Int(collection.id.dropFirst("daily-".count)) {
+            player.playDailyRecommendations(
+                track: track,
+                queues: dailyRecommendationQueues,
+                queueIndex: queueIndex,
+                offlineURLProvider: offline.localURL(for:)
+            )
+            return
+        }
+        player.play(
+            track: track,
+            queue: queue,
+            prioritizedQueueTitle: prioritizedQueueTitle,
+            queueContextID: queueContextID,
+            offlineURLProvider: offline.localURL(for:)
+        )
+    }
+
+    private func deleteArtistTrack(_ track: Track) async {
+        do {
+            try await APIClient.shared.deleteTrack(id: track.id, isAdmin: false)
+            removedTrackIDs.insert(track.id)
+            await library.refresh()
+        } catch {
+            importMessage = error.localizedDescription
         }
     }
 

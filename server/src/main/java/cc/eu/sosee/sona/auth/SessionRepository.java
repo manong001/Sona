@@ -30,7 +30,7 @@ class SessionRepository {
 
     Optional<AuthenticatedUser> findActiveUser(String tokenHash) {
         return jdbcClient.sql("""
-                SELECT users.id, users.username, users.role
+                SELECT users.id, users.username, users.role, users.avatar
                 FROM sessions
                 JOIN users ON users.id = sessions.user_id
                 WHERE sessions.token_hash = :tokenHash
@@ -42,7 +42,8 @@ class SessionRepository {
             .query((resultSet, rowNumber) -> new AuthenticatedUser(
                 resultSet.getString("id"),
                 resultSet.getString("username"),
-                UserRole.valueOf(resultSet.getString("role"))
+                UserRole.valueOf(resultSet.getString("role")),
+                resultSet.getString("avatar")
             ))
             .optional();
     }

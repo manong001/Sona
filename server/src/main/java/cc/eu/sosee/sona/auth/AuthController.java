@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
@@ -27,10 +29,14 @@ class AuthController {
 
     private final AuthService authService;
     private final SonaProperties properties;
+    private final UserAvatarService avatarService;
 
-    AuthController(AuthService authService, SonaProperties properties) {
+    AuthController(
+        AuthService authService, SonaProperties properties, UserAvatarService avatarService
+    ) {
         this.authService = authService;
         this.properties = properties;
+        this.avatarService = avatarService;
     }
 
     @PostMapping("/login")
@@ -83,6 +89,22 @@ class AuthController {
             .build();
     }
 
+    @PutMapping("/avatar")
+    UserResponse selectAvatar(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody SelectAvatarRequest request
+    ) {
+        return UserResponse.from(avatarService.selectPreset(user.id(), request.preset()));
+    }
+
+    @PostMapping(path = "/avatar", consumes = "multipart/form-data")
+    UserResponse uploadAvatar(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam("file") MultipartFile file
+    ) {
+        return UserResponse.from(avatarService.upload(user.id(), file));
+    }
+
     private ResponseCookie expiredCookie() {
         return ResponseCookie.from(SessionAuthenticationFilter.COOKIE_NAME, "")
             .httpOnly(true)
@@ -102,10 +124,33 @@ class AuthController {
     ) {
     }
 
-    record UserResponse(String id, String username, UserRole role) {
+    record SelectAvatarRequest(@NotBlank String preset) {
+    }
+
+    record UserResponse(
+        String id, String username, UserRole role, String avatarPreset, String avatarURL
+    ) {
 
         static UserResponse from(AuthenticatedUser user) {
-            return new UserResponse(user.id(), user.username(), user.role());
+            return new UserResponse(
+                user.id(), user.username(), user.role(), preset(user.avatar()), url(user.id(), user.avatar())
+            );
+        }
+
+        static UserResponse from(UserAccount user) {
+            return new UserResponse(
+                user.id(), user.username(), user.role(), preset(user.avatar()), url(user.id(), user.avatar())
+            );
+        }
+
+        private static String preset(String avatar) {
+            return avatar != null && avatar.startsWith("preset:") ? avatar.substring(7) : null;
+        }
+
+        private static String url(String id, String avatar) {
+            return avatar != null && avatar.startsWith("upload:")
+                ? "/api/v1/avatars/" + id + "?v=" + avatar.substring(7)
+                : null;
         }
     }
 }

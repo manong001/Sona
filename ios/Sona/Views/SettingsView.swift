@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import PhotosUI
 
 struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
@@ -135,32 +136,8 @@ struct SettingsView: View {
                     )
                 }
 
-                Section("账号") {
-                    if let user = session.currentUser {
-                        LabeledContent("当前账号", value: user.username)
-                        LabeledContent("角色", value: user.isAdmin ? "管理员" : "用户")
-                    }
-                    NavigationLink("账户安全") {
-                        AccountSecurityView()
-                    }
-                    if session.currentUser?.isAdmin == true {
-                        NavigationLink("用户管理") {
-                            UserManagementView()
-                        }
-                    }
-                    Button("退出登录", role: .destructive) {
-                        Task { await session.logout() }
-                    }
-                }
-
-                Section("关于") {
+                Section("关于与 App 更新") {
                     LabeledContent("应用", value: "Sona")
-                    Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("App 更新") {
                     LabeledContent("当前版本", value: "\(currentVersion) (\(currentBuild))")
 
                     Button("检查更新", systemImage: "arrow.clockwise") {
@@ -207,6 +184,10 @@ struct SettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+
+                    Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -965,7 +946,7 @@ private struct TrashView: View {
     }
 }
 
-private struct AccountSecurityView: View {
+struct AccountSecurityView: View {
     @EnvironmentObject private var session: SessionStore
     @State private var currentPassword = ""
     @State private var newPassword = ""
@@ -1017,7 +998,7 @@ private struct AccountSecurityView: View {
     }
 }
 
-private struct UserManagementView: View {
+struct UserManagementView: View {
     @EnvironmentObject private var session: SessionStore
     @State private var users: [ManagedUser] = []
     @State private var isLoading = false
@@ -1029,6 +1010,7 @@ private struct UserManagementView: View {
     @State private var resetUser: ManagedUser?
     @State private var resetPassword = ""
     @State private var deleteUser: ManagedUser?
+    @State private var editUser: ManagedUser?
 
     var body: some View {
         List {
@@ -1036,7 +1018,13 @@ private struct UserManagementView: View {
                 ProgressView("载入用户…")
             } else {
                 ForEach(users) { user in
-                    HStack {
+                    HStack(spacing: 12) {
+                        SonaAvatarView(
+                            username: user.username,
+                            avatarPreset: user.avatarPreset,
+                            avatarURL: user.avatarURL,
+                            size: 42
+                        )
                         VStack(alignment: .leading, spacing: 4) {
                             Text(user.username).fontWeight(.semibold)
                             if canManage(user) {
@@ -1069,6 +1057,12 @@ private struct UserManagementView: View {
                         Text(user.enabled ? "正常" : "已停用")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(user.enabled ? Color.sonaGreen : .secondary)
+                        if canManage(user) {
+                            Button("编辑用户", systemImage: "pencil") {
+                                editUser = user
+                            }
+                            .labelStyle(.iconOnly)
+                        }
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if canManage(user) {
@@ -1083,6 +1077,9 @@ private struct UserManagementView: View {
                     }
                     .contextMenu {
                         if canManage(user) {
+                            Button("编辑用户", systemImage: "pencil") {
+                                editUser = user
+                            }
                             Button("重置密码", systemImage: "key") {
                                 resetPassword = ""
                                 resetUser = user
@@ -1142,6 +1139,14 @@ private struct UserManagementView: View {
                 }
             }
             .presentationDetents([.medium])
+        }
+        .sheet(item: $editUser) { user in
+            NavigationStack {
+                EditUserView(user: user) { updated in
+                    replace(updated)
+                    editUser = nil
+                }
+            }
         }
         .alert("重置密码", isPresented: resetAlertBinding) {
             SecureField("新密码（至少 8 位）", text: $resetPassword)
@@ -1255,5 +1260,229 @@ private struct UserManagementView: View {
     private func replace(_ user: ManagedUser) {
         guard let index = users.firstIndex(where: { $0.id == user.id }) else { return }
         users[index] = user
+    }
+}
+
+struct EditUserView: View {
+    @Environment(\.dismiss) private var dismiss
+    let user: ManagedUser
+    let saved: (ManagedUser) -> Void
+    @State private var username: String
+    @State private var role: UserRole
+    @State private var enabled: Bool
+    @State private var selectedPreset: AvatarPreset?
+    @State private var imageData: Data?
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(user: ManagedUser, saved: @escaping (ManagedUser) -> Void) {
+        self.user = user
+        self.saved = saved
+        _username = State(initialValue: user.username)
+        _role = State(initialValue: user.role)
+        _enabled = State(initialValue: user.enabled)
+        _selectedPreset = State(initialValue: AvatarPreset(rawValue: user.avatarPreset ?? ""))
+    }
+
+    var body: some View {
+        Form {
+            Section("头像") {
+                AvatarSelectionView(
+                    username: username,
+                    currentPreset: user.avatarPreset,
+                    currentURL: user.avatarURL,
+                    selectedPreset: $selectedPreset,
+                    imageData: $imageData
+                )
+            }
+            Section("账号") {
+                TextField("用户名", text: $username)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Picker("用户角色", selection: $role) {
+                    ForEach(UserRole.allCases) { value in
+                        Text(value.title).tag(value)
+                    }
+                }
+                Toggle("账号已启用", isOn: $enabled)
+            }
+            if let errorMessage {
+                Section { Text(errorMessage).foregroundStyle(.red) }
+            }
+        }
+        .navigationTitle("编辑用户")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("取消") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("保存") { Task { await save() } }
+                    .disabled(
+                        isSaving || username.trimmingCharacters(in: .whitespacesAndNewlines).count < 2
+                    )
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+        do {
+            var updated = try await APIClient.shared.updateUserProfile(
+                id: user.id,
+                username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                role: role,
+                enabled: enabled,
+                avatarPreset: imageData == nil ? selectedPreset?.rawValue : nil
+            )
+            if let imageData {
+                updated = try await APIClient.shared.uploadUserAvatar(
+                    userID: user.id, imageData: imageData
+                )
+            }
+            saved(updated)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+struct OwnAvatarEditorView: View {
+    @EnvironmentObject private var session: SessionStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedPreset: AvatarPreset?
+    @State private var imageData: Data?
+
+    var body: some View {
+        Form {
+            Section("头像") {
+                AvatarSelectionView(
+                    username: session.currentUser?.username ?? "Sona",
+                    currentPreset: session.currentUser?.avatarPreset,
+                    currentURL: session.currentUser?.avatarURL,
+                    selectedPreset: $selectedPreset,
+                    imageData: $imageData
+                )
+            }
+            if let message = session.errorMessage {
+                Section { Text(message).foregroundStyle(.red) }
+            }
+        }
+        .navigationTitle("编辑头像")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            selectedPreset = AvatarPreset(rawValue: session.currentUser?.avatarPreset ?? "")
+        }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("取消") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("保存") { Task { await save() } }
+                    .disabled(session.isSubmitting || (selectedPreset == nil && imageData == nil))
+            }
+        }
+    }
+
+    private func save() async {
+        let succeeded: Bool
+        if let imageData {
+            succeeded = await session.uploadAvatar(imageData)
+        } else if let selectedPreset {
+            succeeded = await session.selectAvatar(selectedPreset)
+        } else {
+            return
+        }
+        if succeeded { dismiss() }
+    }
+}
+
+struct AvatarSelectionView: View {
+    let username: String
+    let currentPreset: String?
+    let currentURL: String?
+    @Binding var selectedPreset: AvatarPreset?
+    @Binding var imageData: Data?
+    @State private var photoItem: PhotosPickerItem?
+
+    var body: some View {
+        VStack(spacing: 18) {
+            avatarPreview
+                .frame(maxWidth: .infinity)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 14) {
+                ForEach(AvatarPreset.allCases) { preset in
+                    Button {
+                        selectedPreset = preset
+                        imageData = nil
+                        photoItem = nil
+                    } label: {
+                        VStack(spacing: 5) {
+                            SonaAvatarView(
+                                username: username, avatarPreset: preset.rawValue,
+                                avatarURL: nil, size: 52
+                            )
+                            Text(preset.title).font(.caption2)
+                        }
+                        .padding(5)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(
+                                    selectedPreset == preset && imageData == nil
+                                        ? Color.sonaGreen : Color.clear,
+                                    lineWidth: 2
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Label("从相册上传图片", systemImage: "photo.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 8)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let jpeg = avatarJPEGData(data) else { return }
+                imageData = jpeg
+                selectedPreset = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var avatarPreview: some View {
+        if let imageData, let image = UIImage(data: imageData) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 96, height: 96)
+                .clipShape(Circle())
+        } else {
+            SonaAvatarView(
+                username: username,
+                avatarPreset: selectedPreset?.rawValue ?? currentPreset,
+                avatarURL: selectedPreset == nil ? currentURL : nil,
+                size: 96
+            )
+        }
+    }
+
+    private func avatarJPEGData(_ data: Data) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let scale = min(1, 1024 / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let normalized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        return normalized.jpegData(compressionQuality: 0.82)
     }
 }
