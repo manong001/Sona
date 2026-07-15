@@ -289,9 +289,19 @@ struct SettingsView: View {
     }
 
     private func isCancellation(_ error: Error) -> Bool {
-        if error is CancellationError { return true }
+        if Task.isCancelled || error is CancellationError { return true }
         let value = error as NSError
-        return value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled
+        if value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled {
+            return true
+        }
+        if value.domain == NSPOSIXErrorDomain && value.code == POSIXErrorCode.ECANCELED.rawValue {
+            return true
+        }
+        if value.domain == NSCocoaErrorDomain && value.code == NSUserCancelledError {
+            return true
+        }
+        let message = error.localizedDescription.lowercased()
+        return message == "cancelled" || message == "canceled" || message.contains("cancellationerror")
     }
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
@@ -544,12 +554,19 @@ private struct ImportHistoryRow: View {
         }
         .padding(.vertical, 3)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if !item.isRunning {
+            if canDelete {
                 Button(role: .destructive, action: delete) {
                     Label("删除", systemImage: "trash")
                 }
             }
         }
+    }
+
+    private var canDelete: Bool {
+        if case let .record(record) = item, record.type == .playlistDirectory {
+            return true
+        }
+        return !item.isRunning
     }
 
     private var title: String {

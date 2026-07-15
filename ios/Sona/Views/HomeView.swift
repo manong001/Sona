@@ -82,19 +82,25 @@ struct HomeView: View {
             title: "今日推荐",
             subtitle: "每天为你更新",
             artworkURL: dailyTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+            artworkURLs: Array(dailyTracks.compactMap(\.artworkURL).prefix(4)),
             tracks: dailyTracks,
             shape: .square
         )
     }
 
     private var dailyCollections: [SonaCollection] {
-        dailyTracks.prefix(12).map { track in
+        var groups = Array(repeating: [Track](), count: min(6, dailyTracks.count))
+        for (index, track) in dailyTracks.prefix(60).enumerated() {
+            groups[index % groups.count].append(track)
+        }
+        return groups.enumerated().map { index, tracks in
             SonaCollection(
-                id: "daily-\(track.id)",
-                title: track.title,
-                subtitle: track.artist,
-                artworkURL: track.artworkURL,
-                tracks: [track],
+                id: "daily-\(index)",
+                title: "每日推荐 \(index + 1)",
+                subtitle: "每日凌晨更新 · \(tracks.count) 首",
+                artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURLs: Array(tracks.compactMap(\.artworkURL).prefix(4)),
+                tracks: tracks,
                 shape: .square
             )
         }
@@ -348,9 +354,10 @@ struct HomeView: View {
     }
 
     private func playbackQueue(for collection: SonaCollection) -> [Track]? {
-        if collection.id.hasPrefix("daily-") || collection.id == "daily-recommendations" {
+        if collection.id == "daily-recommendations" {
             return dailyTracks
         }
+        if collection.id.hasPrefix("daily-") { return collection.tracks }
         if collection.id.hasPrefix("recent-") {
             return historyTracks.count > 1 ? historyTracks : library.tracks
         }

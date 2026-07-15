@@ -25,9 +25,7 @@ interface TrackStore {
 
     List<TrackRecord> findManaged(String poolType);
 
-    List<TrackRecord> findDailyCandidates(
-        String userId, boolean childOnly, long recentAfter, int limit
-    );
+    List<TrackRecord> findDailyCandidates(String poolType, String userId, boolean childOnly);
 
     List<String> findGenres(String userId, boolean childOnly);
 

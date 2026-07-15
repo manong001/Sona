@@ -372,46 +372,22 @@ class JdbcTrackStore implements TrackStore {
 
     @Override
     public List<TrackRecord> findDailyCandidates(
-        String userId, boolean childOnly, long recentAfter, int limit
+        String poolType, String userId, boolean childOnly
     ) {
         var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.*
                 FROM tracks
-                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
-                WHERE tracks.pool_type = 'NORMAL'
+                WHERE tracks.pool_type = :poolType
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
                 """ + audienceFilter + """
-                ORDER BY
-                  CASE WHEN EXISTS (
-                    SELECT 1
-                    FROM favorites
-                    JOIN tracks favorite_track ON favorite_track.id = favorites.track_id
-                    WHERE favorites.user_id = :userId
-                      AND (
-                        (favorite_track.artist = tracks.artist AND tracks.artist <> 'Unknown Artist')
-                        OR (favorite_track.album = tracks.album AND tracks.album <> 'Unknown Album')
-                      )
-                  ) THEN 0 ELSE 1 END,
-                  CASE WHEN EXISTS (
-                    SELECT 1 FROM play_history
-                    WHERE play_history.user_id = :userId
-                      AND play_history.track_id = tracks.id
-                      AND play_history.played_at >= :recentAfter
-                  ) THEN 1 ELSE 0 END,
-                  CASE WHEN COALESCE(stats.play_count, 0) > 0
-                    THEN stats.completion_percent_sum / stats.play_count ELSE 65 END DESC,
-                  COALESCE(stats.play_count, 0) DESC,
-                  tracks.normalized_title,
-                  tracks.id
-                LIMIT :limit
+                ORDER BY tracks.id
                 """)
+            .param("poolType", poolType)
             .param("userId", userId)
-            .param("recentAfter", recentAfter)
-            .param("limit", limit)
             .query(ROW_MAPPER)
             .list();
     }

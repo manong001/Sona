@@ -10,8 +10,27 @@ struct SonaCollection: Identifiable {
     let title: String
     let subtitle: String
     let artworkURL: String?
+    let artworkURLs: [String]
     let tracks: [Track]
     let shape: Shape
+
+    init(
+        id: String,
+        title: String,
+        subtitle: String,
+        artworkURL: String?,
+        artworkURLs: [String] = [],
+        tracks: [Track],
+        shape: Shape
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.artworkURL = artworkURL
+        self.artworkURLs = artworkURLs
+        self.tracks = tracks
+        self.shape = shape
+    }
 }
 
 func sonaAlbums(from tracks: [Track]) -> [SonaCollection] {
@@ -167,9 +186,41 @@ struct SonaCollectionArtwork: View {
     var size: CGFloat
 
     var body: some View {
-        ArtworkView(path: collection.artworkURL, cornerRadius: collection.shape == .circle ? size / 2 : 6)
+        Group {
+            if collection.artworkURLs.isEmpty {
+                ArtworkView(
+                    path: collection.artworkURL,
+                    cornerRadius: collection.shape == .circle ? size / 2 : 6
+                )
+            } else {
+                SonaMosaicArtwork(paths: collection.artworkURLs)
+            }
+        }
             .frame(width: size, height: size)
             .clipShape(collection.shape == .circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 6)))
+    }
+}
+
+private struct SonaMosaicArtwork: View {
+    let paths: [String]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let cellSize = proxy.size.width / 2
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.fixed(cellSize), spacing: 0), count: 2),
+                spacing: 0
+            ) {
+                ForEach(0..<4, id: \.self) { index in
+                    ArtworkView(
+                        path: index < paths.count ? paths[index] : nil,
+                        cornerRadius: 0
+                    )
+                    .frame(width: cellSize, height: cellSize)
+                }
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 

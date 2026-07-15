@@ -2,8 +2,8 @@ package cc.eu.sosee.sona.library;
 
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -25,7 +25,7 @@ import static org.springframework.http.HttpStatus.BAD_REQUEST;
 class RecommendationController {
 
     private static final Set<String> CHART_REGIONS = Set.of("ALL", "CN", "KR", "US", "JP");
-    private static final int DAILY_LIMIT = 20;
+    private static final int DAILY_LIMIT = 60;
 
     private final TrackStore trackStore;
     private final Clock clock;
@@ -40,15 +40,15 @@ class RecommendationController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @RequestParam(defaultValue = "false") boolean childMode
     ) {
-        var recentAfter = clock.millis() - Duration.ofDays(7).toMillis();
         var candidates = new ArrayList<>(
-            trackStore.findDailyCandidates(user.id(), childMode, recentAfter, 60)
+            trackStore.findDailyCandidates("DISCOVERY", user.id(), childMode)
         );
-        var seed = Objects.hash(user.id(), LocalDate.now(clock));
-        for (var start = 0; start < candidates.size(); start += 10) {
-            var end = Math.min(start + 10, candidates.size());
-            Collections.shuffle(candidates.subList(start, end), new Random(seed + start));
+        if (candidates.isEmpty()) {
+            candidates.addAll(trackStore.findDailyCandidates("NORMAL", user.id(), childMode));
         }
+        var today = LocalDate.now(clock.withZone(ZoneId.systemDefault()));
+        var seed = Objects.hash(user.id(), today, childMode);
+        Collections.shuffle(candidates, new Random(seed));
         return candidates.stream().limit(DAILY_LIMIT).map(TrackResponse::from).toList();
     }
 
