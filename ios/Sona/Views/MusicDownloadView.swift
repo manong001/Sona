@@ -75,9 +75,6 @@ struct MusicDownloadView: View {
     private var searchContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.title3)
-                    .foregroundStyle(.black)
                 TextField("歌曲、歌手或专辑", text: $query)
                     .foregroundStyle(.black)
                     .textInputAutocapitalization(.never)
@@ -93,6 +90,14 @@ struct MusicDownloadView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                Button("搜索", systemImage: "magnifyingglass") {
+                    Task { await search() }
+                }
+                .labelStyle(.titleOnly)
+                .buttonStyle(.borderedProminent)
+                .tint(.sonaGreen)
+                .foregroundStyle(.black)
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
             }
             .padding(.horizontal, 14)
             .frame(height: 50)

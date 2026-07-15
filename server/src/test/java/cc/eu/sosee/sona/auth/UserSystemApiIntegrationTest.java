@@ -53,6 +53,9 @@ class UserSystemApiIntegrationTest {
         assertThat(get("/api/v1/users", listenerCookie).statusCode()).isEqualTo(403);
         assertThat(sendJson("POST", "/api/v1/library/scan", listenerCookie, "").statusCode())
             .isEqualTo(403);
+        assertThat(get("/api/v1/app/releases/latest", listenerCookie).statusCode()).isEqualTo(200);
+        assertThat(sendJson("POST", "/api/v1/app/releases", listenerCookie, "").statusCode())
+            .isEqualTo(403);
 
         var listenerId = jsonString(created.body(), "id");
         assertThat(sendJson(

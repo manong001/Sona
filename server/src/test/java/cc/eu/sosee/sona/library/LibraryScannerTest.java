@@ -59,6 +59,22 @@ class LibraryScannerTest {
     }
 
     @Test
+    void importsOnlyTheSelectedServerDirectory() throws Exception {
+        var musicDirectory = Files.createDirectories(temporaryDirectory.resolve("music"));
+        var selected = Files.createDirectories(musicDirectory.resolve("华语/林俊杰"));
+        var other = Files.createDirectories(musicDirectory.resolve("欧美"));
+        var selectedTrack = Files.writeString(selected.resolve("林俊杰 - 江南.mp3"), "audio");
+        var otherTrack = Files.writeString(other.resolve("Other - Song.mp3"), "audio");
+        var store = new InMemoryTrackStore();
+
+        var result = scanner(musicDirectory, store).scan("华语/林俊杰");
+
+        assertThat(result).isEqualTo(new ScanResult(1, 1, 0, 0, 0));
+        assertThat(store.findByPath(selectedTrack)).isPresent();
+        assertThat(store.findByPath(otherTrack)).isEmpty();
+    }
+
+    @Test
     void keepsLocalIdentityAndFillsMissingMetadataFromScraper() throws Exception {
         var musicDirectory = Files.createDirectories(temporaryDirectory.resolve("music"));
         var audioPath = Files.writeString(musicDirectory.resolve("宋冬野 - 郭源潮.mp3"), "audio");
@@ -138,7 +154,7 @@ class LibraryScannerTest {
         properties.setMusicDir(musicDirectory);
         properties.setDataDir(temporaryDirectory.resolve("data"));
         return new LibraryScanner(
-            properties,
+            new ServerMusicDirectoryService(properties),
             store,
             extractor,
             new ArtworkStore(properties),

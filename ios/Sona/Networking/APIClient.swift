@@ -364,7 +364,29 @@ final class APIClient {
     }
 
     func startScan() async throws -> ScanStatus {
-        try await request(path: "/api/v1/library/scan", method: "POST")
+        try await startScan(directory: "")
+    }
+
+    func startScan(directory: String) async throws -> ScanStatus {
+        var components = URLComponents(
+            url: url(for: "/api/v1/library/scan"),
+            resolvingAgainstBaseURL: false
+        )!
+        if !directory.isEmpty {
+            components.queryItems = [URLQueryItem(name: "path", value: directory)]
+        }
+        return try await request(url: components.url!, method: "POST")
+    }
+
+    func serverMusicDirectories(path: String) async throws -> ServerMusicDirectoryListing {
+        var components = URLComponents(
+            url: url(for: "/api/v1/library/directories"),
+            resolvingAgainstBaseURL: false
+        )!
+        if !path.isEmpty {
+            components.queryItems = [URLQueryItem(name: "path", value: path)]
+        }
+        return try await request(url: components.url!)
     }
 
     func scanStatus() async throws -> ScanStatus {
@@ -394,6 +416,43 @@ final class APIClient {
 
     func musicDownloadTasks() async throws -> [MusicDownloadTask] {
         try await request(path: "/api/v1/downloads")
+    }
+
+    func latestAppRelease() async throws -> AppReleaseInfo {
+        try await request(path: "/api/v1/app/releases/latest")
+    }
+
+    func downloadAppRelease(
+        _ release: AppReleaseInfo,
+        progress: @escaping (Double) -> Void
+    ) async throws -> URL {
+        guard let downloadURL = release.downloadURL,
+              let version = release.version,
+              let build = release.build else {
+            throw APIError.invalidResponse
+        }
+        let destination = FileManager.default.temporaryDirectory
+            .appending(path: "Sona-\(version)-\(build)-unsigned.ipa")
+        var request = URLRequest(url: url(for: downloadURL))
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        return try await withCheckedThrowingContinuation { continuation in
+            let delegate = ReleaseDownloadDelegate(
+                destination: destination,
+                progress: progress,
+                continuation: continuation
+            )
+            let configuration = URLSessionConfiguration.default
+            configuration.httpCookieAcceptPolicy = .always
+            configuration.httpCookieStorage = .shared
+            configuration.timeoutIntervalForRequest = 60
+            let downloadSession = URLSession(
+                configuration: configuration,
+                delegate: delegate,
+                delegateQueue: nil
+            )
+            delegate.session = downloadSession
+            downloadSession.downloadTask(with: request).resume()
+        }
     }
 
     func retryMusicDownload(taskID: String) async throws -> MusicDownloadTask {
@@ -494,6 +553,78 @@ enum APIError: LocalizedError {
             return "当前账号没有执行此操作的权限"
         case let .server(status, detail):
             return detail?.isEmpty == false ? "服务器错误 \(status)：\(detail!)" : "服务器错误 \(status)"
+        }
+    }
+}
+
+private final class ReleaseDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let destination: URL
+    let progress: (Double) -> Void
+    var continuation: CheckedContinuation<URL, Error>?
+    var session: URLSession?
+    private var result: Result<URL, Error>?
+
+    init(
+        destination: URL,
+        progress: @escaping (Double) -> Void,
+        continuation: CheckedContinuation<URL, Error>
+    ) {
+        self.destination = destination
+        self.progress = progress
+        self.continuation = continuation
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        let value = min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+        DispatchQueue.main.async { [progress] in progress(value) }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let response = downloadTask.response as? HTTPURLResponse else {
+            result = .failure(APIError.invalidResponse)
+            return
+        }
+        guard 200..<300 ~= response.statusCode else {
+            result = .failure(APIError.server(status: response.statusCode, detail: nil))
+            return
+        }
+        do {
+            try FileManager.default.removeItemIfPresent(at: destination)
+            try FileManager.default.moveItem(at: location, to: destination)
+            result = .success(destination)
+        } catch {
+            result = .failure(error)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        let outcome = error.map(Result.failure) ?? result ?? .failure(APIError.invalidResponse)
+        continuation?.resume(with: outcome)
+        continuation = nil
+        self.session?.finishTasksAndInvalidate()
+        self.session = nil
+    }
+}
+
+private extension FileManager {
+    func removeItemIfPresent(at url: URL) throws {
+        if fileExists(atPath: url.path) {
+            try removeItem(at: url)
         }
     }
 }

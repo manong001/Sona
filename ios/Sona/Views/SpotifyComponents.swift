@@ -202,6 +202,7 @@ struct SonaTrackListView: View {
     @State private var isSelecting = false
     @State private var selectedIDs = Set<String>()
     @State private var showsImporter = false
+    @State private var showsServerDirectoryPicker = false
     @State private var importMessage: String?
     let collection: SonaCollection
     let playbackQueue: [Track]?
@@ -385,7 +386,7 @@ struct SonaTrackListView: View {
                 if session.currentUser?.isAdmin == true {
                     Menu("导入", systemImage: "square.and.arrow.down") {
                         Button("扫描服务器音乐目录", systemImage: "externaldrive") {
-                            Task { await importServerDirectory() }
+                            showsServerDirectoryPicker = true
                         }
                         Button("从 App 本地导入", systemImage: "iphone") {
                             showsImporter = true
@@ -416,6 +417,11 @@ struct SonaTrackListView: View {
         ) { result in
             Task { await importLocalFiles(result) }
         }
+        .sheet(isPresented: $showsServerDirectoryPicker) {
+            ServerDirectoryPicker { directory in
+                Task { await importServerDirectory(directory) }
+            }
+        }
         .alert("导入结果", isPresented: Binding(
             get: { importMessage != nil },
             set: { if !$0 { importMessage = nil } }
@@ -426,10 +432,10 @@ struct SonaTrackListView: View {
         }
     }
 
-    private func importServerDirectory() async {
-        await library.scan()
+    private func importServerDirectory(_ directory: ServerMusicDirectory) async {
+        await library.scan(directory: directory.path)
         await personal.refresh()
-        importMessage = library.errorMessage ?? "服务器音乐目录已导入正常歌曲池"
+        importMessage = library.errorMessage ?? "“\(directory.name)”已导入正常歌曲池"
     }
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {

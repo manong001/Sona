@@ -13,6 +13,7 @@ public class ScanCoordinator {
     private final TaskExecutor taskExecutor;
     private final AtomicReference<ScanStatus> status = new AtomicReference<>(ScanStatus.idle());
     private final AtomicBoolean rerunRequested = new AtomicBoolean();
+    private final AtomicReference<String> rerunDirectory = new AtomicReference<>();
 
     ScanCoordinator(
         LibraryScanner libraryScanner,
@@ -23,19 +24,24 @@ public class ScanCoordinator {
     }
 
     synchronized ScanStatus start() {
+        return start("");
+    }
+
+    synchronized ScanStatus start(String relativeDirectory) {
         if (status.get().state() == ScanStatus.State.RUNNING) {
+            rerunDirectory.set(relativeDirectory);
             rerunRequested.set(true);
             return status.get();
         }
         status.set(ScanStatus.running());
         taskExecutor.execute(() -> {
             try {
-                status.set(ScanStatus.completed(libraryScanner.scan()));
+                status.set(ScanStatus.completed(libraryScanner.scan(relativeDirectory)));
             } catch (Exception exception) {
                 status.set(ScanStatus.failed(exception));
             } finally {
                 if (rerunRequested.getAndSet(false)) {
-                    start();
+                    start(rerunDirectory.getAndSet(null));
                 }
             }
         });

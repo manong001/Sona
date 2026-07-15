@@ -166,6 +166,7 @@ struct MusicLibraryView: View {
 
     @ViewBuilder
     private var libraryRows: some View {
+        let visibleCollections = collections
         VStack(spacing: 3) {
             if selectedFilter == .playlists, query.isEmpty {
                 NavigationLink {
@@ -197,7 +198,7 @@ struct MusicLibraryView: View {
                 .buttonStyle(.plain)
             }
 
-            ForEach(collections) { collection in
+            ForEach(visibleCollections) { collection in
                 NavigationLink {
                     if selectedFilter == .playlists {
                         ManagedPlaylistDetailView(playlistID: collection.id)
@@ -210,7 +211,7 @@ struct MusicLibraryView: View {
                 .buttonStyle(.plain)
                 .task {
                     guard selectedFilter != .playlists,
-                          collection.id == collections.last?.id else { return }
+                          collection.id == visibleCollections.last?.id else { return }
                     await library.loadNextPage()
                 }
                 .contextMenu {
@@ -227,7 +228,7 @@ struct MusicLibraryView: View {
                     .padding(.vertical, 18)
             }
 
-            if collections.isEmpty && !(selectedFilter == .playlists && query.isEmpty) {
+            if visibleCollections.isEmpty && !(selectedFilter == .playlists && query.isEmpty) {
                 VStack(spacing: 10) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 36))
@@ -271,6 +272,7 @@ private struct ManagedPlaylistDetailView: View {
     @State private var isSelecting = false
     @State private var selectedIDs = Set<String>()
     @State private var showsImporter = false
+    @State private var showsServerDirectoryPicker = false
     @State private var importMessage: String?
     let playlistID: String
 
@@ -287,6 +289,7 @@ private struct ManagedPlaylistDetailView: View {
             Color.sonaBackground.ignoresSafeArea()
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    playlistActions
                     ForEach(tracks) { track in
                         Button {
                             if isSelecting {
@@ -330,32 +333,6 @@ private struct ManagedPlaylistDetailView: View {
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.large)
         .toolbar(.visible, for: .navigationBar)
-        .toolbar {
-            if session.currentUser?.isAdmin == true {
-                Menu("导入", systemImage: "square.and.arrow.down") {
-                    Button("扫描服务器音乐目录", systemImage: "externaldrive") {
-                        Task { await importServerDirectory() }
-                    }
-                    Button("从 App 本地导入", systemImage: "iphone") {
-                        showsImporter = true
-                    }
-                }
-            }
-            Button(isSelecting ? "完成" : "多选") {
-                isSelecting.toggle()
-                if !isSelecting { selectedIDs.removeAll() }
-            }
-            if isSelecting, !selectedIDs.isEmpty {
-                Button("移除 \(selectedIDs.count) 首", role: .destructive) {
-                    let ids = selectedIDs
-                    Task {
-                        await personal.removeTracks(ids, from: playlistID)
-                        selectedIDs.removeAll()
-                        isSelecting = false
-                    }
-                }
-            }
-        }
         .toolbarBackground(.hidden, for: .navigationBar)
         .fileImporter(
             isPresented: $showsImporter,
@@ -363,6 +340,11 @@ private struct ManagedPlaylistDetailView: View {
             allowsMultipleSelection: true
         ) { result in
             Task { await importLocalFiles(result) }
+        }
+        .sheet(isPresented: $showsServerDirectoryPicker) {
+            ServerDirectoryPicker { directory in
+                Task { await importServerDirectory(directory) }
+            }
         }
         .alert("导入结果", isPresented: Binding(
             get: { importMessage != nil },
@@ -374,10 +356,56 @@ private struct ManagedPlaylistDetailView: View {
         }
     }
 
-    private func importServerDirectory() async {
-        await library.scan()
+    private var playlistActions: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                if session.currentUser?.isAdmin == true {
+                    Menu {
+                        Button("扫描服务器音乐目录", systemImage: "externaldrive") {
+                            showsServerDirectoryPicker = true
+                        }
+                        Button("从 App 本地导入", systemImage: "iphone") {
+                            showsImporter = true
+                        }
+                    } label: {
+                        Label("导入音乐", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                Button {
+                    isSelecting.toggle()
+                    if !isSelecting { selectedIDs.removeAll() }
+                } label: {
+                    Label(isSelecting ? "完成" : "多选", systemImage: "checklist")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(tracks.isEmpty)
+            }
+            .buttonStyle(.bordered)
+
+            if isSelecting, !selectedIDs.isEmpty {
+                Button("移除选中的 \(selectedIDs.count) 首", role: .destructive) {
+                    let ids = selectedIDs
+                    Task {
+                        await personal.removeTracks(ids, from: playlistID)
+                        selectedIDs.removeAll()
+                        isSelecting = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+    }
+
+    private func importServerDirectory(_ directory: ServerMusicDirectory) async {
+        await library.scan(directory: directory.path)
         await personal.refresh()
-        importMessage = library.errorMessage ?? "服务器音乐目录已导入正常歌曲池"
+        importMessage = library.errorMessage ?? "“\(directory.name)”已导入正常歌曲池"
     }
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
@@ -389,6 +417,93 @@ private struct ManagedPlaylistDetailView: View {
             importMessage = "已导入 \(urls.count) 首到正常歌曲池"
         } catch {
             importMessage = error.localizedDescription
+        }
+    }
+}
+
+struct ServerDirectoryPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    let select: (ServerMusicDirectory) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ServerDirectoryLevel(path: "") { directory in
+                dismiss()
+                select(directory)
+            }
+        }
+    }
+}
+
+private struct ServerDirectoryLevel: View {
+    let path: String
+    let select: (ServerMusicDirectory) -> Void
+    @State private var listing: ServerMusicDirectoryListing?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if isLoading && listing == nil {
+                ProgressView("正在读取服务器目录…")
+            } else if let listing {
+                List {
+                    Section {
+                        Button {
+                            select(ServerMusicDirectory(
+                                path: listing.path,
+                                name: listing.name,
+                                hasChildren: !listing.directories.isEmpty
+                            ))
+                        } label: {
+                            Label("导入此目录", systemImage: "square.and.arrow.down")
+                                .font(.headline)
+                                .foregroundStyle(Color.sonaGreen)
+                        }
+                    } footer: {
+                        Text("将扫描此目录及其全部子目录，歌曲进入正常歌曲池。")
+                    }
+
+                    Section("子目录") {
+                        if listing.directories.isEmpty {
+                            Text("没有子目录")
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        } else {
+                            ForEach(listing.directories) { directory in
+                                NavigationLink {
+                                    ServerDirectoryLevel(path: directory.path, select: select)
+                                } label: {
+                                    Label(directory.name, systemImage: "folder.fill")
+                                }
+                            }
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            } else {
+                ContentUnavailableView(
+                    "无法读取目录",
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    description: Text(errorMessage ?? "请稍后重试")
+                )
+            }
+        }
+        .background(Color.sonaBackground)
+        .navigationTitle(listing?.name ?? "服务器音乐目录")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            listing = try await APIClient.shared.serverMusicDirectories(path: path)
+        } catch {
+            listing = nil
+            errorMessage = error.localizedDescription
         }
     }
 }

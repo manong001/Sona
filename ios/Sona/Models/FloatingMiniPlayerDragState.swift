@@ -1,6 +1,22 @@
 import Foundation
 import CoreGraphics
 
+enum FixedMiniPlayerSwipeAction {
+    case previous
+    case next
+}
+
+enum FixedMiniPlayerSwipe {
+    static func action(
+        for translation: CGSize,
+        threshold: CGFloat = 50
+    ) -> FixedMiniPlayerSwipeAction? {
+        guard abs(translation.width) >= threshold,
+              abs(translation.width) > abs(translation.height) else { return nil }
+        return translation.width < 0 ? .next : .previous
+    }
+}
+
 struct FloatingMiniPlayerDragState {
     enum Side: String {
         case left

@@ -74,6 +74,23 @@ class SonaApiIntegrationTest {
     }
 
     @Test
+    void browsesMountedMusicDirectoriesWithoutExposingFiles() throws Exception {
+        Files.createDirectories(MUSIC_DIRECTORY.resolve("directory-browser/album"));
+        Files.writeString(MUSIC_DIRECTORY.resolve("directory-browser/song.mp3"), "audio");
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+
+        var root = get("/api/v1/library/directories", cookie);
+        var nested = get("/api/v1/library/directories?path=directory-browser", cookie);
+
+        assertThat(root.statusCode()).isEqualTo(200);
+        assertThat(root.body()).contains("\"path\":\"directory-browser\"");
+        assertThat(nested.statusCode()).isEqualTo(200);
+        assertThat(nested.body()).contains("\"path\":\"directory-browser/album\"");
+        assertThat(nested.body()).doesNotContain("song.mp3");
+    }
+
+    @Test
     void servesRequestedAudioByteRange() throws Exception {
         var audioPath = Files.write(MUSIC_DIRECTORY.resolve("range-test.mp3"), new byte[] {
             0, 1, 2, 3, 4, 5, 6, 7

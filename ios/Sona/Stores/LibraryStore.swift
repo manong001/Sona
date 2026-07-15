@@ -2,7 +2,9 @@ import Foundation
 
 @MainActor
 final class LibraryStore: ObservableObject {
-    @Published private(set) var tracks: [Track] = []
+    @Published private(set) var tracks: [Track] = [] {
+        didSet { trackLookup = LibraryTrackLookup(tracks) }
+    }
     @Published private(set) var nextCursor: String?
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingMore = false
@@ -13,6 +15,7 @@ final class LibraryStore: ObservableObject {
     @Published var errorMessage: String?
 
     private let api: APIClient
+    private var trackLookup = LibraryTrackLookup([])
     private var loadedQuery = ""
     private var searchQuery = ""
     private var searchCursor: String?
@@ -124,13 +127,18 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func scan() async {
+    func scan(directory: String = "") async {
+        errorMessage = nil
         do {
-            scanStatus = try await api.startScan()
+            scanStatus = try await api.startScan(directory: directory)
             repeat {
                 try await Task.sleep(for: .seconds(1))
                 scanStatus = try await api.scanStatus()
             } while scanStatus?.state == "RUNNING"
+            if scanStatus?.state == "FAILED" {
+                errorMessage = scanStatus?.message ?? "服务器音乐目录扫描失败"
+                return
+            }
             await refresh(query: loadedQuery)
         } catch {
             errorMessage = error.localizedDescription
@@ -138,7 +146,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func track(id: String) -> Track? {
-        tracks.first { $0.id == id }
+        trackLookup.track(id: id)
     }
 }
 

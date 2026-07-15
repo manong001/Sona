@@ -26,6 +26,7 @@ struct ArtworkView: View {
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
         }
+        .aspectRatio(1, contentMode: .fill)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .task(id: path) {
             guard let path else {

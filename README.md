@@ -81,6 +81,10 @@ mvn spring-boot:run
 ./ios/build_unsigned_ipa.sh
 ```
 
-脚本会在 `ios/build/Sona-unsigned.ipa` 生成包含完整 `Payload/Sona.app`、Info.plist 和 AppIcon 的 arm64 包。该包按设计不含签名和描述文件，安装前请用自己的证书与 provisioning profile 重签；也可将输出路径作为第一个参数传入。
+脚本会在 `ios/build` 生成类似 `Sona-unsigned-0.5.0-build6-20260715-150316.ipa` 的文件，包含完整 `Payload/Sona.app`、Info.plist 和 AppIcon。该包按设计不含签名和描述文件，安装前请用自己的证书与 provisioning profile 重签；也可将输出路径作为第一个参数传入：
+
+```bash
+./ios/build_unsigned_ipa.sh /自定义目录/Sona-unsigned.ipa
+```
 
 > 当前服务器使用明文 HTTP，因此登录密码和音频流可能被同网络中的第三方窃听。仅建议在可信网络或 VPN 中使用；后续启用 HTTPS 时应同时设置 `SONA_SECURE_COOKIE=true`。

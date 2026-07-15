@@ -1,6 +1,5 @@
 package cc.eu.sosee.sona.library;
 
-import cc.eu.sosee.sona.config.SonaProperties;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,7 +23,7 @@ class LibraryScanner {
         "ogg", "oga", "opus", "ape", "wv", "tta"
     );
 
-    private final Path musicDirectory;
+    private final ServerMusicDirectoryService directoryService;
     private final TrackStore trackStore;
     private final AudioMetadataExtractor metadataExtractor;
     private final ArtworkStore artworkStore;
@@ -33,14 +32,14 @@ class LibraryScanner {
     private final Clock clock;
 
     LibraryScanner(
-        SonaProperties properties,
+        ServerMusicDirectoryService directoryService,
         TrackStore trackStore,
         AudioMetadataExtractor metadataExtractor,
         ArtworkStore artworkStore,
         MetadataScraper metadataScraper,
         Clock clock
     ) {
-        this.musicDirectory = properties.getMusicDir().toAbsolutePath().normalize();
+        this.directoryService = directoryService;
         this.trackStore = trackStore;
         this.metadataExtractor = metadataExtractor;
         this.artworkStore = artworkStore;
@@ -50,12 +49,13 @@ class LibraryScanner {
     }
 
     ScanResult scan() throws IOException {
-        if (!Files.isDirectory(musicDirectory)) {
-            throw new IOException("Music directory does not exist: " + musicDirectory);
-        }
+        return scan("");
+    }
 
+    ScanResult scan(String relativeDirectory) throws IOException {
+        var scanDirectory = directoryService.resolve(relativeDirectory);
         var counts = new int[5];
-        try (Stream<Path> paths = Files.walk(musicDirectory)) {
+        try (Stream<Path> paths = Files.walk(scanDirectory)) {
             paths.filter(Files::isRegularFile)
                 .filter(this::isSupported)
                 .sorted()

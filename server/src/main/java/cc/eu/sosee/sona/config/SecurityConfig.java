@@ -3,6 +3,7 @@ package cc.eu.sosee.sona.config;
 import cc.eu.sosee.sona.auth.SessionAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Clock;
+import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -25,6 +26,11 @@ class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(requests -> requests
                 .requestMatchers("/error", "/api/v1/health", "/api/v1/auth/login").permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/api/v1/app/releases",
+                    "/api/v1/app/releases/"
+                ).hasRole("ADMIN")
                 .requestMatchers(
                     "/api/v1/users/**",
                     "/api/v1/library/**",

@@ -147,7 +147,7 @@ struct MiniPlayerView: View {
                 if track != nil { open() }
             } label: {
                 ArtworkView(path: track?.artworkURL, cornerRadius: 7)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 54, height: 54)
             }
             .disabled(track == nil)
             VStack(alignment: .leading, spacing: 3) {
@@ -161,7 +161,7 @@ struct MiniPlayerView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer()
-            HStack(spacing: 2) {
+            HStack(spacing: 8) {
                 Button(
                     isFavorite ? "取消收藏" : "收藏",
                     systemImage: isFavorite ? "heart.fill" : "heart"
@@ -172,11 +172,6 @@ struct MiniPlayerView: View {
                 .foregroundStyle(isFavorite ? Color.sonaGreen : .white)
                 .disabled(track == nil)
 
-                Button("上一曲", systemImage: "backward.fill") {
-                    player.previous()
-                }
-                .disabled(track == nil || !player.canGoPrevious)
-
                 Button(
                     player.isPlaying ? "暂停" : "播放",
                     systemImage: player.isPlaying ? "pause.fill" : "play.fill"
@@ -185,24 +180,34 @@ struct MiniPlayerView: View {
                 }
                 .disabled(track == nil)
 
-                Button("下一曲", systemImage: "forward.fill") {
-                    player.next()
-                }
-                .disabled(track == nil || !player.canGoNext)
-
                 Button("播放列表", systemImage: "list.bullet") {
                     showsQueue = true
                 }
                 .disabled(track == nil)
             }
             .labelStyle(.iconOnly)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 16, weight: .semibold))
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .frame(height: 62)
+        .frame(height: 68)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
         .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    guard track != nil,
+                          let action = FixedMiniPlayerSwipe.action(
+                              for: value.translation
+                          ) else { return }
+                    switch action {
+                    case .previous:
+                        if player.canGoPrevious { player.previous() }
+                    case .next:
+                        if player.canGoNext { player.next() }
+                    }
+                }
+        )
     }
 
     private var currentLyric: String? {

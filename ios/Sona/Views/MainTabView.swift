@@ -11,6 +11,7 @@ struct MainTabView: View {
     @State private var selectedTab: SonaTab = .home
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -35,8 +36,10 @@ struct MainTabView: View {
             .toolbarBackground(Color.sonaBackgroundDeep.opacity(0.98), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
 
-            MiniPlayerView {
-                showsNowPlaying = true
+            if selectedTab != .search {
+                MiniPlayerView {
+                    showsNowPlaying = true
+                }
             }
 
             if showsDrawer {
@@ -100,6 +103,13 @@ struct MainTabView: View {
 
     private func tabContent<Content: View>(_ content: Content) -> some View {
         content
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if miniPlayerMode == "fixed" && selectedTab != .search {
+                    Color.clear
+                        .frame(height: 76)
+                        .accessibilityHidden(true)
+                }
+            }
     }
 
     private func openDrawer() {

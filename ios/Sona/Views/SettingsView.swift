@@ -12,6 +12,12 @@ struct SettingsView: View {
     @State private var showsImporter = false
     @State private var importMessage: String?
     @State private var appIconError: String?
+    @State private var isCheckingUpdate = false
+    @State private var releaseInfo: AppReleaseInfo?
+    @State private var updateMessage: String?
+    @State private var isDownloadingUpdate = false
+    @State private var downloadProgress = 0.0
+    @State private var downloadedPackage: SharedPackage?
 
     var body: some View {
         NavigationStack {
@@ -86,6 +92,55 @@ struct SettingsView: View {
                     )
                 }
 
+                Section("App 更新") {
+                    LabeledContent("当前版本", value: "\(currentVersion) (\(currentBuild))")
+
+                    Button("检查更新", systemImage: "arrow.clockwise") {
+                        Task { await checkForUpdate() }
+                    }
+                    .disabled(isCheckingUpdate || isDownloadingUpdate)
+
+                    if isCheckingUpdate {
+                        HStack {
+                            ProgressView()
+                            Text("正在检查服务器版本…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let release = releaseInfo,
+                       release.isNewer(thanVersion: currentVersion, build: currentBuild) {
+                        if let version = release.version, let build = release.build {
+                            LabeledContent("发现新版本", value: "\(version) (\(build))")
+                        }
+                        if let fileSize = release.fileSizeText {
+                            LabeledContent("安装包大小", value: fileSize)
+                        }
+                        if let notes = release.notes, !notes.isEmpty {
+                            Text(notes)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("下载并分享 IPA", systemImage: "square.and.arrow.down") {
+                            Task { await downloadUpdate(release) }
+                        }
+                        .disabled(isDownloadingUpdate)
+                    }
+
+                    if isDownloadingUpdate {
+                        ProgressView(value: downloadProgress)
+                        Text("下载进度 \(Int(downloadProgress * 100))%")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let updateMessage {
+                        Text(updateMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("账号") {
                     if let user = session.currentUser {
                         LabeledContent("当前账号", value: user.username)
@@ -106,7 +161,7 @@ struct SettingsView: View {
 
                 Section("关于") {
                     LabeledContent("应用", value: "Sona")
-                    LabeledContent("版本", value: "0.4.0")
+                    LabeledContent("版本", value: "\(currentVersion) (\(currentBuild))")
                     Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -143,6 +198,54 @@ struct SettingsView: View {
             .alert("图标切换失败", isPresented: Binding(
                 get: { appIconError != nil }, set: { if !$0 { appIconError = nil } }
             )) { Button("好") { appIconError = nil } } message: { Text(appIconError ?? "") }
+            .sheet(item: $downloadedPackage) { package in
+                AppShareSheet(items: [package.url])
+            }
+        }
+    }
+
+    private var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+    }
+
+    private var currentBuild: Int {
+        Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") ?? 0
+    }
+
+    @MainActor
+    private func checkForUpdate() async {
+        isCheckingUpdate = true
+        releaseInfo = nil
+        updateMessage = nil
+        do {
+            let release = try await APIClient.shared.latestAppRelease()
+            releaseInfo = release
+            if !release.available {
+                updateMessage = "服务器暂未发布安装包"
+            } else if !release.isNewer(thanVersion: currentVersion, build: currentBuild) {
+                updateMessage = "当前已是最新版本"
+            }
+        } catch {
+            updateMessage = "检查更新失败：\(error.localizedDescription)"
+        }
+        isCheckingUpdate = false
+    }
+
+    @MainActor
+    private func downloadUpdate(_ release: AppReleaseInfo) async {
+        isDownloadingUpdate = true
+        downloadProgress = 0
+        updateMessage = nil
+        do {
+            let packageURL = try await APIClient.shared.downloadAppRelease(release) { value in
+                downloadProgress = value
+            }
+            downloadProgress = 1
+            isDownloadingUpdate = false
+            downloadedPackage = SharedPackage(url: packageURL)
+        } catch {
+            isDownloadingUpdate = false
+            updateMessage = "下载安装包失败：\(error.localizedDescription)"
         }
     }
 
@@ -203,6 +306,21 @@ struct SettingsView: View {
         default: "空闲"
         }
     }
+}
+
+private struct SharedPackage: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct AppShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ viewController: UIActivityViewController, context: Context) {}
 }
 
 private struct TrackManagementView: View {

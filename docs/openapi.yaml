@@ -555,9 +555,34 @@ paths:
                 contentMediaType: image/png
         "404":
           $ref: "#/components/responses/NotFound"
+  /library/directories:
+    get:
+      operationId: listServerMusicDirectories
+      description: 浏览已挂载音乐根目录下的直接子目录（仅管理员）
+      parameters:
+        - name: path
+          in: query
+          schema: {type: string, default: ""}
+          description: 相对于挂载音乐根目录的目录路径
+      responses:
+        "200":
+          description: 当前目录及其直接子目录
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerMusicDirectoryListing"
+        "400":
+          description: 路径越过挂载音乐根目录
+        "404":
+          $ref: "#/components/responses/NotFound"
   /library/scan:
     post:
       operationId: startScan
+      parameters:
+        - name: path
+          in: query
+          schema: {type: string, default: ""}
+          description: 仅扫描该相对目录及其子目录；留空扫描整个挂载音乐目录
       responses:
         "202":
           description: 扫描已开始
@@ -715,6 +740,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownloadTask"
+  /app/releases/latest:
+    get:
+      operationId: latestAppRelease
+      description: 查询服务器最新 iOS 未签名 IPA 版本
+      responses:
+        "200":
+          description: 最新版本信息；未发布安装包时 available 为 false
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppRelease"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /app/releases/latest/ipa:
+    get:
+      operationId: downloadLatestAppRelease
+      description: 下载最新 iOS 未签名 IPA，供 App 调用系统分享面板
+      responses:
+        "200":
+          description: IPA 安装包
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /app/releases:
+    post:
+      operationId: publishAppRelease
+      description: 发布最新 iOS 未签名 IPA（仅管理员）
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [version, build, file]
+              properties:
+                version:
+                  type: string
+                  pattern: "^[0-9]+(?:\\.[0-9]+){1,3}$"
+                build:
+                  type: integer
+                  minimum: 1
+                notes:
+                  type: string
+                  maxLength: 4000
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: 安装包已发布
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppRelease"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   parameters:
     TrackId:
@@ -939,6 +1024,51 @@ components:
         synced:
           type: [string, "null"]
         source:
+          type: [string, "null"]
+    ServerMusicDirectory:
+      type: object
+      required: [path, name, hasChildren]
+      properties:
+        path:
+          type: string
+          description: 相对于挂载音乐根目录的路径
+        name:
+          type: string
+        hasChildren:
+          type: boolean
+    ServerMusicDirectoryListing:
+      type: object
+      required: [path, name, directories]
+      properties:
+        path:
+          type: string
+        name:
+          type: string
+        directories:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServerMusicDirectory"
+    AppRelease:
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+        version:
+          type: [string, "null"]
+        build:
+          type: [integer, "null"]
+        notes:
+          type: [string, "null"]
+        publishedAt:
+          type: [integer, "null"]
+          format: int64
+        fileSizeBytes:
+          type: [integer, "null"]
+          format: int64
+        fileName:
+          type: [string, "null"]
+        downloadURL:
           type: [string, "null"]
     ScanStatus:
       type: object

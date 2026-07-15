@@ -9,14 +9,35 @@
 
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+Usage:
+  ./ios/build_unsigned_ipa.sh [output.ipa]
+
+Builds an arm64 Release IPA without code signing or a provisioning profile.
+When output.ipa is omitted, the package is written to ios/build with its
+version, build number, and build time in the file name.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+fi
+if (( $# > 1 )); then
+    usage >&2
+    exit 2
+fi
+
 IOS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$IOS_DIR/Sona.xcodeproj"
-WORK_DIR="$IOS_DIR/build/.unsigned-ipa"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sona-unsigned-ipa.XXXXXX")"
 DERIVED_DATA="$WORK_DIR/DerivedData"
-DEFAULT_OUTPUT="$IOS_DIR/build/Sona-unsigned.ipa"
-OUTPUT="${1:-$DEFAULT_OUTPUT}"
+OUTPUT="${1:-}"
 
-if [[ "$OUTPUT" != /* ]]; then
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+if [[ -n "$OUTPUT" && "$OUTPUT" != /* ]]; then
     OUTPUT="$(pwd)/$OUTPUT"
 fi
 
@@ -29,9 +50,6 @@ if [[ ! -d "$PROJECT" ]]; then
     echo "Xcode project not found: $PROJECT" >&2
     exit 1
 fi
-
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR" "$(dirname "$OUTPUT")"
 
 echo "Building unsigned Sona.app (iOS Release)..."
 xcodebuild \
@@ -87,6 +105,18 @@ if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$PLIST")" != "
     exit 1
 fi
 
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+if [[ -z "$OUTPUT" ]]; then
+    TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+    OUTPUT="$IOS_DIR/build/Sona-unsigned-$VERSION-build$BUILD-$TIMESTAMP.ipa"
+fi
+if [[ -e "$OUTPUT" ]]; then
+    echo "Output already exists; choose another path: $OUTPUT" >&2
+    exit 1
+fi
+mkdir -p "$(dirname "$OUTPUT")"
+
 if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:SpotifyIcon:CFBundleIconName' "$PLIST")" != "SpotifyIcon" ]]; then
     echo "Compiled app is missing the Spotify alternate icon registration" >&2
     exit 1
@@ -116,7 +146,6 @@ STAGE="$WORK_DIR/stage"
 mkdir -p "$STAGE/Payload"
 cp -R "$APP" "$STAGE/Payload/Sona.app"
 
-rm -f "$OUTPUT"
 (cd "$STAGE" && zip -qry "$OUTPUT" Payload)
 
 if ! unzip -tqq "$OUTPUT"; then
@@ -132,6 +161,6 @@ fi
 
 echo "Unsigned IPA: $OUTPUT"
 echo "Bundle: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")"
-echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST") $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+echo "Version: $VERSION ($BUILD)"
 echo "Architecture: $ARCHS"
 echo "The IPA is intentionally unsigned; sign it with your own certificate/profile before installing."

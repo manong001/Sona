@@ -67,6 +67,21 @@ struct Track: Codable, Hashable, Identifiable {
     }
 }
 
+struct LibraryTrackLookup {
+    private let tracksByID: [String: Track]
+
+    init(_ tracks: [Track]) {
+        tracksByID = Dictionary(
+            tracks.map { ($0.id, $0) },
+            uniquingKeysWith: { existing, _ in existing }
+        )
+    }
+
+    func track(id: String) -> Track? {
+        tracksByID[id]
+    }
+}
+
 struct TrackPage: Decodable {
     let items: [Track]
     let nextCursor: String?
@@ -93,6 +108,53 @@ struct ScanStatus: Decodable {
     let skipped: Int
     let failed: Int
     let message: String?
+}
+
+struct ServerMusicDirectory: Decodable, Identifiable, Hashable {
+    let path: String
+    let name: String
+    let hasChildren: Bool
+
+    var id: String { path }
+}
+
+struct ServerMusicDirectoryListing: Decodable {
+    let path: String
+    let name: String
+    let directories: [ServerMusicDirectory]
+}
+
+struct AppReleaseInfo: Decodable {
+    let available: Bool
+    let version: String?
+    let build: Int?
+    let notes: String?
+    let publishedAt: Int64?
+    let fileSizeBytes: Int64?
+    let fileName: String?
+    let downloadURL: String?
+
+    func isNewer(thanVersion currentVersion: String, build currentBuild: Int) -> Bool {
+        guard available, let version, let build else { return false }
+        let remoteParts = numericVersionParts(version)
+        let currentParts = numericVersionParts(currentVersion)
+        let count = max(remoteParts.count, currentParts.count)
+        for index in 0..<count {
+            let remote = index < remoteParts.count ? remoteParts[index] : 0
+            let current = index < currentParts.count ? currentParts[index] : 0
+            if remote != current { return remote > current }
+        }
+        return build > currentBuild
+    }
+
+    var fileSizeText: String? {
+        guard let fileSizeBytes else { return nil }
+        return ByteCountFormatter.string(fromByteCount: fileSizeBytes, countStyle: .file)
+    }
+
+    private func numericVersionParts(_ value: String) -> [Int] {
+        value.split(separator: ".").map { Int($0) ?? 0 }
+    }
 }
 
 struct PlaybackState: Decodable {
