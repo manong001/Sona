@@ -792,9 +792,31 @@ private struct UserManagementView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(user.username).fontWeight(.semibold)
-                            Text(user.role.title)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if canManage(user) {
+                                Menu {
+                                    Button(
+                                        user.role == .admin ? "设为普通用户" : "设为管理员",
+                                        systemImage: user.role == .admin
+                                            ? "person.badge.minus"
+                                            : "person.badge.key"
+                                    ) {
+                                        Task {
+                                            await setRole(
+                                                user,
+                                                role: user.role == .admin ? .user : .admin
+                                            )
+                                        }
+                                    }
+                                } label: {
+                                    Label(user.role.title, systemImage: "chevron.up.chevron.down")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.sonaGreen)
+                                }
+                            } else {
+                                Text(user.role.title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         Spacer()
                         Text(user.enabled ? "正常" : "已停用")
@@ -949,6 +971,14 @@ private struct UserManagementView: View {
         do {
             let updated = try await APIClient.shared.setUserEnabled(id: user.id, enabled: enabled)
             replace(updated)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func setRole(_ user: ManagedUser, role: UserRole) async {
+        do {
+            replace(try await APIClient.shared.setUserRole(id: user.id, role: role))
         } catch {
             errorMessage = error.localizedDescription
         }

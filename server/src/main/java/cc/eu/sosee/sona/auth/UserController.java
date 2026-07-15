@@ -2,6 +2,7 @@ package cc.eu.sosee.sona.auth;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
@@ -76,6 +77,19 @@ class UserController {
         return ManagedUserResponse.from(userRepository.findById(id).orElseThrow());
     }
 
+    @PatchMapping("/{id}/role")
+    ManagedUserResponse updateRole(
+        @AuthenticationPrincipal AuthenticatedUser actor,
+        @PathVariable String id,
+        @Valid @RequestBody UpdateUserRoleRequest request
+    ) {
+        rejectSelfManagement(actor, id);
+        if (!userRepository.setRole(id, request.role())) {
+            throw new ResponseStatusException(NOT_FOUND, "User not found");
+        }
+        return ManagedUserResponse.from(userRepository.findById(id).orElseThrow());
+    }
+
     @PutMapping("/{id}/password")
     ResponseEntity<Void> resetPassword(
         @AuthenticationPrincipal AuthenticatedUser actor,
@@ -117,6 +131,9 @@ class UserController {
     }
 
     record UpdateUserRequest(boolean enabled) {
+    }
+
+    record UpdateUserRoleRequest(@NotNull UserRole role) {
     }
 
     record ResetPasswordRequest(@NotBlank @Size(min = 8, max = 64) String password) {

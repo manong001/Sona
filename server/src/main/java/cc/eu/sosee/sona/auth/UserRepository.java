@@ -79,6 +79,13 @@ class UserRepository {
             .update() == 1;
     }
 
+    boolean setRole(String id, UserRole role) {
+        return jdbcClient.sql("UPDATE users SET role = :role WHERE id = :id")
+            .param("role", role.name())
+            .param("id", id)
+            .update() == 1;
+    }
+
     boolean updatePassword(String id, String passwordHash) {
         return jdbcClient.sql("UPDATE users SET password_hash = :passwordHash WHERE id = :id")
             .param("passwordHash", passwordHash)

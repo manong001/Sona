@@ -91,6 +91,15 @@ final class APIClient {
         )
     }
 
+    func setUserRole(id: String, role: UserRole) async throws -> ManagedUser {
+        struct Body: Encodable { let role: UserRole }
+        return try await request(
+            path: "/api/v1/users/\(id)/role",
+            method: "PATCH",
+            body: try encoder.encode(Body(role: role))
+        )
+    }
+
     func resetPassword(userID: String, password: String) async throws {
         struct Body: Encodable { let password: String }
         try await requestVoid(

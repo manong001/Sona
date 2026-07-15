@@ -82,6 +82,43 @@ class UserSystemApiIntegrationTest {
     }
 
     @Test
+    void adminChangesAnotherUsersRole() throws Exception {
+        var adminCookie = login("admin", "test-password");
+        var created = sendJson("POST", "/api/v1/users", adminCookie, """
+            {"username":"role-target","password":"role-target-password"}
+            """);
+        var userId = jsonString(created.body(), "id");
+        var userCookie = login("role-target", "role-target-password");
+
+        assertThat(sendJson(
+            "PATCH",
+            "/api/v1/users/" + userId + "/role",
+            userCookie,
+            "{\"role\":\"ADMIN\"}"
+        ).statusCode()).isEqualTo(403);
+
+        var promoted = sendJson(
+            "PATCH",
+            "/api/v1/users/" + userId + "/role",
+            adminCookie,
+            "{\"role\":\"ADMIN\"}"
+        );
+        assertThat(promoted.statusCode()).isEqualTo(200);
+        assertThat(promoted.body()).contains("\"role\":\"ADMIN\"");
+        assertThat(get("/api/v1/users", userCookie).statusCode()).isEqualTo(200);
+
+        var demoted = sendJson(
+            "PATCH",
+            "/api/v1/users/" + userId + "/role",
+            adminCookie,
+            "{\"role\":\"USER\"}"
+        );
+        assertThat(demoted.statusCode()).isEqualTo(200);
+        assertThat(demoted.body()).contains("\"role\":\"USER\"");
+        assertThat(get("/api/v1/users", userCookie).statusCode()).isEqualTo(403);
+    }
+
+    @Test
     void favoritesPlaylistsAndHistoryAreIsolatedPerUser() throws Exception {
         var adminCookie = login("admin", "test-password");
         createUser(adminCookie, "alice");
