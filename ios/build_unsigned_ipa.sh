@@ -87,6 +87,11 @@ if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$PLIST")" != "
     exit 1
 fi
 
+if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:SpotifyIcon:CFBundleIconName' "$PLIST")" != "SpotifyIcon" ]]; then
+    echo "Compiled app is missing the Spotify alternate icon registration" >&2
+    exit 1
+fi
+
 ARCHS="$(lipo -archs "$EXECUTABLE")"
 if [[ " $ARCHS " != *" arm64 "* ]]; then
     echo "Sona executable does not contain arm64: $ARCHS" >&2

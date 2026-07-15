@@ -122,23 +122,73 @@ class LibraryScannerTest {
         }
 
         @Override
+        public Optional<TrackRecord> findVisibleById(String id, String userId) {
+            return findById(id);
+        }
+
+        @Override
         public void save(TrackRecord track) {
             tracks.put(track.path().toAbsolutePath().normalize(), track);
         }
 
         @Override
-        public TrackPageData findPage(String query, String cursor, int limit, String userId) {
+        public TrackPageData findPage(
+            String query, String cursor, int limit, String userId, boolean childOnly
+        ) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public java.util.List<TrackRecord> findRandom(int limit, String userId) {
+        public java.util.List<TrackRecord> findRandom(int limit, String userId, boolean childOnly) {
             return tracks.values().stream().limit(limit).toList();
         }
 
         @Override
-        public java.util.List<TrackRecord> findDiscovery(int limit, String userId) {
+        public java.util.List<TrackRecord> findDiscovery(int limit, String userId, boolean childOnly) {
             return java.util.List.of();
+        }
+
+        @Override
+        public java.util.List<TrackRecord> findManaged(String poolType) {
+            return tracks.values().stream().toList();
+        }
+
+        @Override
+        public java.util.List<TrackRecord> findDailyCandidates(
+            String userId, boolean childOnly, long recentAfter, int limit
+        ) {
+            return tracks.values().stream().limit(limit).toList();
+        }
+
+        @Override
+        public java.util.List<String> findGenres(String userId, boolean childOnly) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public java.util.List<TrackRecord> findByGenre(
+            String genre, String userId, boolean childOnly, int limit
+        ) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public java.util.List<ChartTrackData> findChart(
+            String region, String userId, boolean childOnly, int limit
+        ) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public boolean classify(
+            String id, String poolType, String audienceType, String genre, String region
+        ) {
+            return false;
+        }
+
+        @Override
+        public boolean delete(String id) {
+            return false;
         }
     }
 }

@@ -1,14 +1,32 @@
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
+    @AppStorage("childMode") private var childMode = false
+    @AppStorage("childTheme") private var childTheme = "boy"
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
+    @AppStorage("appIconPreference") private var appIconPreference = "girl"
+    @State private var showsImporter = false
+    @State private var importMessage: String?
+    @State private var appIconError: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 if session.currentUser?.isAdmin == true {
                     Section("曲库维护") {
+                        NavigationLink {
+                            TrackManagementView()
+                        } label: {
+                            Label("歌曲入库与分类", systemImage: "tray.full")
+                        }
+
+                        Button("从 App 批量导入", systemImage: "square.and.arrow.down") {
+                            showsImporter = true
+                        }
                         NavigationLink {
                             MusicDownloadView()
                         } label: {
@@ -37,6 +55,35 @@ struct SettingsView: View {
                             }
                         }
                     }
+                }
+
+                Section("播放体验") {
+                    Picker("迷你播放器", selection: $miniPlayerMode) {
+                        Text("悬浮拖动").tag("floating")
+                        Text("固定在导航栏上方").tag("fixed")
+                    }
+                    Toggle("儿童模式", isOn: $childMode)
+                    if childMode {
+                        Picker("儿童主题", selection: $childTheme) {
+                            Text("🚀 星空小勇士").tag("boy")
+                            Text("🦄 糖果小公主").tag("girl")
+                        }
+                    }
+                }
+
+                Section("App 图标") {
+                    appIconButton(
+                        title: "耳机少女",
+                        subtitle: "默认",
+                        previewName: "AppIconGirl",
+                        preference: "girl"
+                    )
+                    appIconButton(
+                        title: "Spotify 原生",
+                        subtitle: "经典绿黑图标",
+                        previewName: "AppIconSpotify",
+                        preference: "spotify"
+                    )
                 }
 
                 Section("账号") {
@@ -70,6 +117,80 @@ struct SettingsView: View {
             .tint(.sonaGreen)
             .navigationTitle("设置")
             .toolbarBackground(Color.sonaBackground, for: .navigationBar)
+            .onAppear {
+                appIconPreference = UIApplication.shared.alternateIconName == "SpotifyIcon"
+                    ? "spotify" : "girl"
+            }
+            .fileImporter(
+                isPresented: $showsImporter,
+                allowedContentTypes: [.audio],
+                allowsMultipleSelection: true
+            ) { result in
+                Task {
+                    do {
+                        let urls = try result.get()
+                        try await APIClient.shared.uploadTracks(urls: urls)
+                        importMessage = "已上传 \(urls.count) 首，正在刮削并等待管理员分类"
+                    } catch {
+                        importMessage = error.localizedDescription
+                    }
+                }
+            }
+            .alert("导入结果", isPresented: Binding(
+                get: { importMessage != nil }, set: { if !$0 { importMessage = nil } }
+            )) { Button("好") { importMessage = nil } } message: { Text(importMessage ?? "") }
+            .alert("图标切换失败", isPresented: Binding(
+                get: { appIconError != nil }, set: { if !$0 { appIconError = nil } }
+            )) { Button("好") { appIconError = nil } } message: { Text(appIconError ?? "") }
+        }
+    }
+
+    private func appIconButton(
+        title: String, subtitle: String, previewName: String, preference: String
+    ) -> some View {
+        Button {
+            setAppIcon(preference)
+        } label: {
+            HStack(spacing: 14) {
+                Image(previewName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 58, height: 58)
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if appIconPreference == preference {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.sonaGreen)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!UIApplication.shared.supportsAlternateIcons)
+    }
+
+    private func setAppIcon(_ preference: String) {
+        guard UIApplication.shared.supportsAlternateIcons else {
+            appIconError = "当前设备不支持切换 App 图标。"
+            return
+        }
+        let iconName = preference == "spotify" ? "SpotifyIcon" : nil
+        UIApplication.shared.setAlternateIconName(iconName) { error in
+            DispatchQueue.main.async {
+                if let error {
+                    appIconError = error.localizedDescription
+                } else {
+                    appIconPreference = preference
+                }
+            }
         }
     }
 
@@ -79,6 +200,120 @@ struct SettingsView: View {
         case "COMPLETED": "已完成"
         case "FAILED": "失败"
         default: "空闲"
+        }
+    }
+}
+
+private struct TrackManagementView: View {
+    @State private var tracks: [Track] = []
+    @State private var filter = "PENDING"
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Picker("歌曲池", selection: $filter) {
+                Text("待入库").tag("PENDING")
+                Text("正常").tag("NORMAL")
+                Text("发现").tag("DISCOVERY")
+            }
+            .pickerStyle(.segmented)
+
+            ForEach(tracks) { track in
+                VStack(alignment: .leading, spacing: 8) {
+                    TrackRow(track: track)
+                    HStack {
+                        Menu(track.audienceType == "CHILD" ? "儿童歌曲" : "全年龄") {
+                            Button("全年龄") { update(track, pool: filter, audience: "GENERAL") }
+                            Button("儿童歌曲") { update(track, pool: filter, audience: "CHILD") }
+                        }
+                        Spacer()
+                        Menu("划入歌曲池") {
+                            Button("正常池") { update(track, pool: "NORMAL", audience: track.audienceType) }
+                            Button("发现池") { update(track, pool: "DISCOVERY", audience: track.audienceType) }
+                            Button("待入库") { update(track, pool: "PENDING", audience: track.audienceType) }
+                        }
+                    }
+                    HStack {
+                        Menu("曲风：\(track.genre)") {
+                            ForEach(
+                                ["流行", "摇滚", "民谣", "电子", "嘻哈", "爵士", "古典", "R&B", "儿童", "未分类"],
+                                id: \.self
+                            ) { genre in
+                                Button(genre) {
+                                    update(
+                                        track, pool: track.poolType, audience: track.audienceType,
+                                        genre: genre
+                                    )
+                                }
+                            }
+                        }
+                        Spacer()
+                        Menu("地区：\(regionTitle(track.region))") {
+                            ForEach(
+                                [("CN", "中国"), ("KR", "韩国"), ("US", "美国"), ("JP", "日本"), ("OTHER", "其他")],
+                                id: \.0
+                            ) { region, title in
+                                Button(title) {
+                                    update(
+                                        track, pool: track.poolType, audience: track.audienceType,
+                                        region: region
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+                .swipeActions {
+                    Button("真删除", role: .destructive) { delete(track) }
+                }
+            }
+        }
+        .navigationTitle("歌曲入库与分类")
+        .onChange(of: filter) { _, _ in Task { await load() } }
+        .task { await load() }
+        .refreshable { await load() }
+        .overlay(alignment: .bottom) {
+            if let errorMessage { Text(errorMessage).foregroundStyle(.white).padding(8).background(.red, in: Capsule()) }
+        }
+    }
+
+    private func load() async {
+        do { tracks = try await APIClient.shared.managedTracks(poolType: filter) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func update(
+        _ track: Track, pool: String, audience: String,
+        genre: String? = nil, region: String? = nil
+    ) {
+        Task {
+            do {
+                _ = try await APIClient.shared.classifyTrack(
+                    id: track.id, poolType: pool, audienceType: audience,
+                    genre: genre, region: region
+                )
+                await load()
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func regionTitle(_ region: String) -> String {
+        switch region {
+        case "CN": "中国"
+        case "KR": "韩国"
+        case "US": "美国"
+        case "JP": "日本"
+        default: "其他"
+        }
+    }
+
+    private func delete(_ track: Track) {
+        Task {
+            do {
+                try await APIClient.shared.deleteTrack(id: track.id, isAdmin: true)
+                tracks.removeAll { $0.id == track.id }
+            } catch { errorMessage = error.localizedDescription }
         }
     }
 }

@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS playback_state (
     queue_type TEXT NOT NULL,
     queue_context_id TEXT,
     track_id TEXT NOT NULL,
+    queue_track_ids TEXT NOT NULL DEFAULT '',
     progress_ms INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -105,9 +106,21 @@ CREATE TABLE IF NOT EXISTS tracks (
     lyrics_source TEXT,
     metadata_status TEXT NOT NULL,
     pool_type TEXT NOT NULL DEFAULT 'PENDING',
+    audience_type TEXT NOT NULL DEFAULT 'GENERAL',
+    genre TEXT NOT NULL DEFAULT '未分类',
+    region TEXT NOT NULL DEFAULT 'OTHER',
     manual_edited INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS playback_batches (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    queue_type TEXT NOT NULL,
+    queue_context_id TEXT,
+    played_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracks_sort ON tracks(normalized_title, id);
@@ -119,6 +132,27 @@ CREATE TABLE IF NOT EXISTS track_play_stats (
     play_count INTEGER NOT NULL DEFAULT 0,
     completion_count INTEGER NOT NULL DEFAULT 0,
     completion_percent_sum REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS random_queue_state (
+    user_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    cycle_no INTEGER NOT NULL DEFAULT 1,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, scope),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS random_track_exposures (
+    user_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    last_cycle INTEGER NOT NULL,
+    selected_count INTEGER NOT NULL DEFAULT 1,
+    last_selected_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, scope, track_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS download_tasks (

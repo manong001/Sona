@@ -103,6 +103,7 @@ class SonaApiIntegrationTest {
             now
         ));
 
+        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE id = 'range-test'").update();
         var login = login("test-password");
         var cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
         var request = HttpRequest.newBuilder(uri("/api/v1/tracks/range-test/stream"))
@@ -147,6 +148,7 @@ class SonaApiIntegrationTest {
                 now
             ));
         }
+        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL'").update();
 
         var login = login("test-password");
         var cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
@@ -195,9 +197,14 @@ class SonaApiIntegrationTest {
         var login = login("test-password");
         var cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
 
-        assertThat(post("/api/v1/me/history/completion-rate", cookie).statusCode()).isEqualTo(204);
-        assertThat(post("/api/v1/me/history/completion-rate", cookie).statusCode()).isEqualTo(204);
-        assertThat(post("/api/v1/me/history/completion-rate/complete", cookie).statusCode()).isEqualTo(204);
+        assertThat(postJson(
+            "/api/v1/me/history/completion-rate", cookie,
+            "{\"listenedMs\":5000,\"progressPercent\":25}"
+        ).statusCode()).isEqualTo(204);
+        assertThat(postJson(
+            "/api/v1/me/history/completion-rate", cookie,
+            "{\"listenedMs\":5000,\"progressPercent\":100}"
+        ).statusCode()).isEqualTo(204);
 
         var stats = jdbcClient.sql("""
                 SELECT play_count, completion_count
@@ -210,6 +217,28 @@ class SonaApiIntegrationTest {
             ))
             .single();
         assertThat(stats).containsExactly(2, 1);
+    }
+
+    @Test
+    void promotesDiscoveryTrackAfterTenRecentPlaysAverageAboveEightyPercent() throws Exception {
+        saveTrack("discovery-nine", "Discovery Nine");
+        saveTrack("discovery-eighty", "Discovery Eighty");
+        saveTrack("discovery-promoted", "Discovery Promoted");
+        trackStore.classify("discovery-nine", "DISCOVERY", "GENERAL");
+        trackStore.classify("discovery-eighty", "DISCOVERY", "GENERAL");
+        trackStore.classify("discovery-promoted", "DISCOVERY", "GENERAL");
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+
+        recordPlays(cookie, "discovery-nine", 9, 100);
+        recordPlays(cookie, "discovery-eighty", 8, 100);
+        recordPlays(cookie, "discovery-eighty", 2, 0);
+        recordPlays(cookie, "discovery-promoted", 9, 100);
+        recordPlays(cookie, "discovery-promoted", 1, 0);
+
+        assertThat(poolType("discovery-nine")).isEqualTo("DISCOVERY");
+        assertThat(poolType("discovery-eighty")).isEqualTo("DISCOVERY");
+        assertThat(poolType("discovery-promoted")).isEqualTo("NORMAL");
     }
 
     @Test
@@ -254,6 +283,102 @@ class SonaApiIntegrationTest {
             .build());
         assertThat(nextPage.statusCode()).isEqualTo(200);
         assertThat(nextPage.body()).contains("\"id\":\"favorite-older\"");
+    }
+
+    @Test
+    void childModeFiltersTracksAndHiddenTrackCannotBeFetchedDirectly() throws Exception {
+        saveTrack("general-track", "General Track");
+        saveTrack("child-track", "Child Track");
+        trackStore.classify("general-track", "NORMAL", "GENERAL");
+        trackStore.classify("child-track", "NORMAL", "CHILD");
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+
+        var childList = send(HttpRequest.newBuilder(uri("/api/v1/tracks?childMode=true"))
+            .header("Cookie", cookie).GET().build());
+        assertThat(childList.body()).contains("child-track").doesNotContain("general-track");
+
+        var hidden = send(HttpRequest.newBuilder(uri("/api/v1/me/tracks/child-track"))
+            .header("Cookie", cookie).DELETE().build());
+        assertThat(hidden.statusCode()).isEqualTo(204);
+        var direct = send(HttpRequest.newBuilder(uri("/api/v1/tracks/child-track"))
+            .header("Cookie", cookie).GET().build());
+        assertThat(direct.statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void returnsDailyGenreRecommendationsAndRegionalChartWithPlayCounts() throws Exception {
+        saveTrack("chart-cn-first", "CN First");
+        saveTrack("chart-cn-second", "CN Second");
+        saveTrack("chart-us", "US Track");
+        trackStore.classify("chart-cn-first", "NORMAL", "GENERAL");
+        trackStore.classify("chart-cn-second", "NORMAL", "GENERAL");
+        trackStore.classify("chart-us", "NORMAL", "CHILD");
+        jdbcClient.sql("UPDATE tracks SET genre = 'Pop', region = 'CN' WHERE id LIKE 'chart-cn-%'")
+            .update();
+        jdbcClient.sql("UPDATE tracks SET genre = 'Rock', region = 'US' WHERE id = 'chart-us'")
+            .update();
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+        postJson(
+            "/api/v1/me/history/chart-cn-first", cookie,
+            "{\"listenedMs\":5000,\"progressPercent\":100}"
+        );
+        postJson(
+            "/api/v1/me/history/chart-cn-first", cookie,
+            "{\"listenedMs\":5000,\"progressPercent\":100}"
+        );
+        postJson(
+            "/api/v1/me/history/chart-cn-second", cookie,
+            "{\"listenedMs\":5000,\"progressPercent\":50}"
+        );
+        postJson(
+            "/api/v1/me/history/chart-us", cookie,
+            "{\"listenedMs\":5000,\"progressPercent\":75}"
+        );
+
+        var daily = get("/api/v1/recommendations/daily", cookie);
+        assertThat(daily.statusCode()).isEqualTo(200);
+        assertThat(daily.body()).contains("chart-cn-first", "chart-cn-second", "chart-us");
+        assertThat(get("/api/v1/recommendations/daily", cookie).body()).isEqualTo(daily.body());
+
+        var genres = get("/api/v1/recommendations/genres", cookie);
+        assertThat(genres.statusCode()).isEqualTo(200);
+        assertThat(genres.body()).contains("Pop", "Rock").doesNotContain("未分类");
+
+        var pop = get("/api/v1/recommendations/genres/Pop", cookie);
+        assertThat(pop.statusCode()).isEqualTo(200);
+        assertThat(pop.body()).contains("chart-cn-first", "chart-cn-second").doesNotContain("chart-us");
+
+        var chart = get("/api/v1/charts?region=CN", cookie);
+        assertThat(chart.statusCode()).isEqualTo(200);
+        assertThat(chart.body()).containsSubsequence(
+            "\"id\":\"chart-cn-first\"", "\"playCount\":2",
+            "\"id\":\"chart-cn-second\"", "\"playCount\":1"
+        ).doesNotContain("chart-us");
+
+        var childDaily = get("/api/v1/recommendations/daily?childMode=true", cookie);
+        assertThat(childDaily.body()).contains("chart-us").doesNotContain("chart-cn-first");
+        var childGenres = get("/api/v1/recommendations/genres?childMode=true", cookie);
+        assertThat(childGenres.body()).contains("Rock").doesNotContain("Pop");
+        var usChart = get("/api/v1/charts?region=US&childMode=true", cookie);
+        assertThat(usChart.body()).contains("chart-us", "\"playCount\":1");
+    }
+
+    @Test
+    void adminCanUpdateTrackGenreAndRegion() throws Exception {
+        saveTrack("metadata-admin", "Metadata Admin");
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+
+        var response = patchJson(
+            "/api/v1/library/tracks/metadata-admin", cookie,
+            "{\"poolType\":\"NORMAL\",\"audienceType\":\"GENERAL\","
+                + "\"genre\":\"Jazz\",\"region\":\"US\"}"
+        );
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"genre\":\"Jazz\"", "\"region\":\"US\"");
     }
 
     private void saveTrack(String id, String title) {
@@ -302,6 +427,46 @@ class SonaApiIntegrationTest {
             .header("Cookie", cookie)
             .POST(HttpRequest.BodyPublishers.noBody())
             .build());
+    }
+
+    private HttpResponse<String> postJson(String path, String cookie, String body) throws Exception {
+        return send(HttpRequest.newBuilder(uri(path))
+            .header("Cookie", cookie)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build());
+    }
+
+    private HttpResponse<String> get(String path, String cookie) throws Exception {
+        return send(HttpRequest.newBuilder(uri(path))
+            .header("Cookie", cookie)
+            .GET()
+            .build());
+    }
+
+    private HttpResponse<String> patchJson(String path, String cookie, String body) throws Exception {
+        return send(HttpRequest.newBuilder(uri(path))
+            .header("Cookie", cookie)
+            .header("Content-Type", "application/json")
+            .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
+            .build());
+    }
+
+    private void recordPlays(String cookie, String trackId, int count, double progressPercent)
+        throws Exception {
+        for (var index = 0; index < count; index++) {
+            assertThat(postJson(
+                "/api/v1/me/history/" + trackId, cookie,
+                "{\"listenedMs\":5000,\"progressPercent\":" + progressPercent + "}"
+            ).statusCode()).isEqualTo(204);
+        }
+    }
+
+    private String poolType(String trackId) {
+        return jdbcClient.sql("SELECT pool_type FROM tracks WHERE id = :trackId")
+            .param("trackId", trackId)
+            .query(String.class)
+            .single();
     }
 
     private URI uri(String path) {

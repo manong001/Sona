@@ -58,10 +58,11 @@ class TrackController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @RequestParam(required = false) String q,
         @RequestParam(required = false) String cursor,
-        @RequestParam(defaultValue = "50") int limit
+        @RequestParam(defaultValue = "50") int limit,
+        @RequestParam(defaultValue = "false") boolean childMode
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 100));
-        var page = trackStore.findPage(q, cursor, safeLimit, user.id());
+        var page = trackStore.findPage(q, cursor, safeLimit, user.id(), childMode);
         return new TrackPageResponse(
             page.items().stream().map(TrackResponse::from).toList(),
             page.nextCursor()
@@ -71,29 +72,33 @@ class TrackController {
     @GetMapping("/random")
     List<TrackResponse> random(
         @AuthenticationPrincipal AuthenticatedUser user,
-        @RequestParam(defaultValue = "50") int limit
+        @RequestParam(defaultValue = "50") int limit,
+        @RequestParam(defaultValue = "false") boolean childMode
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 100));
-        return trackStore.findRandom(safeLimit, user.id()).stream().map(TrackResponse::from).toList();
+        return trackStore.findRandom(safeLimit, user.id(), childMode).stream().map(TrackResponse::from).toList();
     }
 
     @GetMapping("/discovery")
     List<TrackResponse> discovery(
         @AuthenticationPrincipal AuthenticatedUser user,
-        @RequestParam(defaultValue = "10") int limit
+        @RequestParam(defaultValue = "10") int limit,
+        @RequestParam(defaultValue = "false") boolean childMode
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 50));
-        return trackStore.findDiscovery(safeLimit, user.id()).stream().map(TrackResponse::from).toList();
+        return trackStore.findDiscovery(safeLimit, user.id(), childMode).stream().map(TrackResponse::from).toList();
     }
 
     @GetMapping("/{id}")
-    TrackResponse get(@PathVariable String id) {
-        return TrackResponse.from(findTrack(id));
+    TrackResponse get(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id) {
+        return TrackResponse.from(findTrack(id, user.id()));
     }
 
     @GetMapping("/{id}/stream")
-    ResponseEntity<Resource> stream(@PathVariable String id) throws IOException {
-        var track = findTrack(id);
+    ResponseEntity<Resource> stream(
+        @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id
+    ) throws IOException {
+        var track = findTrack(id, user.id());
         var audioPath = checkedPath(track.path(), musicDirectory);
         return ResponseEntity.ok()
             .header(HttpHeaders.ACCEPT_RANGES, "bytes")
@@ -103,8 +108,10 @@ class TrackController {
     }
 
     @GetMapping("/{id}/artwork")
-    ResponseEntity<Resource> artwork(@PathVariable String id) throws IOException {
-        var track = findTrack(id);
+    ResponseEntity<Resource> artwork(
+        @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id
+    ) throws IOException {
+        var track = findTrack(id, user.id());
         if (track.artworkPath() == null) {
             throw new ResponseStatusException(NOT_FOUND, "Artwork not found");
         }
@@ -119,16 +126,16 @@ class TrackController {
     }
 
     @GetMapping("/{id}/lyrics")
-    LyricsResponse lyrics(@PathVariable String id) {
-        var track = findTrack(id);
+    LyricsResponse lyrics(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id) {
+        var track = findTrack(id, user.id());
         if (track.plainLyrics() == null && track.syncedLyrics() == null) {
             throw new ResponseStatusException(NOT_FOUND, "Lyrics not found");
         }
         return new LyricsResponse(track.plainLyrics(), track.syncedLyrics(), track.lyricsSource());
     }
 
-    private TrackRecord findTrack(String id) {
-        return trackStore.findById(id)
+    private TrackRecord findTrack(String id, String userId) {
+        return trackStore.findVisibleById(id, userId)
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
     }
 

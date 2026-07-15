@@ -80,6 +80,7 @@ final class PlayerStore: ObservableObject {
         track: Track,
         queue: [Track],
         prioritizedQueueTitle: String? = nil,
+        queueContextID: String? = nil,
         api: APIClient = .shared,
         offlineURLProvider: @escaping (Track) -> URL?
     ) {
@@ -92,13 +93,13 @@ final class PlayerStore: ObservableObject {
             playbackQueue = prioritizedQueue(queue, startingWith: track)
             queueTitle = prioritizedQueueTitle
             queueType = prioritizedQueueTitle == "发现" ? "DISCOVERY" : "PLAYLIST"
-            queueContextID = prioritizedQueueTitle
+            self.queueContextID = queueContextID
             isLoadingQueue = false
         } else {
             playbackQueue = [track]
             queueTitle = "随机播放"
             queueType = "RANDOM"
-            queueContextID = nil
+            self.queueContextID = nil
         }
 
         if currentTrack?.id == track.id {
@@ -269,6 +270,14 @@ final class PlayerStore: ObservableObject {
         }
 
         if offset > 0 {
+            if queueType != "RANDOM" {
+                let api = activeAPI
+                let completedType = queueType
+                let completedContext = queueContextID
+                Task { try? await api.recordPlayedBatch(
+                    queueType: completedType, queueContextID: completedContext
+                ) }
+            }
             replaceWithRandomQueue()
             return
         }
@@ -366,6 +375,7 @@ final class PlayerStore: ObservableObject {
 
     func saveState() {
         guard let currentTrack else { return }
+        submitCurrentPlayback()
         let api = activeAPI
         let type = queueType
         let context = queueContextID
@@ -375,6 +385,7 @@ final class PlayerStore: ObservableObject {
                 queueType: type,
                 queueContextID: context,
                 trackID: currentTrack.id,
+                queueTrackIDs: playbackQueue.map(\.id),
                 progressMs: progress
             )
         }
@@ -385,16 +396,33 @@ final class PlayerStore: ObservableObject {
         hasRestoredState = true
         do {
             guard let state = try await activeAPI.playbackState() else { return }
-            let track = try await activeAPI.track(id: state.trackId)
+            var restoredQueue: [Track] = []
+            let trackIDs = state.queueTrackIds.isEmpty ? [state.trackId] : state.queueTrackIds
+            for id in trackIDs {
+                if let track = try? await activeAPI.track(id: id) { restoredQueue.append(track) }
+            }
+            guard let track = restoredQueue.first(where: { $0.id == state.trackId }) else { return }
             self.offlineURLProvider = offlineURLProvider
             queueType = state.queueType
             queueContextID = state.queueContextId
             queueTitle = state.queueType == "DISCOVERY" ? "发现" : (state.queueContextId ?? "随机播放")
-            playbackQueue = [track]
+            playbackQueue = restoredQueue
             startPlayback(track)
             seek(to: Double(state.progressMs) / 1_000)
             pause()
             if state.queueType == "RANDOM" { loadRandomQueue(keeping: track) }
+        } catch {
+            queueErrorMessage = error.localizedDescription
+        }
+    }
+
+    func prepareRandomQueueIfNeeded() async {
+        guard currentTrack == nil, playbackQueue.isEmpty else { return }
+        do {
+            playbackQueue = try await activeAPI.randomTracks(limit: 50)
+            queueTitle = "随机播放"
+            queueType = "RANDOM"
+            queueContextID = nil
         } catch {
             queueErrorMessage = error.localizedDescription
         }

@@ -267,6 +267,8 @@ private struct ManagedPlaylistDetailView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
+    @State private var isSelecting = false
+    @State private var selectedIDs = Set<String>()
     let playlistID: String
 
     private var playlist: Playlist? {
@@ -284,18 +286,29 @@ private struct ManagedPlaylistDetailView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(tracks) { track in
                         Button {
+                            if isSelecting {
+                                if !selectedIDs.insert(track.id).inserted { selectedIDs.remove(track.id) }
+                                return
+                            }
                             player.play(
                                 track: track,
                                 queue: tracks,
                                 prioritizedQueueTitle: playlist?.name ?? "歌单",
+                                queueContextID: playlistID,
                                 offlineURLProvider: offline.localURL(for:)
                             )
                         } label: {
-                            TrackRow(
-                                track: track,
-                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                                isFavorite: personal.favoriteIDs.contains(track.id)
-                            )
+                            HStack {
+                                if isSelecting {
+                                    Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(Color.sonaGreen)
+                                }
+                                TrackRow(
+                                    track: track,
+                                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                    isFavorite: personal.favoriteIDs.contains(track.id)
+                                )
+                            }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                         }
@@ -313,7 +326,24 @@ private struct ManagedPlaylistDetailView: View {
         }
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.large)
-        .toolbarBackground(Color.sonaBackground, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            Button(isSelecting ? "完成" : "多选") {
+                isSelecting.toggle()
+                if !isSelecting { selectedIDs.removeAll() }
+            }
+            if isSelecting, !selectedIDs.isEmpty {
+                Button("移除 \(selectedIDs.count) 首", role: .destructive) {
+                    let ids = selectedIDs
+                    Task {
+                        for id in ids {
+                            await personal.setTrack(id, in: playlistID, isIncluded: false)
+                        }
+                        selectedIDs.removeAll()
+                        isSelecting = false
+                    }
+                }
+            }
+        }
+        .toolbarBackground(.hidden, for: .navigationBar)
     }
 }

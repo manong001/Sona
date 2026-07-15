@@ -109,7 +109,10 @@ class UserSystemApiIntegrationTest {
             ""
         ).statusCode()).isEqualTo(404);
 
-        assertThat(sendJson("POST", "/api/v1/me/history/track-1", aliceCookie, "").statusCode())
+        assertThat(sendJson(
+            "POST", "/api/v1/me/history/track-1", aliceCookie,
+            "{\"listenedMs\":5000,\"progressPercent\":50}"
+        ).statusCode())
             .isEqualTo(204);
         assertThat(get("/api/v1/me/history", aliceCookie).body()).contains("track-1");
         assertThat(get("/api/v1/me/history", bobCookie).body()).doesNotContain("track-1");
@@ -128,6 +131,23 @@ class UserSystemApiIntegrationTest {
         assertThat(changed.statusCode()).isEqualTo(204);
         assertThat(get("/api/v1/auth/me", userCookie).statusCode()).isEqualTo(401);
         assertThat(login("password-user", "new-account-password")).isNotBlank();
+    }
+
+    @Test
+    void adminDeletesAnotherUserTogetherWithPersonalData() throws Exception {
+        var adminCookie = login("admin", "test-password");
+        var created = sendJson(
+            "POST", "/api/v1/users", adminCookie,
+            "{\"username\":\"delete-me\",\"password\":\"account-password\"}"
+        );
+        var userId = jsonString(created.body(), "id");
+        var userCookie = login("delete-me", "account-password");
+        assertThat(sendJson("PUT", "/api/v1/me/favorites/track-delete", userCookie, "")
+            .statusCode()).isEqualTo(204);
+
+        assertThat(sendJson("DELETE", "/api/v1/users/" + userId, adminCookie, "")
+            .statusCode()).isEqualTo(204);
+        assertThat(get("/api/v1/auth/me", userCookie).statusCode()).isEqualTo(401);
     }
 
     private void createUser(String adminCookie, String username) throws Exception {

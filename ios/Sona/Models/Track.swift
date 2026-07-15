@@ -15,6 +15,40 @@ struct Track: Codable, Hashable, Identifiable {
     let streamURL: String
     let hasLyrics: Bool
     let metadataStatus: String
+    let poolType: String
+    let audienceType: String
+    let genre: String
+    let region: String
+    let artists: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, artist, album, trackNumber, durationMs, codec, fileExtension
+        case sampleRate, bitDepth, artworkURL, streamURL, hasLyrics, metadataStatus
+        case poolType, audienceType, genre, region, artists
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        artist = try values.decode(String.self, forKey: .artist)
+        album = try values.decode(String.self, forKey: .album)
+        trackNumber = try values.decodeIfPresent(Int.self, forKey: .trackNumber)
+        durationMs = try values.decode(Int64.self, forKey: .durationMs)
+        codec = try values.decode(String.self, forKey: .codec)
+        fileExtension = try values.decode(String.self, forKey: .fileExtension)
+        sampleRate = try values.decodeIfPresent(Int.self, forKey: .sampleRate)
+        bitDepth = try values.decodeIfPresent(Int.self, forKey: .bitDepth)
+        artworkURL = try values.decodeIfPresent(String.self, forKey: .artworkURL)
+        streamURL = try values.decode(String.self, forKey: .streamURL)
+        hasLyrics = try values.decode(Bool.self, forKey: .hasLyrics)
+        metadataStatus = try values.decode(String.self, forKey: .metadataStatus)
+        poolType = try values.decodeIfPresent(String.self, forKey: .poolType) ?? "NORMAL"
+        audienceType = try values.decodeIfPresent(String.self, forKey: .audienceType) ?? "GENERAL"
+        genre = try values.decodeIfPresent(String.self, forKey: .genre) ?? "未分类"
+        region = try values.decodeIfPresent(String.self, forKey: .region) ?? "OTHER"
+        artists = try values.decodeIfPresent([String].self, forKey: .artists) ?? [artist]
+    }
 
     var durationText: String {
         let seconds = max(0, Int(durationMs / 1_000))
@@ -38,6 +72,13 @@ struct TrackPage: Decodable {
     let nextCursor: String?
 }
 
+struct ChartEntry: Decodable, Identifiable {
+    let track: Track
+    let playCount: Int64
+
+    var id: String { track.id }
+}
+
 struct Lyrics: Decodable {
     let plain: String?
     let synced: String?
@@ -58,6 +99,7 @@ struct PlaybackState: Decodable {
     let queueType: String
     let queueContextId: String?
     let trackId: String
+    let queueTrackIds: [String]
     let progressMs: Int64
     let updatedAt: Int64
 }

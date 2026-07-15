@@ -1,5 +1,8 @@
 package cc.eu.sosee.sona.library;
 
+import java.util.Arrays;
+import java.util.List;
+
 record TrackResponse(
     String id,
     String title,
@@ -14,7 +17,12 @@ record TrackResponse(
     String artworkURL,
     String streamURL,
     boolean hasLyrics,
-    String metadataStatus
+    String metadataStatus,
+    String poolType,
+    String audienceType,
+    String genre,
+    String region,
+    List<String> artists
 ) {
 
     static TrackResponse from(TrackRecord track) {
@@ -33,8 +41,21 @@ record TrackResponse(
             track.artworkPath() == null ? null : basePath + "/artwork",
             basePath + "/stream",
             track.plainLyrics() != null || track.syncedLyrics() != null,
-            track.metadataStatus()
+            track.metadataStatus(),
+            track.poolType(),
+            track.audienceType(),
+            track.genre(),
+            track.region(),
+            artists(track.artist())
         );
+    }
+
+    private static List<String> artists(String value) {
+        return Arrays.stream(value.split("(?i)\\s*(?:、|,|，|/|&|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bx\\b)\\s*"))
+            .map(String::strip)
+            .filter(artist -> !artist.isBlank())
+            .distinct()
+            .toList();
     }
 
     private static String extension(TrackRecord track) {

@@ -5,6 +5,7 @@ struct MiniPlayerView: View {
     @EnvironmentObject private var personal: PersonalStore
     @AppStorage("miniPlayerSide") private var anchoredSide = "right"
     @AppStorage("miniPlayerY") private var storedY = 0.0
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     @GestureState private var dragTranslation: CGSize = .zero
     @State private var showsQueue = false
     let open: () -> Void
@@ -16,6 +17,15 @@ struct MiniPlayerView: View {
     var body: some View {
         GeometryReader { proxy in
             if let track = player.currentTrack {
+                if miniPlayerMode == "fixed" {
+                    VStack {
+                        Spacer()
+                        fixedBar(for: track)
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 52)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
                 let bounds = movementBounds(in: proxy.size)
                 let baseX = anchoredSide == "left" ? bounds.minX : bounds.maxX
                 let preferredY = storedY > 0 ? CGFloat(storedY) : bounds.maxY
@@ -92,11 +102,36 @@ struct MiniPlayerView: View {
                     }
                     .accessibilityAction(named: "上一曲") { player.previous() }
                     .accessibilityAction(named: "下一曲") { player.next() }
+                }
             }
         }
         .sheet(isPresented: $showsQueue) {
             PlaybackQueueView()
         }
+    }
+
+    private func fixedBar(for track: Track) -> some View {
+        HStack(spacing: 12) {
+            Button(action: open) {
+                ArtworkView(path: track.artworkURL, cornerRadius: 7)
+                    .frame(width: 48, height: 48)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(track.title).font(.subheadline.bold()).lineLimit(1)
+                Text(track.artist).font(.caption).foregroundStyle(Color.sonaSecondaryText).lineLimit(1)
+            }
+            Spacer()
+            Button(player.isPlaying ? "暂停" : "播放", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
+                player.togglePlayback()
+            }
+            .labelStyle(.iconOnly)
+            Button("下一曲", systemImage: "forward.fill") { player.next() }
+                .labelStyle(.iconOnly)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 62)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
+        .contentShape(Rectangle())
     }
 
     private func cdArtwork(for track: Track) -> some View {

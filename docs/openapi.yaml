@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Sona API
-  version: 0.3.0
+  version: 0.5.0
 servers:
   - url: http://sosee.eu.cc:6699/api/v1
 paths:
@@ -275,17 +275,99 @@ paths:
       operationId: recordPlayback
       parameters:
         - $ref: "#/components/parameters/TrackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listenedMs, progressPercent]
+              properties:
+                listenedMs: {type: integer, minimum: 0}
+                progressPercent: {type: number, minimum: 0, maximum: 100}
       responses:
         "204":
-          description: 播放记录已保存
-  /me/history/{trackId}/complete:
-    post:
-      operationId: recordPlaybackCompletion
+          description: 播放记录已保存；发现池歌曲最近 10 次有效播放的平均完播率高于 80% 时自动转入正常池
+  /me/tracks/{trackId}:
+    delete:
+      operationId: hideTrack
       parameters:
         - $ref: "#/components/parameters/TrackId"
       responses:
         "204":
-          description: 已记录自然完播，并更新歌曲全局完播率
+          description: 歌曲已加入当前用户垃圾桶
+  /me/playback-state:
+    get:
+      operationId: playbackState
+      responses:
+        "200": {description: 当前用户完整播放队列与进度}
+        "204": {description: 暂无续播状态}
+    put:
+      operationId: savePlaybackState
+      responses:
+        "204": {description: 续播状态已保存}
+  /recommendations/daily:
+    get:
+      operationId: dailyRecommendations
+      parameters:
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 按用户偏好生成、同一用户当天稳定的 20 首推荐
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Track"}}
+  /recommendations/genres:
+    get:
+      operationId: recommendationGenres
+      parameters:
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 当前可推荐的曲风
+          content:
+            application/json:
+              schema: {type: array, items: {type: string}}
+  /recommendations/genres/{genre}:
+    get:
+      operationId: recommendationsByGenre
+      parameters:
+        - name: genre
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 指定曲风的推荐歌曲
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Track"}}
+  /charts:
+    get:
+      operationId: chart
+      parameters:
+        - name: region
+          in: query
+          schema: {type: string, enum: [ALL, CN, KR, US, JP], default: ALL}
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 按有效播放次数排序的前十首歌曲
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/ChartEntry"}}
   /tracks:
     get:
       operationId: listTracks
@@ -305,6 +387,9 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
       responses:
         "200":
           description: 曲目列表
@@ -325,9 +410,31 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
       responses:
         "200":
-          description: 按全局完播率加权，从完整曲库随机返回一批不重复曲目
+          description: 按用户维护随机覆盖轮次；未抓取歌曲优先并受全局完播率加权，保证正常池最终全覆盖且批内不重复
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Track"
+  /tracks/discovery:
+    get:
+      operationId: discoveryTracks
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 10}
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 发现池试听歌曲
           content:
             application/json:
               schema:
@@ -429,6 +536,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScanStatus"
+  /library/tracks:
+    get:
+      operationId: managedTracks
+      parameters:
+        - name: poolType
+          in: query
+          schema: {type: string, enum: [PENDING, NORMAL, DISCOVERY]}
+      responses:
+        "200":
+          description: 管理员歌曲列表
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Track"}}
+  /library/tracks/{trackId}:
+    patch:
+      operationId: classifyTrack
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [poolType, audienceType]
+              properties:
+                poolType: {type: string, enum: [PENDING, NORMAL, DISCOVERY]}
+                audienceType: {type: string, enum: [GENERAL, CHILD]}
+                genre: {type: string, maxLength: 40}
+                region: {type: string, enum: [CN, KR, US, JP, OTHER]}
+      responses:
+        "200": {description: 歌曲池、儿童分类、曲风与地区已更新}
+    delete:
+      operationId: permanentlyDeleteTrack
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "204": {description: 音频文件及关联数据已删除}
+  /library/tracks/upload:
+    post:
+      operationId: uploadTracks
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files: {type: array, items: {type: string, format: binary}}
+      responses:
+        "202": {description: 文件已上传并开始扫描刮削}
   /downloads/sources:
     get:
       operationId: downloadSources
@@ -663,7 +821,7 @@ components:
                 format: int64
     Track:
       type: object
-      required: [id, title, artist, album, durationMs, codec, fileExtension, streamURL, hasLyrics, metadataStatus]
+      required: [id, title, artist, album, durationMs, codec, fileExtension, streamURL, hasLyrics, metadataStatus, poolType, audienceType, genre, region, artists]
       properties:
         id:
           type: string
@@ -698,6 +856,30 @@ components:
         metadataStatus:
           type: string
           enum: [LOCAL, SCRAPED, NEEDS_REVIEW]
+        poolType:
+          type: string
+          enum: [PENDING, NORMAL, DISCOVERY]
+        audienceType:
+          type: string
+          enum: [GENERAL, CHILD]
+        genre:
+          type: string
+        region:
+          type: string
+          enum: [CN, KR, US, JP, OTHER]
+        artists:
+          type: array
+          items:
+            type: string
+    ChartEntry:
+      type: object
+      required: [track, playCount]
+      properties:
+        track:
+          $ref: "#/components/schemas/Track"
+        playCount:
+          type: integer
+          format: int64
     TrackPage:
       type: object
       required: [items]

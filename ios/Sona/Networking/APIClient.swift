@@ -178,12 +178,14 @@ final class APIClient {
     }
 
     func savePlaybackState(
-        queueType: String, queueContextID: String?, trackID: String, progressMs: Int64
+        queueType: String, queueContextID: String?, trackID: String,
+        queueTrackIDs: [String], progressMs: Int64
     ) async throws {
         struct Body: Encodable {
             let queueType: String
             let queueContextId: String?
             let trackId: String
+            let queueTrackIds: [String]
             let progressMs: Int64
         }
         try await requestVoid(
@@ -193,14 +195,25 @@ final class APIClient {
                 queueType: queueType,
                 queueContextId: queueContextID,
                 trackId: trackID,
+                queueTrackIds: queueTrackIDs,
                 progressMs: progressMs
             ))
+        )
+    }
+
+    func recordPlayedBatch(queueType: String, queueContextID: String?) async throws {
+        struct Body: Encodable { let queueType: String; let queueContextId: String? }
+        try await requestVoid(
+            path: "/api/v1/me/playback-batches",
+            method: "POST",
+            body: try encoder.encode(Body(queueType: queueType, queueContextId: queueContextID))
         )
     }
 
     func tracks(query: String, cursor: String?) async throws -> TrackPage {
         var components = URLComponents(url: url(for: "/api/v1/tracks"), resolvingAgainstBaseURL: false)!
         var queryItems = [URLQueryItem(name: "limit", value: "50")]
+        queryItems.append(URLQueryItem(name: "childMode", value: childModeValue))
         if !query.isEmpty {
             queryItems.append(URLQueryItem(name: "q", value: query))
         }
@@ -216,7 +229,10 @@ final class APIClient {
             url: url(for: "/api/v1/tracks/random"),
             resolvingAgainstBaseURL: false
         )!
-        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
         return try await request(url: components.url!)
     }
 
@@ -225,12 +241,108 @@ final class APIClient {
             url: url(for: "/api/v1/tracks/discovery"),
             resolvingAgainstBaseURL: false
         )!
-        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
+    }
+
+    func dailyRecommendations() async throws -> [Track] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/daily"), resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "childMode", value: childModeValue)]
+        return try await request(url: components.url!)
+    }
+
+    func recommendationGenres() async throws -> [String] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/genres"), resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "childMode", value: childModeValue)]
+        return try await request(url: components.url!)
+    }
+
+    func recommendations(genre: String, limit: Int = 20) async throws -> [Track] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/genres").appending(path: genre),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
+    }
+
+    func chart(region: String) async throws -> [ChartEntry] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/charts"), resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "region", value: region),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
         return try await request(url: components.url!)
     }
 
     func track(id: String) async throws -> Track {
         try await request(path: "/api/v1/tracks/\(id)")
+    }
+
+    func managedTracks(poolType: String? = nil) async throws -> [Track] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/library/tracks"), resolvingAgainstBaseURL: false
+        )!
+        if let poolType { components.queryItems = [URLQueryItem(name: "poolType", value: poolType)] }
+        return try await request(url: components.url!)
+    }
+
+    func classifyTrack(
+        id: String, poolType: String, audienceType: String,
+        genre: String? = nil, region: String? = nil
+    ) async throws -> Track {
+        struct Body: Encodable {
+            let poolType: String
+            let audienceType: String
+            let genre: String?
+            let region: String?
+        }
+        return try await request(
+            path: "/api/v1/library/tracks/\(id)", method: "PATCH",
+            body: try encoder.encode(Body(
+                poolType: poolType, audienceType: audienceType, genre: genre, region: region
+            ))
+        )
+    }
+
+    func deleteTrack(id: String, isAdmin: Bool) async throws {
+        let path = isAdmin ? "/api/v1/library/tracks/\(id)" : "/api/v1/me/tracks/\(id)"
+        try await requestVoid(path: path, method: "DELETE")
+    }
+
+    func uploadTracks(urls: [URL]) async throws {
+        for url in urls {
+            let accessible = url.startAccessingSecurityScopedResource()
+            defer { if accessible { url.stopAccessingSecurityScopedResource() } }
+            let boundary = "Sona-\(UUID().uuidString)"
+            var body = Data()
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(url.lastPathComponent)\"\r\n".data(using: .utf8)!)
+            body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+            body.append(try Data(contentsOf: url))
+            body.append("\r\n".data(using: .utf8)!)
+            body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+            var request = URLRequest(url: self.url(for: "/api/v1/library/tracks/upload"))
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue(
+                "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type"
+            )
+            let (data, response) = try await session.data(for: request)
+            try validate(response: response, data: data)
+        }
     }
 
     func startScan() async throws -> ScanStatus {
@@ -341,6 +453,10 @@ final class APIClient {
             let detail = String(data: data, encoding: .utf8)
             throw APIError.server(status: http.statusCode, detail: detail)
         }
+    }
+
+    private var childModeValue: String {
+        UserDefaults.standard.bool(forKey: "childMode") ? "true" : "false"
     }
 }
 

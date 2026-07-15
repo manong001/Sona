@@ -35,7 +35,7 @@ services:
     ports:
       - "${SONA_PORT:-6699}:6699"
     volumes:
-      - "${SONA_MUSIC_HOST_DIR:-/vol4/1000/media/download/音乐}:/music:ro"
+      - "${SONA_MUSIC_HOST_DIR:-/vol4/1000/media/download/音乐}:/music:rw"
       - "${SONA_DATA_HOST_DIR:-/vol1/1000/docker/Sona/data}:/data"
     depends_on:
       sona-downloader:

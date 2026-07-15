@@ -17,7 +17,7 @@ struct SonaCollection: Identifiable {
 func sonaAlbums(from tracks: [Track]) -> [SonaCollection] {
     Dictionary(grouping: tracks) { $0.album }
         .map { album, albumTracks in
-            SonaCollection(
+            return SonaCollection(
                 id: "album-\(album)",
                 title: album,
                 subtitle: albumTracks.first?.artist ?? "未知艺人",
@@ -32,14 +32,19 @@ func sonaAlbums(from tracks: [Track]) -> [SonaCollection] {
 }
 
 func sonaArtists(from tracks: [Track]) -> [SonaCollection] {
-    Dictionary(grouping: tracks) { $0.artist }
+    let appearances = tracks.flatMap { track in
+        (track.artists.isEmpty ? [track.artist] : track.artists).map { ($0, track) }
+    }
+    return Dictionary(grouping: appearances, by: \.0)
         .map { artist, artistTracks in
-            SonaCollection(
+            let uniqueTracks = Dictionary(uniqueKeysWithValues: artistTracks.map { ($0.1.id, $0.1) })
+                .values.map { $0 }
+            return SonaCollection(
                 id: "artist-\(artist)",
                 title: artist,
                 subtitle: "艺人",
-                artworkURL: artistTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
-                tracks: artistTracks,
+                artworkURL: uniqueTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                tracks: uniqueTracks,
                 shape: .circle
             )
         }
@@ -178,6 +183,8 @@ struct SonaTrackListView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
+    @State private var isSelecting = false
+    @State private var selectedIDs = Set<String>()
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let loadsMoreFromLibrary: Bool
@@ -218,6 +225,10 @@ struct SonaTrackListView: View {
         return collection.title
     }
 
+    private var queueContextID: String? {
+        prioritizedQueueTitle == nil ? nil : collection.id
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -254,6 +265,7 @@ struct SonaTrackListView: View {
                                             track: first,
                                             queue: allTracks,
                                             prioritizedQueueTitle: prioritizedQueueTitle,
+                                            queueContextID: queueContextID,
                                             offlineURLProvider: offline.localURL(for:)
                                         )
                                     }
@@ -263,6 +275,7 @@ struct SonaTrackListView: View {
                                         track: first,
                                         queue: queue,
                                         prioritizedQueueTitle: prioritizedQueueTitle,
+                                        queueContextID: queueContextID,
                                         offlineURLProvider: offline.localURL(for:)
                                     )
                                 }
@@ -300,18 +313,29 @@ struct SonaTrackListView: View {
 
                     ForEach(tracks) { track in
                         Button {
+                            if isSelecting {
+                                if !selectedIDs.insert(track.id).inserted { selectedIDs.remove(track.id) }
+                                return
+                            }
                             player.play(
                                 track: track,
                                 queue: queue,
                                 prioritizedQueueTitle: prioritizedQueueTitle,
+                                queueContextID: queueContextID,
                                 offlineURLProvider: offline.localURL(for:)
                             )
                         } label: {
-                            TrackRow(
-                                track: track,
-                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                                isFavorite: personal.favoriteIDs.contains(track.id)
-                            )
+                            HStack {
+                                if isSelecting {
+                                    Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(Color.sonaGreen)
+                                }
+                                TrackRow(
+                                    track: track,
+                                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                                    isFavorite: personal.favoriteIDs.contains(track.id)
+                                )
+                            }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                         }
@@ -337,7 +361,24 @@ struct SonaTrackListView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color.sonaBackground.opacity(0.96), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            if collection.id == "liked-songs" {
+                Button(isSelecting ? "完成" : "多选") {
+                    isSelecting.toggle()
+                    if !isSelecting { selectedIDs.removeAll() }
+                }
+                if isSelecting, !selectedIDs.isEmpty {
+                    Button("移除 \(selectedIDs.count) 首", role: .destructive) {
+                        let ids = selectedIDs
+                        Task {
+                            for id in ids { await personal.toggleFavorite(trackID: id) }
+                            selectedIDs.removeAll()
+                            isSelecting = false
+                        }
+                    }
+                }
+            }
+        }
+        .toolbarBackground(.hidden, for: .navigationBar)
     }
 }

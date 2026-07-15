@@ -9,6 +9,7 @@ import java.util.Optional;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 class JdbcTrackStore implements TrackStore {
@@ -40,18 +41,34 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
+    public Optional<TrackRecord> findVisibleById(String id, String userId) {
+        return jdbcClient.sql("""
+                SELECT tracks.* FROM tracks
+                WHERE tracks.id = :id AND tracks.pool_type <> 'PENDING'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """)
+            .param("id", id)
+            .param("userId", userId)
+            .query(ROW_MAPPER)
+            .optional();
+    }
+
+    @Override
     public void save(TrackRecord track) {
         jdbcClient.sql("""
                 INSERT INTO tracks(
                     id, path, file_size, modified_at, title, normalized_title, artist, album,
                     track_number, duration_ms, codec, sample_rate, bit_depth, artwork_path,
                     plain_lyrics, synced_lyrics, lyrics_source, metadata_status, manual_edited,
-                    created_at, updated_at
+                    created_at, updated_at, pool_type, audience_type, genre, region
                 ) VALUES (
                     :id, :path, :fileSize, :modifiedAt, :title, :normalizedTitle, :artist, :album,
                     :trackNumber, :durationMs, :codec, :sampleRate, :bitDepth, :artworkPath,
                     :plainLyrics, :syncedLyrics, :lyricsSource, :metadataStatus, :manualEdited,
-                    :createdAt, :updatedAt
+                    :createdAt, :updatedAt, :poolType, :audienceType, :genre, :region
                 )
                 ON CONFLICT(path) DO UPDATE SET
                     file_size = excluded.file_size,
@@ -70,6 +87,7 @@ class JdbcTrackStore implements TrackStore {
                     synced_lyrics = COALESCE(tracks.synced_lyrics, excluded.synced_lyrics),
                     lyrics_source = COALESCE(tracks.lyrics_source, excluded.lyrics_source),
                     metadata_status = CASE WHEN tracks.manual_edited = 1 THEN tracks.metadata_status ELSE excluded.metadata_status END,
+                    genre = CASE WHEN tracks.manual_edited = 1 THEN tracks.genre ELSE excluded.genre END,
                     updated_at = excluded.updated_at
                 """)
             .param("id", track.id())
@@ -93,11 +111,15 @@ class JdbcTrackStore implements TrackStore {
             .param("manualEdited", track.manualEdited() ? 1 : 0)
             .param("createdAt", track.createdAt())
             .param("updatedAt", track.updatedAt())
+            .param("poolType", track.poolType())
+            .param("audienceType", track.audienceType())
+            .param("genre", track.genre())
+            .param("region", track.region())
             .update();
     }
 
     @Override
-    public TrackPageData findPage(String query, String cursor, int limit, String userId) {
+    public TrackPageData findPage(String query, String cursor, int limit, String userId, boolean childOnly) {
         var normalizedQuery = query == null ? "" : query.strip();
         var decodedCursor = cursor == null || cursor.isBlank() ? null : cursorCodec.decode(cursor);
 
@@ -109,6 +131,9 @@ class JdbcTrackStore implements TrackStore {
                 WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
               )
             """);
+        if (childOnly) {
+            sql.append(" AND tracks.audience_type = 'CHILD'");
+        }
         if (!normalizedQuery.isBlank()) {
             sql.append(" AND (title LIKE :query OR artist LIKE :query OR album LIKE :query)");
         }
@@ -138,16 +163,120 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
-    public List<TrackRecord> findRandom(int limit, String userId) {
+    @Transactional
+    public List<TrackRecord> findRandom(int limit, String userId, boolean childOnly) {
+        var targetSize = Math.min(Math.max(limit, 0), countRandomCandidates(userId, childOnly));
+        if (targetSize == 0) {
+            return List.of();
+        }
+
+        var scope = childOnly ? "CHILD" : "ALL";
+        var cycle = currentRandomCycle(userId, scope);
+        var selections = new ArrayList<RandomSelection>();
+        var first = findUnselectedRandom(
+            targetSize, userId, childOnly, scope, cycle, List.of()
+        );
+        var currentCycle = cycle;
+        first.forEach(track -> selections.add(new RandomSelection(track, currentCycle)));
+
+        if (selections.size() < targetSize) {
+            cycle = advanceRandomCycle(userId, scope, cycle);
+            var selectedIds = selections.stream().map(selection -> selection.track().id()).toList();
+            var remaining = findUnselectedRandom(
+                targetSize - selections.size(), userId, childOnly, scope, cycle, selectedIds
+            );
+            var nextCycle = cycle;
+            remaining.forEach(track -> selections.add(new RandomSelection(track, nextCycle)));
+        }
+
+        var selectedAt = System.currentTimeMillis();
+        selections.forEach(selection -> recordRandomSelection(
+            userId, scope, selection.track().id(), selection.cycle(), selectedAt
+        ));
+        return selections.stream().map(RandomSelection::track).toList();
+    }
+
+    private int countRandomCandidates(String userId, boolean childOnly) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'" : "";
         return jdbcClient.sql("""
-                SELECT tracks.*
+                SELECT COUNT(*)
                 FROM tracks
-                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
                 WHERE tracks.pool_type = 'NORMAL'
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
+                """ + audienceFilter)
+            .param("userId", userId)
+            .query(Integer.class)
+            .single();
+    }
+
+    private int currentRandomCycle(String userId, String scope) {
+        var now = System.currentTimeMillis();
+        jdbcClient.sql("""
+                INSERT OR IGNORE INTO random_queue_state(user_id, scope, cycle_no, updated_at)
+                VALUES (:userId, :scope, 1, :updatedAt)
+                """)
+            .param("userId", userId)
+            .param("scope", scope)
+            .param("updatedAt", now)
+            .update();
+        jdbcClient.sql("""
+                UPDATE random_queue_state SET updated_at = :updatedAt
+                WHERE user_id = :userId AND scope = :scope
+                """)
+            .param("userId", userId)
+            .param("scope", scope)
+            .param("updatedAt", now)
+            .update();
+        return jdbcClient.sql("""
+                SELECT cycle_no FROM random_queue_state
+                WHERE user_id = :userId AND scope = :scope
+                """)
+            .param("userId", userId)
+            .param("scope", scope)
+            .query(Integer.class)
+            .single();
+    }
+
+    private int advanceRandomCycle(String userId, String scope, int currentCycle) {
+        var nextCycle = currentCycle + 1;
+        jdbcClient.sql("""
+                UPDATE random_queue_state
+                SET cycle_no = :nextCycle, updated_at = :updatedAt
+                WHERE user_id = :userId AND scope = :scope AND cycle_no = :currentCycle
+                """)
+            .param("nextCycle", nextCycle)
+            .param("updatedAt", System.currentTimeMillis())
+            .param("userId", userId)
+            .param("scope", scope)
+            .param("currentCycle", currentCycle)
+            .update();
+        return nextCycle;
+    }
+
+    private List<TrackRecord> findUnselectedRandom(
+        int limit, String userId, boolean childOnly, String scope, int cycle,
+        List<String> excludedIds
+    ) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        var exclusionFilter = excludedIds.isEmpty() ? "" : " AND tracks.id NOT IN (:excludedIds)\n";
+        var statement = jdbcClient.sql("""
+                SELECT tracks.*
+                FROM tracks
+                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
+                LEFT JOIN random_track_exposures exposure
+                  ON exposure.user_id = :userId
+                 AND exposure.scope = :scope
+                 AND exposure.track_id = tracks.id
+                WHERE tracks.pool_type = 'NORMAL'
+                  AND COALESCE(exposure.last_cycle, 0) < :cycle
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """ + audienceFilter + exclusionFilter + """
                 ORDER BY (ABS(RANDOM() % 1000000) / 1000000.0) / (
                     0.15 + 0.85 * CASE
                         WHEN COALESCE(stats.play_count, 0) > 0
@@ -159,12 +288,37 @@ class JdbcTrackStore implements TrackStore {
                 """)
             .param("limit", limit)
             .param("userId", userId)
-            .query(ROW_MAPPER)
-            .list();
+            .param("scope", scope)
+            .param("cycle", cycle);
+        if (!excludedIds.isEmpty()) {
+            statement = statement.param("excludedIds", excludedIds);
+        }
+        return statement.query(ROW_MAPPER).list();
+    }
+
+    private void recordRandomSelection(
+        String userId, String scope, String trackId, int cycle, long selectedAt
+    ) {
+        jdbcClient.sql("""
+                INSERT INTO random_track_exposures(
+                    user_id, scope, track_id, last_cycle, selected_count, last_selected_at
+                ) VALUES (:userId, :scope, :trackId, :cycle, 1, :selectedAt)
+                ON CONFLICT(user_id, scope, track_id) DO UPDATE SET
+                    last_cycle = excluded.last_cycle,
+                    selected_count = random_track_exposures.selected_count + 1,
+                    last_selected_at = excluded.last_selected_at
+                """)
+            .param("userId", userId)
+            .param("scope", scope)
+            .param("trackId", trackId)
+            .param("cycle", cycle)
+            .param("selectedAt", selectedAt)
+            .update();
     }
 
     @Override
-    public List<TrackRecord> findDiscovery(int limit, String userId) {
+    public List<TrackRecord> findDiscovery(int limit, String userId, boolean childOnly) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.* FROM tracks
                 WHERE tracks.pool_type = 'DISCOVERY'
@@ -172,12 +326,185 @@ class JdbcTrackStore implements TrackStore {
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
+                """ + audienceFilter + """
                 ORDER BY RANDOM() LIMIT :limit
                 """)
             .param("limit", limit)
             .param("userId", userId)
             .query(ROW_MAPPER)
             .list();
+    }
+
+    @Override
+    public List<TrackRecord> findManaged(String poolType) {
+        var filter = poolType == null || poolType.isBlank() ? "" : " WHERE pool_type = :poolType";
+        var statement = jdbcClient.sql("SELECT * FROM tracks" + filter + " ORDER BY created_at DESC");
+        if (!filter.isEmpty()) {
+            statement = statement.param("poolType", poolType);
+        }
+        return statement.query(ROW_MAPPER).list();
+    }
+
+    @Override
+    public List<TrackRecord> findDailyCandidates(
+        String userId, boolean childOnly, long recentAfter, int limit
+    ) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        return jdbcClient.sql("""
+                SELECT tracks.*
+                FROM tracks
+                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
+                WHERE tracks.pool_type = 'NORMAL'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """ + audienceFilter + """
+                ORDER BY
+                  CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM favorites
+                    JOIN tracks favorite_track ON favorite_track.id = favorites.track_id
+                    WHERE favorites.user_id = :userId
+                      AND (
+                        (favorite_track.artist = tracks.artist AND tracks.artist <> 'Unknown Artist')
+                        OR (favorite_track.album = tracks.album AND tracks.album <> 'Unknown Album')
+                      )
+                  ) THEN 0 ELSE 1 END,
+                  CASE WHEN EXISTS (
+                    SELECT 1 FROM play_history
+                    WHERE play_history.user_id = :userId
+                      AND play_history.track_id = tracks.id
+                      AND play_history.played_at >= :recentAfter
+                  ) THEN 1 ELSE 0 END,
+                  CASE WHEN COALESCE(stats.play_count, 0) > 0
+                    THEN stats.completion_percent_sum / stats.play_count ELSE 65 END DESC,
+                  COALESCE(stats.play_count, 0) DESC,
+                  tracks.normalized_title,
+                  tracks.id
+                LIMIT :limit
+                """)
+            .param("userId", userId)
+            .param("recentAfter", recentAfter)
+            .param("limit", limit)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
+    @Override
+    public List<String> findGenres(String userId, boolean childOnly) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        return jdbcClient.sql("""
+                SELECT tracks.genre
+                FROM tracks
+                WHERE tracks.pool_type = 'NORMAL'
+                  AND tracks.genre <> '未分类'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """ + audienceFilter + """
+                GROUP BY tracks.genre
+                ORDER BY COUNT(*) DESC, tracks.genre
+                """)
+            .param("userId", userId)
+            .query(String.class)
+            .list();
+    }
+
+    @Override
+    public List<TrackRecord> findByGenre(
+        String genre, String userId, boolean childOnly, int limit
+    ) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        return jdbcClient.sql("""
+                SELECT tracks.*
+                FROM tracks
+                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
+                WHERE tracks.pool_type = 'NORMAL'
+                  AND tracks.genre = :genre
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """ + audienceFilter + """
+                ORDER BY COALESCE(stats.play_count, 0) DESC,
+                  CASE WHEN COALESCE(stats.play_count, 0) > 0
+                    THEN stats.completion_percent_sum / stats.play_count ELSE 65 END DESC,
+                  tracks.normalized_title, tracks.id
+                LIMIT :limit
+                """)
+            .param("genre", genre)
+            .param("userId", userId)
+            .param("limit", limit)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
+    @Override
+    public List<ChartTrackData> findChart(
+        String region, String userId, boolean childOnly, int limit
+    ) {
+        var regionFilter = "ALL".equals(region) ? "" : " AND tracks.region = :region";
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        var statement = jdbcClient.sql("""
+                SELECT tracks.*, COALESCE(stats.play_count, 0) AS chart_play_count
+                FROM tracks
+                LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
+                WHERE tracks.pool_type = 'NORMAL'
+                  AND COALESCE(stats.play_count, 0) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """ + regionFilter + audienceFilter + """
+                ORDER BY COALESCE(stats.play_count, 0) DESC,
+                  CASE WHEN COALESCE(stats.play_count, 0) > 0
+                    THEN stats.completion_percent_sum / stats.play_count ELSE 0 END DESC,
+                  tracks.normalized_title, tracks.id
+                LIMIT :limit
+                """)
+            .param("userId", userId)
+            .param("limit", limit);
+        if (!"ALL".equals(region)) {
+            statement = statement.param("region", region);
+        }
+        return statement.query((resultSet, rowNumber) -> new ChartTrackData(
+            mapTrack(resultSet, rowNumber), resultSet.getLong("chart_play_count")
+        )).list();
+    }
+
+    @Override
+    public boolean classify(
+        String id, String poolType, String audienceType, String genre, String region
+    ) {
+        return jdbcClient.sql("""
+                UPDATE tracks SET pool_type = :poolType, audience_type = :audienceType,
+                    genre = COALESCE(:genre, genre), region = COALESCE(:region, region),
+                    updated_at = :updatedAt
+                WHERE id = :id
+                """)
+            .param("id", id)
+            .param("poolType", poolType)
+            .param("audienceType", audienceType)
+            .param("genre", genre)
+            .param("region", region)
+            .param("updatedAt", System.currentTimeMillis())
+            .update() == 1;
+    }
+
+    @Override
+    @Transactional
+    public boolean delete(String id) {
+        jdbcClient.sql("DELETE FROM random_track_exposures WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM playback_state WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM hidden_tracks WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM playback_records WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM play_history WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM track_play_stats WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM favorites WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM playlist_tracks WHERE track_id = :id").param("id", id).update();
+        return jdbcClient.sql("DELETE FROM tracks WHERE id = :id").param("id", id).update() == 1;
     }
 
     private static TrackRecord mapTrack(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -202,7 +529,11 @@ class JdbcTrackStore implements TrackStore {
             resultSet.getString("metadata_status"),
             resultSet.getInt("manual_edited") == 1,
             resultSet.getLong("created_at"),
-            resultSet.getLong("updated_at")
+            resultSet.getLong("updated_at"),
+            resultSet.getString("pool_type"),
+            resultSet.getString("audience_type"),
+            resultSet.getString("genre"),
+            resultSet.getString("region")
         );
     }
 
@@ -217,5 +548,8 @@ class JdbcTrackStore implements TrackStore {
 
     private static String string(Path path) {
         return path == null ? null : path.toString();
+    }
+
+    private record RandomSelection(TrackRecord track, int cycle) {
     }
 }

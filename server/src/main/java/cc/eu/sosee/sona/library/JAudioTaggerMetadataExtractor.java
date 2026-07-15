@@ -27,7 +27,8 @@ class JAudioTaggerMetadataExtractor implements AudioMetadataExtractor {
             header.getBitsPerSample(),
             artwork == null ? null : artwork.getBinaryData(),
             artwork == null ? null : artwork.getMimeType(),
-            first(tag, FieldKey.LYRICS)
+            first(tag, FieldKey.LYRICS),
+            first(tag, FieldKey.GENRE)
         );
     }
 

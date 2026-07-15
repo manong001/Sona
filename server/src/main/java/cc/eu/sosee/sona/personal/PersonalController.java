@@ -4,6 +4,9 @@ import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -158,8 +161,18 @@ class PersonalController {
         @Valid @RequestBody PlaybackStateRequest request
     ) {
         repository.savePlaybackState(
-            user.id(), request.queueType(), request.queueContextId(), request.trackId(), request.progressMs()
+            user.id(), request.queueType(), request.queueContextId(), request.trackId(),
+            request.queueTrackIds(), request.progressMs()
         );
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/playback-batches")
+    ResponseEntity<Void> recordPlayedBatch(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody PlaybackBatchRequest request
+    ) {
+        repository.recordPlayedBatch(user.id(), request.queueType(), request.queueContextId());
         return ResponseEntity.noContent().build();
     }
 
@@ -195,14 +208,21 @@ class PersonalController {
     record CreatePlaylistRequest(@NotBlank @Size(max = 80) String name) {
     }
 
-    record PlaybackRecordRequest(long listenedMs, double progressPercent) {
+    record PlaybackRecordRequest(
+        @PositiveOrZero long listenedMs,
+        @DecimalMin("0") @DecimalMax("100") double progressPercent
+    ) {
     }
 
     record PlaybackStateRequest(
         @NotBlank String queueType,
         String queueContextId,
         @NotBlank String trackId,
-        long progressMs
+        List<@NotBlank String> queueTrackIds,
+        @PositiveOrZero long progressMs
     ) {
+    }
+
+    record PlaybackBatchRequest(@NotBlank String queueType, String queueContextId) {
     }
 }

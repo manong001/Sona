@@ -45,11 +45,16 @@ struct NowPlayingView: View {
 
                         Spacer(minLength: 8)
 
-                        ArtworkView(path: track.artworkURL, cornerRadius: 8)
+                        ArtworkView(path: track.artworkURL, cornerRadius: proxy.size.width / 2)
                             .frame(
                                 width: min(proxy.size.width - 56, proxy.size.height * 0.42),
                                 height: min(proxy.size.width - 56, proxy.size.height * 0.42)
                             )
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(.white.opacity(0.16), lineWidth: 2))
+                            .overlay(Circle().fill(.black.opacity(0.82)).frame(width: 34, height: 34))
+                            .rotationEffect(.degrees(player.elapsed * 8))
+                            .animation(.linear(duration: 0.5), value: player.elapsed)
                             .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
 
                         Spacer(minLength: 22)
@@ -168,6 +173,14 @@ struct NowPlayingView: View {
                     .padding(.bottom, 16)
                 }
             }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 35).onEnded { value in
+                    if value.translation.width > 70, player.currentTrack?.hasLyrics == true {
+                        showsLyrics = true
+                    }
+                }
+            )
         }
         .sheet(isPresented: $showsLyrics) {
             if let track = player.currentTrack {

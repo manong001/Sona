@@ -9,6 +9,8 @@ struct MainTabView: View {
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
     @State private var selectedTab: SonaTab = .home
+    @AppStorage("childMode") private var childMode = false
+    @AppStorage("childTheme") private var childTheme = "boy"
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -29,7 +31,7 @@ struct MainTabView: View {
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
                     .tag(SonaTab.settings)
             }
-            .tint(.white)
+            .tint(childMode ? (childTheme == "girl" ? .pink : .cyan) : .white)
             .toolbarBackground(Color.sonaBackgroundDeep.opacity(0.98), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
 
@@ -50,7 +52,7 @@ struct MainTabView: View {
                         selectTab: { selectedTab = $0 },
                         close: closeDrawer
                     )
-                    .frame(width: min(proxy.size.width * 0.88, 390))
+                    .frame(width: min(proxy.size.width * 0.76, 330))
                     .frame(maxHeight: .infinity)
                     .transition(.move(edge: .leading))
                     .gesture(
@@ -63,6 +65,21 @@ struct MainTabView: View {
             }
         }
         .animation(.easeOut(duration: 0.24), value: showsDrawer)
+        .overlay(alignment: .top) {
+            if childMode {
+                Text(childTheme == "girl" ? "🦄 糖果音乐乐园" : "🚀 星空音乐探险")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(
+                        childTheme == "girl" ? Color.pink.opacity(0.9) : Color.cyan.opacity(0.9),
+                        in: Capsule()
+                    )
+                    .foregroundStyle(.black)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: childMode)
         .sheet(isPresented: $showsNowPlaying) {
             NowPlayingView()
         }
@@ -72,6 +89,7 @@ struct MainTabView: View {
             }
             await personal.refresh()
             await player.restoreStateIfNeeded { offline.localURL(for: $0) }
+            await player.prepareRandomQueueIfNeeded()
         }
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }

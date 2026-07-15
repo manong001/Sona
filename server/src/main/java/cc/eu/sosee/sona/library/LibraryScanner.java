@@ -147,7 +147,11 @@ class LibraryScanner {
                 scraped.hasValues() ? "SCRAPED" : titleFromTag && artistFromTag ? "LOCAL" : "NEEDS_REVIEW",
                 existing.map(TrackRecord::manualEdited).orElse(false),
                 existing.map(TrackRecord::createdAt).orElse(now),
-                now
+                now,
+                existing.map(TrackRecord::poolType).orElse("PENDING"),
+                existing.map(TrackRecord::audienceType).orElse("GENERAL"),
+                firstText(existing.map(TrackRecord::genre).orElse(""), metadata.genre(), "未分类"),
+                existing.map(TrackRecord::region).orElse("OTHER")
             );
             trackStore.save(track);
             if (existing.isPresent()) {

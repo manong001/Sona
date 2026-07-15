@@ -5,6 +5,9 @@ struct HomeView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var selectedFilter = "全部"
+    @State private var dailyTracks: [Track] = []
+    @State private var genres: [String] = []
+    @AppStorage("childMode") private var childMode = false
     let openDrawer: () -> Void
 
     private var username: String {
@@ -73,6 +76,30 @@ struct HomeView: View {
         }
     }
 
+    private var dailyCollection: SonaCollection {
+        SonaCollection(
+            id: "daily-recommendations",
+            title: "今日推荐",
+            subtitle: "每天为你更新",
+            artworkURL: dailyTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+            tracks: dailyTracks,
+            shape: .square
+        )
+    }
+
+    private var dailyCollections: [SonaCollection] {
+        dailyTracks.prefix(12).map { track in
+            SonaCollection(
+                id: "daily-\(track.id)",
+                title: track.title,
+                subtitle: track.artist,
+                artworkURL: track.artworkURL,
+                tracks: [track],
+                shape: .square
+            )
+        }
+    }
+
     private var albums: [SonaCollection] {
         Array(sonaAlbums(from: library.tracks).prefix(12))
     }
@@ -110,6 +137,12 @@ struct HomeView: View {
                                 .padding(.top, 80)
                         } else {
                             shortcutGrid
+                            mediaSection(
+                                title: "今日推荐",
+                                collections: dailyCollections,
+                                titleDestination: dailyCollection
+                            )
+                            recommendationNavigation
                             mediaSection(title: "最近播放", collections: recentCollections)
                             mediaSection(
                                 title: "收藏的歌曲",
@@ -123,9 +156,13 @@ struct HomeView: View {
                     }
                     .padding(.bottom, 24)
                 }
-                .refreshable { await personal.refresh() }
+                .refreshable {
+                    await personal.refresh()
+                    await loadRecommendations()
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .task(id: childMode) { await loadRecommendations() }
         }
     }
 
@@ -183,6 +220,68 @@ struct HomeView: View {
         }
     }
 
+    private var recommendationNavigation: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SonaSectionHeader(title: "为你发现")
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    NavigationLink {
+                        ChartsView()
+                    } label: {
+                        recommendationTile(
+                            title: "排行榜",
+                            subtitle: "总榜 · 韩榜 · 国榜 · 美榜 · 日榜",
+                            systemImage: "chart.bar.fill",
+                            color: Color(red: 0.72, green: 0.19, blue: 0.26)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(genres, id: \.self) { genre in
+                        NavigationLink {
+                            GenreRecommendationView(genre: genre)
+                        } label: {
+                            recommendationTile(
+                                title: genre,
+                                subtitle: "按曲风推荐",
+                                systemImage: "music.note.list",
+                                color: genreColor(genre)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private func recommendationTile(
+        title: String, subtitle: String, systemImage: String, color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.title2.bold())
+            Spacer()
+            Text(title).font(.headline).lineLimit(1)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.72))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+        .frame(width: 180, height: 118, alignment: .leading)
+        .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func genreColor(_ genre: String) -> Color {
+        let colors: [Color] = [.indigo, .orange, .teal, .purple, .blue, .brown]
+        let index = genre.utf8.reduce(0) { ($0 + Int($1)) % colors.count }
+        return colors[index]
+    }
+
     @ViewBuilder
     private func mediaSection(
         title: String,
@@ -230,6 +329,9 @@ struct HomeView: View {
     }
 
     private func playbackQueue(for collection: SonaCollection) -> [Track]? {
+        if collection.id.hasPrefix("daily-") || collection.id == "daily-recommendations" {
+            return dailyTracks
+        }
         if collection.id.hasPrefix("recent-") {
             return historyTracks.count > 1 ? historyTracks : library.tracks
         }
@@ -237,5 +339,167 @@ struct HomeView: View {
             return favoriteTracks.count > 1 ? favoriteTracks : library.tracks
         }
         return collection.tracks.count == 1 ? library.tracks : nil
+    }
+
+    private func loadRecommendations() async {
+        do {
+            async let loadedDaily = APIClient.shared.dailyRecommendations()
+            async let loadedGenres = APIClient.shared.recommendationGenres()
+            dailyTracks = try await loadedDaily
+            genres = try await loadedGenres
+        } catch {
+            dailyTracks = []
+            genres = []
+        }
+    }
+}
+
+private struct GenreRecommendationView: View {
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
+    @State private var tracks: [Track] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    let genre: String
+
+    var body: some View {
+        Group {
+            if isLoading && tracks.isEmpty {
+                ProgressView("正在生成推荐…")
+            } else if tracks.isEmpty {
+                ContentUnavailableView(
+                    "暂无\(genre)歌曲",
+                    systemImage: "music.note.list",
+                    description: Text(errorMessage ?? "管理员标注曲风后会显示在这里。")
+                )
+            } else {
+                List(tracks) { track in
+                    Button { play(track) } label: {
+                        TrackRow(track: track, isFavorite: personal.favoriteIDs.contains(track.id))
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.sonaBackground)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .background(Color.sonaBackground)
+        .navigationTitle(genre)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("播放全部", systemImage: "play.fill") {
+                    if let first = tracks.first { play(first) }
+                }
+                .disabled(tracks.isEmpty)
+            }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            tracks = try await APIClient.shared.recommendations(genre: genre)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func play(_ track: Track) {
+        player.play(
+            track: track,
+            queue: tracks,
+            prioritizedQueueTitle: "\(genre)推荐",
+            offlineURLProvider: offline.localURL(for:)
+        )
+    }
+}
+
+private struct ChartsView: View {
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
+    @State private var region = "ALL"
+    @State private var entries: [ChartEntry] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private let regions = [
+        ("ALL", "总榜"), ("KR", "韩榜"), ("CN", "国榜"), ("US", "美榜"), ("JP", "日榜")
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("榜单", selection: $region) {
+                ForEach(regions, id: \.0) { value, title in
+                    Text(title).tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding()
+
+            if isLoading && entries.isEmpty {
+                Spacer()
+                ProgressView("正在载入榜单…")
+                Spacer()
+            } else if entries.isEmpty {
+                ContentUnavailableView(
+                    "暂无榜单数据",
+                    systemImage: "chart.bar",
+                    description: Text(errorMessage ?? "歌曲产生有效播放后会在这里排行。")
+                )
+            } else {
+                List(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    Button { play(entry.track) } label: {
+                        HStack(spacing: 10) {
+                            Text("\(index + 1)")
+                                .font(.title3.bold())
+                                .foregroundStyle(index < 3 ? Color.sonaGreen : Color.sonaSecondaryText)
+                                .frame(width: 24)
+                            TrackRow(
+                                track: entry.track,
+                                isFavorite: personal.favoriteIDs.contains(entry.track.id)
+                            )
+                            Text("\(entry.playCount) 次")
+                                .font(.caption)
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.sonaBackground)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .background(Color.sonaBackground)
+        .navigationTitle("播放榜单")
+        .onChange(of: region) { _, _ in Task { await load() } }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            entries = try await APIClient.shared.chart(region: region)
+            errorMessage = nil
+        } catch {
+            entries = []
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func play(_ track: Track) {
+        player.play(
+            track: track,
+            queue: entries.map(\.track),
+            prioritizedQueueTitle: regions.first { $0.0 == region }?.1,
+            offlineURLProvider: offline.localURL(for:)
+        )
     }
 }

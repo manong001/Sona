@@ -88,7 +88,10 @@ class UserRepository {
 
     @Transactional
     boolean delete(String id) {
+        jdbcClient.sql("DELETE FROM random_track_exposures WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM random_queue_state WHERE user_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM playback_state WHERE user_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM playback_batches WHERE user_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM hidden_tracks WHERE user_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM playback_records WHERE user_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM play_history WHERE user_id = :id").param("id", id).update();
