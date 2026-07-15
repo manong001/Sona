@@ -137,6 +137,15 @@ final class APIClient {
         )
     }
 
+    func importFavorites(directory: String) async throws -> DirectoryImportResponse {
+        struct Body: Encodable { let path: String }
+        return try await request(
+            path: "/api/v1/me/favorites/import-directory",
+            method: "POST",
+            body: try encoder.encode(Body(path: directory))
+        )
+    }
+
     func playlists() async throws -> [Playlist] {
         try await request(path: "/api/v1/me/playlists")
     }
@@ -167,6 +176,18 @@ final class APIClient {
             path: "/api/v1/me/playlists/\(playlistID)/tracks",
             method: "DELETE",
             body: try encoder.encode(Body(trackIds: trackIDs))
+        )
+    }
+
+    func importPlaylistDirectory(
+        playlistID: String,
+        directory: String
+    ) async throws -> DirectoryImportResponse {
+        struct Body: Encodable { let path: String }
+        return try await request(
+            path: "/api/v1/me/playlists/\(playlistID)/import-directory",
+            method: "POST",
+            body: try encoder.encode(Body(path: directory))
         )
     }
 

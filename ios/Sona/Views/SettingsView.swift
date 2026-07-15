@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
-    @Binding var hidesMiniPlayer: Bool
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
@@ -35,7 +34,7 @@ struct SettingsView: View {
                             showsImporter = true
                         }
                         NavigationLink {
-                            MusicDownloadView(hidesMiniPlayer: $hidesMiniPlayer)
+                            MusicDownloadView()
                         } label: {
                             Label("多源音乐下载", systemImage: "arrow.down.circle")
                         }
@@ -93,6 +92,31 @@ struct SettingsView: View {
                     )
                 }
 
+                Section("账号") {
+                    if let user = session.currentUser {
+                        LabeledContent("当前账号", value: user.username)
+                        LabeledContent("角色", value: user.isAdmin ? "管理员" : "用户")
+                    }
+                    NavigationLink("账户安全") {
+                        AccountSecurityView()
+                    }
+                    if session.currentUser?.isAdmin == true {
+                        NavigationLink("用户管理") {
+                            UserManagementView()
+                        }
+                    }
+                    Button("退出登录", role: .destructive) {
+                        Task { await session.logout() }
+                    }
+                }
+
+                Section("关于") {
+                    LabeledContent("应用", value: "Sona")
+                    Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("App 更新") {
                     LabeledContent("当前版本", value: "\(currentVersion) (\(currentBuild))")
 
@@ -140,32 +164,6 @@ struct SettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                }
-
-                Section("账号") {
-                    if let user = session.currentUser {
-                        LabeledContent("当前账号", value: user.username)
-                        LabeledContent("角色", value: user.isAdmin ? "管理员" : "用户")
-                    }
-                    NavigationLink("账户安全") {
-                        AccountSecurityView()
-                    }
-                    if session.currentUser?.isAdmin == true {
-                        NavigationLink("用户管理") {
-                            UserManagementView()
-                        }
-                    }
-                    Button("退出登录", role: .destructive) {
-                        Task { await session.logout() }
-                    }
-                }
-
-                Section("关于") {
-                    LabeledContent("应用", value: "Sona")
-                    LabeledContent("版本", value: "\(currentVersion) (\(currentBuild))")
-                    Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
             .scrollContentBackground(.hidden)

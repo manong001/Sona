@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
-class ServerMusicDirectoryService {
+public class ServerMusicDirectoryService {
 
     private final Path musicDirectory;
 
@@ -49,7 +49,7 @@ class ServerMusicDirectoryService {
         }
     }
 
-    Path resolve(String relativePath) {
+    public Path resolve(String relativePath) {
         try {
             var root = musicDirectory;
             var realRoot = realRoot();

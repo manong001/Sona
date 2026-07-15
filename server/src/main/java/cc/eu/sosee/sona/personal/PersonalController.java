@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.personal;
 
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
+import cc.eu.sosee.sona.library.ServerMusicDirectoryService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -32,9 +33,14 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 class PersonalController {
 
     private final PersonalRepository repository;
+    private final ServerMusicDirectoryService directoryService;
 
-    PersonalController(PersonalRepository repository) {
+    PersonalController(
+        PersonalRepository repository,
+        ServerMusicDirectoryService directoryService
+    ) {
         this.repository = repository;
+        this.directoryService = directoryService;
     }
 
     @GetMapping("/favorites")
@@ -84,6 +90,15 @@ class PersonalController {
     ) {
         repository.removeFavorites(user.id(), request.trackIds());
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/favorites/import-directory")
+    DirectoryImportResponse importFavorites(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody DirectoryImportRequest request
+    ) {
+        var directory = directoryService.resolve(request.path());
+        return new DirectoryImportResponse(repository.addFavoritesFromDirectory(user.id(), directory));
     }
 
     @GetMapping("/playlists")
@@ -143,6 +158,19 @@ class PersonalController {
         requireOwnedPlaylist(user.id(), playlistId);
         repository.removePlaylistTracks(playlistId, request.trackIds());
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/playlists/{playlistId}/import-directory")
+    DirectoryImportResponse importPlaylistDirectory(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId,
+        @Valid @RequestBody DirectoryImportRequest request
+    ) {
+        requireOwnedPlaylist(user.id(), playlistId);
+        var directory = directoryService.resolve(request.path());
+        return new DirectoryImportResponse(repository.addPlaylistTracksFromDirectory(
+            playlistId, directory
+        ));
     }
 
     @GetMapping("/history")
@@ -250,5 +278,11 @@ class PersonalController {
     record TrackIdsRequest(
         @NotNull @Size(min = 1, max = 500) List<@NotBlank String> trackIds
     ) {
+    }
+
+    record DirectoryImportRequest(@NotNull @Size(max = 2048) String path) {
+    }
+
+    record DirectoryImportResponse(int importedCount) {
     }
 }

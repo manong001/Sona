@@ -56,16 +56,30 @@ class PersonalRepository {
 
     @Transactional
     void addFavorite(String userId, String trackId) {
-        jdbcClient.sql("""
+        insertFavorite(userId, trackId);
+        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE id = :trackId")
+            .param("trackId", trackId)
+            .update();
+    }
+
+    @Transactional
+    int addFavoritesFromDirectory(String userId, Path directory) {
+        var trackIds = trackIdsInDirectory(directory);
+        var importedCount = 0;
+        for (var trackId : trackIds) {
+            importedCount += insertFavorite(userId, trackId);
+        }
+        return importedCount;
+    }
+
+    private int insertFavorite(String userId, String trackId) {
+        return jdbcClient.sql("""
                 INSERT OR IGNORE INTO favorites(user_id, track_id, created_at)
                 VALUES (:userId, :trackId, :createdAt)
                 """)
             .param("userId", userId)
             .param("trackId", trackId)
             .param("createdAt", clock.millis())
-            .update();
-        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE id = :trackId")
-            .param("trackId", trackId)
             .update();
     }
 
@@ -131,7 +145,20 @@ class PersonalRepository {
     }
 
     void addPlaylistTrack(String playlistId, String trackId) {
-        jdbcClient.sql("""
+        insertPlaylistTrack(playlistId, trackId);
+    }
+
+    @Transactional
+    int addPlaylistTracksFromDirectory(String playlistId, Path directory) {
+        var importedCount = 0;
+        for (var trackId : trackIdsInDirectory(directory)) {
+            importedCount += insertPlaylistTrack(playlistId, trackId);
+        }
+        return importedCount;
+    }
+
+    private int insertPlaylistTrack(String playlistId, String trackId) {
+        return jdbcClient.sql("""
                 INSERT OR IGNORE INTO playlist_tracks(playlist_id, track_id, position, added_at)
                 VALUES (
                     :playlistId,
@@ -144,6 +171,19 @@ class PersonalRepository {
             .param("trackId", trackId)
             .param("addedAt", clock.millis())
             .update();
+    }
+
+    private List<String> trackIdsInDirectory(Path directory) {
+        var prefix = directory.toAbsolutePath().normalize() + directory.getFileSystem().getSeparator();
+        return jdbcClient.sql("""
+                SELECT id FROM tracks
+                WHERE pool_type <> 'PENDING'
+                  AND substr(path, 1, length(:prefix)) = :prefix
+                ORDER BY path, id
+                """)
+            .param("prefix", prefix)
+            .query(String.class)
+            .list();
     }
 
     void removePlaylistTrack(String playlistId, String trackId) {

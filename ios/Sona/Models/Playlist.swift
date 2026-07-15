@@ -20,6 +20,10 @@ struct FavoritesResponse: Decodable {
     }
 }
 
+struct DirectoryImportResponse: Decodable {
+    let importedCount: Int
+}
+
 struct HistoryResponse: Decodable {
     let items: [HistoryItem]
 }

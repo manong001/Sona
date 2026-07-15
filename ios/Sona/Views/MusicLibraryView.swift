@@ -404,8 +404,20 @@ private struct ManagedPlaylistDetailView: View {
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {
         await library.scan(directory: directory.path)
-        await personal.refresh()
-        importMessage = library.errorMessage ?? "“\(directory.name)”已导入正常歌曲池"
+        if let errorMessage = library.errorMessage {
+            importMessage = errorMessage
+            return
+        }
+        do {
+            let result = try await APIClient.shared.importPlaylistDirectory(
+                playlistID: playlistID,
+                directory: directory.path
+            )
+            await personal.refresh()
+            importMessage = "“\(directory.name)”已加入歌单 \(result.importedCount) 首"
+        } catch {
+            importMessage = error.localizedDescription
+        }
     }
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
@@ -461,7 +473,7 @@ private struct ServerDirectoryLevel: View {
                                 .foregroundStyle(Color.sonaGreen)
                         }
                     } footer: {
-                        Text("将扫描此目录及其全部子目录，歌曲进入正常歌曲池。")
+                        Text("将扫描此目录及其全部子目录，并把关联歌曲加入当前列表。")
                     }
 
                     Section("子目录") {

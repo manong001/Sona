@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +55,14 @@ class SonaApiIntegrationTest {
     void createDirectories() throws Exception {
         Files.createDirectories(MUSIC_DIRECTORY);
         Files.createDirectories(DATA_DIRECTORY);
+    }
+
+    @AfterEach
+    void removeDirectoryImportFixtures() {
+        jdbcClient.sql("DELETE FROM favorites WHERE track_id LIKE 'directory-import-%'").update();
+        jdbcClient.sql("DELETE FROM playlist_tracks WHERE track_id LIKE 'directory-import-%'").update();
+        jdbcClient.sql("DELETE FROM playlists WHERE id = 'directory-import-playlist'").update();
+        jdbcClient.sql("DELETE FROM tracks WHERE id LIKE 'directory-import-%'").update();
     }
 
     @Test
@@ -349,6 +358,56 @@ class SonaApiIntegrationTest {
     }
 
     @Test
+    void importsTracksFromSelectedServerDirectoryIntoCurrentUserCollections() throws Exception {
+        var selectedDirectory = MUSIC_DIRECTORY.resolve("directory-import/selected");
+        var otherDirectory = MUSIC_DIRECTORY.resolve("directory-import/other");
+        Files.createDirectories(selectedDirectory);
+        Files.createDirectories(otherDirectory);
+        saveTrack("directory-import-first", "Directory Import First", selectedDirectory);
+        saveTrack("directory-import-second", "Directory Import Second", selectedDirectory.resolve("album"));
+        saveTrack("directory-import-other", "Directory Import Other", otherDirectory);
+        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE id LIKE 'directory-import-%'")
+            .update();
+        var userId = jdbcClient.sql("SELECT id FROM users WHERE username = 'admin'")
+            .query(String.class)
+            .single();
+        jdbcClient.sql("""
+                INSERT INTO playlists(id, user_id, name, created_at)
+                VALUES ('directory-import-playlist', :userId, 'Directory Import', 1)
+                """)
+            .param("userId", userId)
+            .update();
+        var cookie = login("test-password").headers().firstValue("Set-Cookie")
+            .orElseThrow().split(";", 2)[0];
+        var body = "{\"path\":\"directory-import/selected\"}";
+
+        var favorites = postJson("/api/v1/me/favorites/import-directory", cookie, body);
+        var playlist = postJson(
+            "/api/v1/me/playlists/directory-import-playlist/import-directory", cookie, body
+        );
+
+        assertThat(favorites.statusCode()).isEqualTo(200);
+        assertThat(favorites.body()).contains("\"importedCount\":2");
+        assertThat(playlist.statusCode()).isEqualTo(200);
+        assertThat(playlist.body()).contains("\"importedCount\":2");
+        assertThat(jdbcClient.sql("""
+                SELECT track_id FROM favorites
+                WHERE user_id = :userId AND track_id LIKE 'directory-import-%'
+                ORDER BY track_id
+                """)
+            .param("userId", userId)
+            .query(String.class)
+            .list()).containsExactly("directory-import-first", "directory-import-second");
+        assertThat(jdbcClient.sql("""
+                SELECT track_id FROM playlist_tracks
+                WHERE playlist_id = 'directory-import-playlist'
+                ORDER BY position
+                """)
+            .query(String.class)
+            .list()).containsExactlyInAnyOrder("directory-import-first", "directory-import-second");
+    }
+
+    @Test
     void childModeFiltersTracksAndHiddenTrackCannotBeFetchedDirectly() throws Exception {
         saveTrack("general-track", "General Track");
         saveTrack("child-track", "Child Track");
@@ -445,10 +504,14 @@ class SonaApiIntegrationTest {
     }
 
     private void saveTrack(String id, String title) {
+        saveTrack(id, title, MUSIC_DIRECTORY);
+    }
+
+    private void saveTrack(String id, String title, Path directory) {
         var now = System.currentTimeMillis();
         trackStore.save(new TrackRecord(
             id,
-            MUSIC_DIRECTORY.resolve(id + ".mp3"),
+            directory.resolve(id + ".mp3"),
             1,
             now,
             title,

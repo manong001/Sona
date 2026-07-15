@@ -434,8 +434,17 @@ struct SonaTrackListView: View {
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {
         await library.scan(directory: directory.path)
-        await personal.refresh()
-        importMessage = library.errorMessage ?? "“\(directory.name)”已导入正常歌曲池"
+        if let errorMessage = library.errorMessage {
+            importMessage = errorMessage
+            return
+        }
+        do {
+            let result = try await APIClient.shared.importFavorites(directory: directory.path)
+            await personal.refresh()
+            importMessage = "“\(directory.name)”已加入收藏 \(result.importedCount) 首"
+        } catch {
+            importMessage = error.localizedDescription
+        }
     }
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
