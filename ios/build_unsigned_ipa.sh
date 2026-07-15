@@ -16,7 +16,9 @@ Usage:
 
 Builds an arm64 Release IPA without code signing or a provisioning profile.
 When output.ipa is omitted, the package is written to ios/build with its
-version, build number, and build time in the file name.
+incremented patch version in the file name (for example, Sona-unsigned-0.5.1.ipa).
+Press Enter at the version prompt to use the incremented patch version, or enter
+a larger version such as 0.6.0. SONA_IOS_VERSION provides the same override.
 EOF
 }
 
@@ -31,6 +33,7 @@ fi
 
 IOS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$IOS_DIR/Sona.xcodeproj"
+PROJECT_FILE="$PROJECT/project.pbxproj"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sona-unsigned-ipa.XXXXXX")"
 DERIVED_DATA="$WORK_DIR/DerivedData"
 OUTPUT="${1:-}"
@@ -51,7 +54,51 @@ if [[ ! -d "$PROJECT" ]]; then
     exit 1
 fi
 
-echo "Building unsigned Sona.app (iOS Release)..."
+CURRENT_VERSION="$(awk -F ' = ' '
+    /MARKETING_VERSION =/ {
+        value = $2
+        sub(/;$/, "", value)
+        print value
+        exit
+    }
+' "$PROJECT_FILE")"
+if [[ ! "$CURRENT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    echo "Unsupported MARKETING_VERSION: $CURRENT_VERSION" >&2
+    exit 1
+fi
+DEFAULT_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+NEXT_VERSION="${SONA_IOS_VERSION:-}"
+if [[ -z "$NEXT_VERSION" && -t 0 ]]; then
+    read -r -p "Version [$DEFAULT_VERSION]: " NEXT_VERSION
+fi
+NEXT_VERSION="${NEXT_VERSION:-$DEFAULT_VERSION}"
+if [[ ! "$NEXT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Invalid version: $NEXT_VERSION (expected x.y.z)" >&2
+    exit 1
+fi
+
+version_is_greater() {
+    local current_major current_minor current_patch
+    local next_major next_minor next_patch
+    IFS=. read -r current_major current_minor current_patch <<< "$CURRENT_VERSION"
+    IFS=. read -r next_major next_minor next_patch <<< "$NEXT_VERSION"
+    if (( 10#$next_major != 10#$current_major )); then
+        (( 10#$next_major > 10#$current_major ))
+        return
+    fi
+    if (( 10#$next_minor != 10#$current_minor )); then
+        (( 10#$next_minor > 10#$current_minor ))
+        return
+    fi
+    (( 10#$next_patch > 10#$current_patch ))
+}
+
+if ! version_is_greater; then
+    echo "Version $NEXT_VERSION must be greater than $CURRENT_VERSION" >&2
+    exit 1
+fi
+
+echo "Building unsigned Sona.app $NEXT_VERSION (iOS Release)..."
 xcodebuild \
     -project "$PROJECT" \
     -scheme Sona \
@@ -62,6 +109,7 @@ xcodebuild \
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_IDENTITY='' \
+    MARKETING_VERSION="$NEXT_VERSION" \
     build | tee "$WORK_DIR/xcodebuild.log"
 
 APP="$DERIVED_DATA/Build/Products/Release-iphoneos/Sona.app"
@@ -107,9 +155,12 @@ fi
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+if [[ "$VERSION" != "$NEXT_VERSION" ]]; then
+    echo "Built version $VERSION does not match expected version $NEXT_VERSION" >&2
+    exit 1
+fi
 if [[ -z "$OUTPUT" ]]; then
-    TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-    OUTPUT="$IOS_DIR/build/Sona-unsigned-$VERSION-build$BUILD-$TIMESTAMP.ipa"
+    OUTPUT="$IOS_DIR/build/Sona-unsigned-$VERSION.ipa"
 fi
 if [[ -e "$OUTPUT" ]]; then
     echo "Output already exists; choose another path: $OUTPUT" >&2
@@ -156,6 +207,14 @@ fi
 # exits early even though the archive is valid.
 if ! unzip -l "$OUTPUT" | grep 'Payload/Sona.app/Info.plist' >/dev/null; then
     echo "Generated IPA does not contain Payload/Sona.app/Info.plist" >&2
+    exit 1
+fi
+
+OLD_VERSION="$CURRENT_VERSION" NEW_VERSION="$NEXT_VERSION" perl -0pi -e '
+    s/MARKETING_VERSION = \Q$ENV{OLD_VERSION}\E;/MARKETING_VERSION = $ENV{NEW_VERSION};/g
+' "$PROJECT_FILE"
+if grep -F "MARKETING_VERSION = $CURRENT_VERSION;" "$PROJECT_FILE" >/dev/null; then
+    echo "Failed to persist MARKETING_VERSION $NEXT_VERSION" >&2
     exit 1
 fi
 
