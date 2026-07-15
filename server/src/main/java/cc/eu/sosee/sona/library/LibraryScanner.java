@@ -6,9 +6,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +33,7 @@ class LibraryScanner {
     private final MetadataScraper metadataScraper;
     private final FileNameParser fileNameParser;
     private final Clock clock;
+    private final AtomicReference<List<String>> lastErrors = new AtomicReference<>(List.of());
 
     LibraryScanner(
         ServerMusicDirectoryService directoryService,
@@ -55,16 +59,30 @@ class LibraryScanner {
     ScanResult scan(String relativeDirectory) throws IOException {
         var scanDirectory = directoryService.resolve(relativeDirectory);
         var counts = new int[5];
+        var errors = new ArrayList<String>();
         try (Stream<Path> paths = Files.walk(scanDirectory)) {
             paths.filter(Files::isRegularFile)
                 .filter(this::isSupported)
                 .sorted()
-                .forEach(path -> scanFile(path, counts));
+                .forEach(path -> scanFile(path, counts, errors));
         }
+        if (relativeDirectory == null || relativeDirectory.isBlank()) {
+            for (var track : trackStore.findUnderPath(scanDirectory)) {
+                if (!Files.isRegularFile(track.path())) {
+                    trackStore.delete(track.id());
+                    counts[2]++;
+                }
+            }
+        }
+        lastErrors.set(List.copyOf(errors));
         return new ScanResult(counts[0], counts[1], counts[2], counts[3], counts[4]);
     }
 
-    private void scanFile(Path path, int[] counts) {
+    List<String> lastErrors() {
+        return lastErrors.get();
+    }
+
+    private void scanFile(Path path, int[] counts, List<String> errors) {
         counts[0]++;
         try {
             var attributes = Files.readAttributes(path, BasicFileAttributes.class);
@@ -162,6 +180,11 @@ class LibraryScanner {
             }
         } catch (Exception exception) {
             counts[4]++;
+            if (errors.size() < 50) {
+                errors.add(path.getFileName() + "：" + firstText(
+                    exception.getMessage(), exception.getClass().getSimpleName()
+                ));
+            }
             LOGGER.warn("Failed to scan {}: {}", path, exception.getMessage());
         }
     }

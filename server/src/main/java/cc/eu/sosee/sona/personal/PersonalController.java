@@ -258,6 +258,21 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/trash")
+    List<PersonalRepository.TrashTrackData> trash(@AuthenticationPrincipal AuthenticatedUser user) {
+        return repository.hiddenTracks(user.id());
+    }
+
+    @PutMapping("/trash/{trackId}")
+    ResponseEntity<Void> restoreTrack(
+        @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String trackId
+    ) {
+        if (!repository.restoreTrack(user.id(), trackId)) {
+            throw new ResponseStatusException(NOT_FOUND, "Track not found in trash");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/playback-state")
     ResponseEntity<PersonalRepository.PlaybackStateData> playbackState(
         @AuthenticationPrincipal AuthenticatedUser user

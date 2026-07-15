@@ -258,15 +258,24 @@ final class APIClient {
         )
     }
 
-    func tracks(query: String, cursor: String?) async throws -> TrackPage {
+    func tracks(
+        query: String, cursor: String?, sort: String = "TITLE",
+        genre: String? = nil, codec: String? = nil, metadataStatus: String? = nil
+    ) async throws -> TrackPage {
         var components = URLComponents(url: url(for: "/api/v1/tracks"), resolvingAgainstBaseURL: false)!
         var queryItems = [URLQueryItem(name: "limit", value: "50")]
         queryItems.append(URLQueryItem(name: "childMode", value: childModeValue))
+        queryItems.append(URLQueryItem(name: "sort", value: sort))
         if !query.isEmpty {
             queryItems.append(URLQueryItem(name: "q", value: query))
         }
         if let cursor {
             queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        if let genre { queryItems.append(URLQueryItem(name: "genre", value: genre)) }
+        if let codec { queryItems.append(URLQueryItem(name: "codec", value: codec)) }
+        if let metadataStatus {
+            queryItems.append(URLQueryItem(name: "metadataStatus", value: metadataStatus))
         }
         components.queryItems = queryItems
         return try await request(url: components.url!)
@@ -365,9 +374,38 @@ final class APIClient {
         )
     }
 
+    func editTrackMetadata(
+        id: String, title: String, artist: String, album: String,
+        trackNumber: Int?, genre: String
+    ) async throws -> Track {
+        struct Body: Encodable {
+            let title: String; let artist: String; let album: String
+            let trackNumber: Int?; let genre: String
+        }
+        return try await request(
+            path: "/api/v1/library/tracks/\(id)/metadata", method: "PATCH",
+            body: try encoder.encode(Body(
+                title: title, artist: artist, album: album,
+                trackNumber: trackNumber, genre: genre
+            ))
+        )
+    }
+
+    func rescrapeTrack(id: String) async throws -> ScanStatus {
+        try await request(path: "/api/v1/library/tracks/\(id)/rescrape", method: "POST")
+    }
+
     func deleteTrack(id: String, isAdmin: Bool) async throws {
         let path = isAdmin ? "/api/v1/library/tracks/\(id)" : "/api/v1/me/tracks/\(id)"
         try await requestVoid(path: path, method: "DELETE")
+    }
+
+    func trashTracks() async throws -> [Track] {
+        try await request(path: "/api/v1/me/trash")
+    }
+
+    func restoreTrack(id: String) async throws {
+        try await requestVoid(path: "/api/v1/me/trash/\(id)", method: "PUT")
     }
 
     func uploadTracks(urls: [URL]) async -> LocalUploadResult {

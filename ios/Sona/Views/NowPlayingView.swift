@@ -27,9 +27,9 @@ struct NowPlayingView: View {
                                 .frame(width: 44, height: 44)
                             Spacer()
                             VStack(spacing: 2) {
-                                Text("正在播放")
+                                Text(player.queueTitle)
                                     .font(.caption.bold())
-                                Text(track.album)
+                                Text("正在播放")
                                     .font(.caption2)
                                     .foregroundStyle(Color.sonaSecondaryText)
                                     .lineLimit(1)
@@ -45,16 +45,12 @@ struct NowPlayingView: View {
 
                         Spacer(minLength: 8)
 
-                        ArtworkView(path: track.artworkURL, cornerRadius: proxy.size.width / 2)
+                        ArtworkView(path: track.artworkURL, cornerRadius: 12)
                             .frame(
                                 width: min(proxy.size.width - 56, proxy.size.height * 0.42),
                                 height: min(proxy.size.width - 56, proxy.size.height * 0.42)
                             )
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(.white.opacity(0.16), lineWidth: 2))
-                            .overlay(Circle().fill(.black.opacity(0.82)).frame(width: 34, height: 34))
-                            .rotationEffect(.degrees(player.elapsed * 8))
-                            .animation(.linear(duration: 0.5), value: player.elapsed)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.16), lineWidth: 1))
                             .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
 
                         Spacer(minLength: 22)
@@ -240,6 +236,8 @@ struct PlaybackQueueView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    .onMove { player.moveQueueItems(from: $0, to: $1) }
+                    .onDelete { player.removeQueueItems(at: $0) }
                 } header: {
                     Text("\(player.queueTitle) · \(player.playbackQueue.count) 首")
                 }
@@ -262,8 +260,12 @@ struct PlaybackQueueView: View {
             .navigationTitle("播放列表")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("清空待播", role: .destructive) { player.clearUpcomingQueue() }
+                        .disabled(player.playbackQueue.count <= 1)
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    EditButton()
                 }
             }
         }

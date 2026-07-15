@@ -7,7 +7,8 @@ public record ScanStatus(
     int updated,
     int skipped,
     int failed,
-    String message
+    String message,
+    java.util.List<String> errors
 ) {
 
     public enum State {
@@ -18,14 +19,14 @@ public record ScanStatus(
     }
 
     static ScanStatus idle() {
-        return new ScanStatus(State.IDLE, 0, 0, 0, 0, 0, null);
+        return new ScanStatus(State.IDLE, 0, 0, 0, 0, 0, null, java.util.List.of());
     }
 
     static ScanStatus running() {
-        return new ScanStatus(State.RUNNING, 0, 0, 0, 0, 0, null);
+        return new ScanStatus(State.RUNNING, 0, 0, 0, 0, 0, null, java.util.List.of());
     }
 
-    static ScanStatus completed(ScanResult result) {
+    static ScanStatus completed(ScanResult result, java.util.List<String> errors) {
         return new ScanStatus(
             State.COMPLETED,
             result.discovered(),
@@ -33,12 +34,14 @@ public record ScanStatus(
             result.updated(),
             result.skipped(),
             result.failed(),
-            null
+            null,
+            errors
         );
     }
 
     static ScanStatus failed(Exception exception) {
-        return new ScanStatus(State.FAILED, 0, 0, 0, 0, 1, exception.getMessage());
+        return new ScanStatus(
+            State.FAILED, 0, 0, 0, 0, 1, exception.getMessage(), java.util.List.of()
+        );
     }
 }
-

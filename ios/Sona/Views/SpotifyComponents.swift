@@ -361,6 +361,14 @@ struct SonaTrackListView: View {
                             .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                                player.playNext(track)
+                            }
+                            Button("添加到播放队列", systemImage: "text.badge.plus") {
+                                player.addToQueue(track)
+                            }
+                        }
                         .task {
                             if collection.id == "liked-songs" {
                                 await personal.loadNextFavoritePageIfNeeded(currentTrack: track)
@@ -388,6 +396,18 @@ struct SonaTrackListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
+            Button(
+                tracks.allSatisfy { offline.downloadedIDs.contains($0.id) }
+                    ? "已全部离线" : "全部离线",
+                systemImage: "arrow.down.circle"
+            ) {
+                Task {
+                    let values = collection.id == "liked-songs"
+                        ? await personal.loadAllFavoriteTracks() : tracks
+                    await offline.downloadAll(values)
+                }
+            }
+            .disabled(tracks.isEmpty || tracks.contains { offline.activeDownloads.contains($0.id) })
             if collection.id == "liked-songs" {
                 if session.currentUser?.isAdmin == true {
                     Menu("导入", systemImage: "square.and.arrow.down") {

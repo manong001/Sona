@@ -72,6 +72,30 @@ class LibraryTrackController {
         return TrackResponse.from(trackStore.findById(id).orElseThrow());
     }
 
+    @PatchMapping("/{id}/metadata")
+    TrackResponse editMetadata(
+        @PathVariable String id, @Valid @RequestBody MetadataEditRequest request
+    ) {
+        var title = request.title().strip();
+        var artist = request.artist().strip();
+        var album = request.album().strip();
+        var genre = request.genre().strip();
+        if (!trackStore.editMetadata(id, title, artist, album, request.trackNumber(), genre)) {
+            throw new ResponseStatusException(NOT_FOUND, "Track not found");
+        }
+        return TrackResponse.from(trackStore.findById(id).orElseThrow());
+    }
+
+    @PostMapping("/{id}/rescrape")
+    ResponseEntity<ScanStatus> rescrape(@PathVariable String id) {
+        var track = trackStore.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
+        trackStore.resetMetadata(id);
+        return ResponseEntity.accepted().body(scanCoordinator.start(
+            uploadDirectory.getParent().relativize(track.path().getParent()).toString()
+        ));
+    }
+
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(@PathVariable String id) throws IOException {
         var track = trackStore.findById(id)
@@ -121,6 +145,14 @@ class LibraryTrackController {
         @NotBlank String audienceType,
         String genre,
         String region
+    ) {
+    }
+    record MetadataEditRequest(
+        @NotBlank @jakarta.validation.constraints.Size(max = 200) String title,
+        @NotBlank @jakarta.validation.constraints.Size(max = 200) String artist,
+        @NotBlank @jakarta.validation.constraints.Size(max = 200) String album,
+        @jakarta.validation.constraints.PositiveOrZero Integer trackNumber,
+        @NotBlank @jakarta.validation.constraints.Size(max = 40) String genre
     ) {
     }
 }

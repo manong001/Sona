@@ -108,6 +108,7 @@ struct ScanStatus: Decodable {
     let skipped: Int
     let failed: Int
     let message: String?
+    let errors: [String]?
 }
 
 struct ServerMusicDirectory: Decodable, Identifiable, Hashable {

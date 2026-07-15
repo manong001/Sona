@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Arrays;
 import java.util.UUID;
@@ -13,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 class PersonalRepository {
+
+    private static final Duration STALE_IMPORT_AGE = Duration.ofHours(1);
 
     private final JdbcClient jdbcClient;
     private final Clock clock;
@@ -35,6 +38,7 @@ class PersonalRepository {
     }
 
     List<ImportRecordData> importRecords(String userId) {
+        discardUnsuccessfulImports(userId);
         return jdbcClient.sql("""
                 SELECT * FROM import_records
                 WHERE user_id = :userId
@@ -44,6 +48,20 @@ class PersonalRepository {
             .param("userId", userId)
             .query(PersonalRepository::importRecord)
             .list();
+    }
+
+    private void discardUnsuccessfulImports(String userId) {
+        jdbcClient.sql("""
+                DELETE FROM import_records
+                WHERE user_id = :userId
+                  AND (
+                    state = 'FAILED'
+                    OR (state = 'RUNNING' AND updated_at < :staleBefore)
+                  )
+                """)
+            .param("userId", userId)
+            .param("staleBefore", clock.millis() - STALE_IMPORT_AGE.toMillis())
+            .update();
     }
 
     ImportRecordData createImportRecord(
@@ -312,16 +330,7 @@ class PersonalRepository {
 
     private List<String> trackIdsInDirectory(Path directory) {
         var directoryPath = directory.toAbsolutePath().normalize().toString();
-        var indexed = jdbcClient.sql("""
-                SELECT COUNT(*) FROM directory_import_indexes
-                WHERE directory_path = :directoryPath
-                """)
-            .param("directoryPath", directoryPath)
-            .query(Integer.class)
-            .single() > 0;
-        if (!indexed) {
-            refreshDirectoryIndex(directory);
-        }
+        refreshDirectoryIndex(directory);
         return jdbcClient.sql("""
                 SELECT track_id FROM directory_track_memberships
                 WHERE directory_path = :directoryPath
@@ -337,6 +346,7 @@ class PersonalRepository {
         return jdbcClient.sql("""
                 SELECT id FROM tracks
                 WHERE pool_type <> 'PENDING'
+                  AND metadata_status IN ('LOCAL', 'SCRAPED', 'MANUAL')
                   AND path GLOB :pathPattern
                 ORDER BY path, id
                 """)
@@ -473,6 +483,50 @@ class PersonalRepository {
             .param("trackId", trackId)
             .param("createdAt", clock.millis())
             .update();
+    }
+
+    List<TrashTrackData> hiddenTracks(String userId) {
+        return jdbcClient.sql("""
+                SELECT tracks.* FROM hidden_tracks
+                JOIN tracks ON tracks.id = hidden_tracks.track_id
+                WHERE hidden_tracks.user_id = :userId
+                ORDER BY hidden_tracks.created_at DESC
+                """)
+            .param("userId", userId)
+            .query((resultSet, rowNumber) -> trashTrack(resultSet))
+            .list();
+    }
+
+    boolean restoreTrack(String userId, String trackId) {
+        return jdbcClient.sql("""
+                DELETE FROM hidden_tracks WHERE user_id = :userId AND track_id = :trackId
+                """)
+            .param("userId", userId).param("trackId", trackId).update() == 1;
+    }
+
+    private static TrashTrackData trashTrack(ResultSet resultSet) throws SQLException {
+        var id = resultSet.getString("id");
+        var path = Path.of(resultSet.getString("path"));
+        var filename = path.getFileName().toString();
+        var separator = filename.lastIndexOf('.');
+        var extension = separator < 0 ? "" : filename.substring(separator + 1).toLowerCase();
+        return new TrashTrackData(
+            id, resultSet.getString("title"), resultSet.getString("artist"),
+            resultSet.getString("album"), nullableInt(resultSet, "track_number"),
+            resultSet.getLong("duration_ms"), resultSet.getString("codec"), extension,
+            nullableInt(resultSet, "sample_rate"), nullableInt(resultSet, "bit_depth"),
+            resultSet.getString("artwork_path") == null ? null : "/api/v1/tracks/" + id + "/artwork",
+            "/api/v1/tracks/" + id + "/stream",
+            resultSet.getString("plain_lyrics") != null || resultSet.getString("synced_lyrics") != null,
+            resultSet.getString("metadata_status"), resultSet.getString("pool_type"),
+            resultSet.getString("audience_type"), resultSet.getString("genre"),
+            resultSet.getString("region"), List.of(resultSet.getString("artist"))
+        );
+    }
+
+    private static Integer nullableInt(ResultSet resultSet, String name) throws SQLException {
+        var value = resultSet.getInt(name);
+        return resultSet.wasNull() ? null : value;
     }
 
     PlaybackStateData playbackState(String userId) {
@@ -613,6 +667,14 @@ class PersonalRepository {
         String streamURL,
         boolean hasLyrics,
         String metadataStatus
+    ) {
+    }
+
+    record TrashTrackData(
+        String id, String title, String artist, String album, Integer trackNumber,
+        long durationMs, String codec, String fileExtension, Integer sampleRate, Integer bitDepth,
+        String artworkURL, String streamURL, boolean hasLyrics, String metadataStatus,
+        String poolType, String audienceType, String genre, String region, List<String> artists
     ) {
     }
 

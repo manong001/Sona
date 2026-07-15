@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 import UIKit
+import SwiftUI
 
 enum PlaybackMode: CaseIterable {
     case sequential
@@ -161,6 +162,40 @@ final class PlayerStore: ObservableObject {
     func playQueuedTrack(_ track: Track) {
         guard playbackQueue.contains(where: { $0.id == track.id }) else { return }
         startPlayback(track)
+    }
+
+    func playNext(_ track: Track) {
+        playbackQueue.removeAll { $0.id == track.id }
+        let insertion = min((currentIndex ?? -1) + 1, playbackQueue.count)
+        playbackQueue.insert(track, at: insertion)
+        saveState()
+    }
+
+    func addToQueue(_ track: Track) {
+        guard !playbackQueue.contains(where: { $0.id == track.id }) else { return }
+        playbackQueue.append(track)
+        saveState()
+    }
+
+    func moveQueueItems(from offsets: IndexSet, to destination: Int) {
+        playbackQueue.move(fromOffsets: offsets, toOffset: destination)
+        saveState()
+    }
+
+    func removeQueueItems(at offsets: IndexSet) {
+        let currentID = currentTrack?.id
+        playbackQueue.remove(atOffsets: offsets)
+        if let currentID, !playbackQueue.contains(where: { $0.id == currentID }) {
+            stop()
+        } else {
+            saveState()
+        }
+    }
+
+    func clearUpcomingQueue() {
+        guard let currentTrack else { return }
+        playbackQueue = [currentTrack]
+        saveState()
     }
 
     func stop() {

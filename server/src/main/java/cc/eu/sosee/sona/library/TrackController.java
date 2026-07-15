@@ -59,10 +59,16 @@ class TrackController {
         @RequestParam(required = false) String q,
         @RequestParam(required = false) String cursor,
         @RequestParam(defaultValue = "50") int limit,
-        @RequestParam(defaultValue = "false") boolean childMode
+        @RequestParam(defaultValue = "false") boolean childMode,
+        @RequestParam(defaultValue = "TITLE") String sort,
+        @RequestParam(required = false) String genre,
+        @RequestParam(required = false) String codec,
+        @RequestParam(required = false) String metadataStatus
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 100));
-        var page = trackStore.findPage(q, cursor, safeLimit, user.id(), childMode);
+        var page = trackStore.findPage(
+            q, cursor, safeLimit, user.id(), childMode, sort, genre, codec, metadataStatus
+        );
         return new TrackPageResponse(
             page.items().stream().map(TrackResponse::from).toList(),
             page.nextCursor()

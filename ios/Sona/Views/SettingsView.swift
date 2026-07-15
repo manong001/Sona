@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var offline: OfflineStore
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
@@ -62,7 +63,27 @@ struct SettingsView: View {
                                     .font(.caption)
                                     .foregroundStyle(.red)
                             }
+                            if let errors = status.errors, !errors.isEmpty {
+                                DisclosureGroup("失败文件（\(errors.count)）") {
+                                    ForEach(errors, id: \.self) { error in
+                                        Text(error).font(.caption).foregroundStyle(.red)
+                                    }
+                                }
+                            }
                         }
+                    }
+                }
+
+                Section("本地数据") {
+                    NavigationLink {
+                        OfflineManagementView()
+                    } label: {
+                        Label("离线音乐", systemImage: "arrow.down.circle")
+                    }
+                    NavigationLink {
+                        TrashView()
+                    } label: {
+                        Label("个人垃圾桶", systemImage: "trash")
                     }
                 }
 
@@ -201,7 +222,12 @@ struct SettingsView: View {
             .task(id: activeImportRecordKey) {
                 guard importHistoryItems.contains(where: { $0.isRunning }) else { return }
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(2))
+                    do {
+                        try await Task.sleep(for: .seconds(2))
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
                     await loadImportRecords()
                     if !importHistoryItems.contains(where: { $0.isRunning }) { break }
                 }
@@ -241,7 +267,7 @@ struct SettingsView: View {
     private var activeImportRecordKey: String {
         importHistoryItems
             .filter(\.isRunning)
-            .map { "\($0.id):\($0.updatedAt)" }
+            .map(\.id)
             .joined(separator: "|")
     }
 
@@ -257,8 +283,15 @@ struct SettingsView: View {
             importRecords = records
             downloadTasks = tasks
         } catch {
+            if isCancellation(error) { return }
             importMessage = "加载导入记录失败：\(error.localizedDescription)"
         }
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let value = error as NSError
+        return value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled
     }
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
@@ -608,6 +641,7 @@ private struct TrackManagementView: View {
     @State private var tracks: [Track] = []
     @State private var filter = "PENDING"
     @State private var errorMessage: String?
+    @State private var editingTrack: Track?
 
     var body: some View {
         List {
@@ -622,6 +656,9 @@ private struct TrackManagementView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TrackRow(track: track)
                     HStack {
+                        Button("编辑元数据", systemImage: "pencil") {
+                            editingTrack = track
+                        }
                         Menu(track.audienceType == "CHILD" ? "儿童歌曲" : "全年龄") {
                             Button("全年龄") { update(track, pool: filter, audience: "GENERAL") }
                             Button("儿童歌曲") { update(track, pool: filter, audience: "CHILD") }
@@ -673,6 +710,12 @@ private struct TrackManagementView: View {
         .onChange(of: filter) { _, _ in Task { await load() } }
         .task { await load() }
         .refreshable { await load() }
+        .sheet(item: $editingTrack) { track in
+            MetadataEditorView(track: track) {
+                editingTrack = nil
+                await load()
+            }
+        }
         .overlay(alignment: .bottom) {
             if let errorMessage { Text(errorMessage).foregroundStyle(.white).padding(8).background(.red, in: Capsule()) }
         }
@@ -715,6 +758,193 @@ private struct TrackManagementView: View {
                 tracks.removeAll { $0.id == track.id }
             } catch { errorMessage = error.localizedDescription }
         }
+    }
+}
+
+private struct MetadataEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let track: Track
+    let saved: () async -> Void
+    @State private var title: String
+    @State private var artist: String
+    @State private var album: String
+    @State private var trackNumber: String
+    @State private var genre: String
+    @State private var errorMessage: String?
+    @State private var isSaving = false
+
+    init(track: Track, saved: @escaping () async -> Void) {
+        self.track = track
+        self.saved = saved
+        _title = State(initialValue: track.title)
+        _artist = State(initialValue: track.artist)
+        _album = State(initialValue: track.album)
+        _trackNumber = State(initialValue: track.trackNumber.map(String.init) ?? "")
+        _genre = State(initialValue: track.genre)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("基础信息") {
+                    TextField("标题", text: $title)
+                    TextField("艺人", text: $artist)
+                    TextField("专辑", text: $album)
+                    TextField("曲号", text: $trackNumber).keyboardType(.numberPad)
+                    TextField("曲风", text: $genre)
+                }
+                Section {
+                    Button("清除人工修改并重新刮削", role: .destructive) {
+                        Task { await rescrape() }
+                    }
+                } footer: {
+                    Text("只修改 Sona 数据库，不会写入原始音频文件。")
+                }
+                if let errorMessage {
+                    Section { Text(errorMessage).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("编辑元数据")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { Task { await save() } }
+                        .disabled(isSaving || title.isBlank || artist.isBlank || album.isBlank || genre.isBlank)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            _ = try await APIClient.shared.editTrackMetadata(
+                id: track.id, title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                artist: artist.trimmingCharacters(in: .whitespacesAndNewlines),
+                album: album.trimmingCharacters(in: .whitespacesAndNewlines),
+                trackNumber: Int(trackNumber), genre: genre.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            await saved()
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func rescrape() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            _ = try await APIClient.shared.rescrapeTrack(id: track.id)
+            await saved()
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+private extension String {
+    var isBlank: Bool { trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
+private struct OfflineManagementView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var offline: OfflineStore
+    @State private var tracks: [Track] = []
+
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("已下载", value: "\(offline.downloadedIDs.count) 首")
+                LabeledContent(
+                    "占用空间",
+                    value: ByteCountFormatter.string(fromByteCount: offline.storageBytes, countStyle: .file)
+                )
+                if !offline.failedDownloadIDs.isEmpty {
+                    Button("重试失败的 \(offline.failedDownloadIDs.count) 首") {
+                        let failed = library.tracks.filter { offline.failedDownloadIDs.contains($0.id) }
+                        Task { await offline.downloadAll(failed) }
+                    }
+                }
+                Button("清空全部离线音乐", role: .destructive) {
+                    offline.removeAll()
+                    tracks.removeAll()
+                }
+                    .disabled(offline.downloadedIDs.isEmpty)
+            }
+            Section("离线歌曲") {
+                ForEach(tracks) { track in
+                    TrackRow(track: track, showsOfflineBadge: true)
+                        .swipeActions {
+                            Button("移除", role: .destructive) {
+                                offline.remove(track)
+                                tracks.removeAll { $0.id == track.id }
+                            }
+                        }
+                }
+            }
+        }
+        .navigationTitle("离线音乐")
+        .task { await loadTracks() }
+        .refreshable { await loadTracks() }
+    }
+
+    private func loadTracks() async {
+        var values = library.tracks.filter { offline.downloadedIDs.contains($0.id) }
+        let known = Set(values.map(\.id))
+        for id in offline.downloadedIDs.subtracting(known) {
+            if let track = try? await APIClient.shared.track(id: id) {
+                values.append(track)
+            }
+        }
+        tracks = values.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
+}
+
+private struct TrashView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @State private var tracks: [Track] = []
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if tracks.isEmpty {
+                ContentUnavailableView("垃圾桶为空", systemImage: "trash")
+            }
+            ForEach(tracks) { track in
+                TrackRow(track: track)
+                    .swipeActions {
+                        Button("恢复") { Task { await restore(track) } }.tint(.green)
+                    }
+            }
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+        }
+        .navigationTitle("个人垃圾桶")
+        .toolbar {
+            Button("全部恢复") {
+                Task {
+                    for track in tracks { try? await APIClient.shared.restoreTrack(id: track.id) }
+                    await load()
+                    await library.refresh()
+                }
+            }
+            .disabled(tracks.isEmpty)
+        }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do { tracks = try await APIClient.shared.trashTracks() }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func restore(_ track: Track) async {
+        do {
+            try await APIClient.shared.restoreTrack(id: track.id)
+            tracks.removeAll { $0.id == track.id }
+            await library.refresh()
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 

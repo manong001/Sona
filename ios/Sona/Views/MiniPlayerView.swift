@@ -140,37 +140,38 @@ struct MiniPlayerView: View {
     }
 
     private func fixedBar(for track: Track?) -> some View {
-        let isFavorite = track.map { personal.favoriteIDs.contains($0.id) } == true
         let detail = currentLyric ?? track?.artist ?? "选择一首歌曲开始播放"
-        return HStack(spacing: 8) {
-            Button {
-                if track != nil { open() }
-            } label: {
-                ArtworkView(path: track?.artworkURL, cornerRadius: 7)
-                    .frame(width: 54, height: 54)
+        return VStack(spacing: 0) {
+            GeometryReader { proxy in
+                Color.sonaGreen
+                    .frame(width: proxy.size.width * playbackProgress)
             }
-            .disabled(track == nil)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(track?.title ?? "暂无播放").font(.subheadline.bold()).lineLimit(1)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(Color.sonaSecondaryText)
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
-                    .animation(.easeInOut(duration: 0.25), value: detail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer()
-            HStack(spacing: 8) {
-                Button(
-                    isFavorite ? "取消收藏" : "收藏",
-                    systemImage: isFavorite ? "heart.fill" : "heart"
-                ) {
-                    guard let track else { return }
-                    Task { await personal.toggleFavorite(trackID: track.id) }
+            .frame(height: 2)
+
+            HStack(spacing: 10) {
+                Button {
+                    if track != nil { open() }
+                } label: {
+                    HStack(spacing: 10) {
+                        ArtworkView(path: track?.artworkURL, cornerRadius: 6)
+                            .frame(width: 52, height: 52)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(track?.title ?? "暂无播放")
+                                .font(.subheadline.bold())
+                                .lineLimit(1)
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(Color.sonaSecondaryText)
+                                .lineLimit(1)
+                                .contentTransition(.opacity)
+                                .animation(.easeInOut(duration: 0.25), value: detail)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .foregroundStyle(isFavorite ? Color.sonaGreen : .white)
                 .disabled(track == nil)
+                .buttonStyle(.plain)
 
                 Button(
                     player.isPlaying ? "暂停" : "播放",
@@ -179,19 +180,16 @@ struct MiniPlayerView: View {
                     player.togglePlayback()
                 }
                 .disabled(track == nil)
-
-                Button("播放列表", systemImage: "list.bullet") {
-                    showsQueue = true
-                }
-                .disabled(track == nil)
             }
             .labelStyle(.iconOnly)
-            .font(.system(size: 16, weight: .semibold))
             .buttonStyle(.plain)
+            .font(.system(size: 18, weight: .semibold))
+            .padding(.horizontal, 12)
+            .frame(height: 66)
         }
-        .padding(.horizontal, 12)
         .frame(height: 68)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
+        .clipShape(RoundedRectangle(cornerRadius: 13))
         .contentShape(Rectangle())
         .simultaneousGesture(
             DragGesture(minimumDistance: 20)

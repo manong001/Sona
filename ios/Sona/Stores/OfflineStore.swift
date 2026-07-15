@@ -5,6 +5,7 @@ final class OfflineStore: ObservableObject {
     @Published private(set) var downloadedIDs: Set<String> = []
     @Published private(set) var activeDownloads: Set<String> = []
     @Published var errorMessage: String?
+    @Published private(set) var failedDownloadIDs: Set<String> = []
 
     private let directory: URL
     private let defaultsKey = "offlineTracks"
@@ -46,8 +47,34 @@ final class OfflineStore: ObservableObject {
             files[track.id] = filename
             downloadedIDs.insert(track.id)
             persist()
+            failedDownloadIDs.remove(track.id)
         } catch {
+            failedDownloadIDs.insert(track.id)
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func downloadAll(_ tracks: [Track], api: APIClient = .shared) async {
+        for track in tracks where !downloadedIDs.contains(track.id) {
+            if Task.isCancelled { return }
+            await download(track, api: api)
+        }
+    }
+
+    func removeAll() {
+        for filename in files.values {
+            try? FileManager.default.removeItem(at: directory.appending(path: filename))
+        }
+        files.removeAll()
+        downloadedIDs.removeAll()
+        failedDownloadIDs.removeAll()
+        persist()
+    }
+
+    var storageBytes: Int64 {
+        files.values.reduce(0) { total, filename in
+            let values = try? directory.appending(path: filename).resourceValues(forKeys: [.fileSizeKey])
+            return total + Int64(values?.fileSize ?? 0)
         }
     }
 

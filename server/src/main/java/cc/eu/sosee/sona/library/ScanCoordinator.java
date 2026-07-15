@@ -37,7 +37,8 @@ public class ScanCoordinator {
         status.set(ScanStatus.running());
         taskExecutor.execute(() -> {
             try {
-                status.set(ScanStatus.completed(libraryScanner.scan(relativeDirectory)));
+                var result = libraryScanner.scan(relativeDirectory);
+                status.set(ScanStatus.completed(result, libraryScanner.lastErrors()));
             } catch (Exception exception) {
                 status.set(ScanStatus.failed(exception));
             } finally {

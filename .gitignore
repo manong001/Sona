@@ -31,3 +31,6 @@ replay_pid*
 # Local Xcode build artifacts
 ios/build/
 ios/Tests/
+
+# Local server tests
+server/src/test/

@@ -335,6 +335,22 @@ paths:
       responses:
         "204":
           description: 歌曲已加入当前用户垃圾桶
+  /me/trash:
+    get:
+      operationId: listTrash
+      responses:
+        "200":
+          description: 当前用户垃圾桶歌曲
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Track"}}
+  /me/trash/{trackId}:
+    put:
+      operationId: restoreTrack
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "204": {description: 歌曲已恢复}
   /me/playback-state:
     get:
       operationId: playbackState
@@ -429,6 +445,18 @@ paths:
         - name: childMode
           in: query
           schema: {type: boolean, default: false}
+        - name: sort
+          in: query
+          schema: {type: string, enum: [TITLE, ARTIST, ALBUM, NEWEST], default: TITLE}
+        - name: genre
+          in: query
+          schema: {type: string}
+        - name: codec
+          in: query
+          schema: {type: string}
+        - name: metadataStatus
+          in: query
+          schema: {type: string, enum: [LOCAL, SCRAPED, NEEDS_REVIEW, MANUAL]}
       responses:
         "200":
           description: 曲目列表
@@ -638,6 +666,42 @@ paths:
         - $ref: "#/components/parameters/TrackId"
       responses:
         "204": {description: 音频文件及关联数据已删除}
+  /library/tracks/{trackId}/metadata:
+    patch:
+      operationId: editTrackMetadata
+      description: 仅修改 Sona 数据库，不回写原始音频文件
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, artist, album, genre]
+              properties:
+                title: {type: string, maxLength: 200}
+                artist: {type: string, maxLength: 200}
+                album: {type: string, maxLength: 200}
+                trackNumber: {type: [integer, "null"], minimum: 0}
+                genre: {type: string, maxLength: 40}
+      responses:
+        "200":
+          description: 数据库元数据已更新
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Track"}
+  /library/tracks/{trackId}/rescrape:
+    post:
+      operationId: rescrapeTrack
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "202":
+          description: 已清除人工锁定并开始重新扫描
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScanStatus"}
   /library/tracks/upload:
     post:
       operationId: uploadTracks
@@ -1072,7 +1136,7 @@ components:
           type: [string, "null"]
     ScanStatus:
       type: object
-      required: [state, discovered, imported, updated, skipped, failed]
+      required: [state, discovered, imported, updated, skipped, failed, errors]
       properties:
         state:
           type: string
@@ -1087,8 +1151,11 @@ components:
           type: integer
         failed:
           type: integer
-          message:
-            type: [string, "null"]
+        message:
+          type: [string, "null"]
+        errors:
+          type: array
+          items: {type: string}
     DownloadSource:
       type: object
       required: [id, name]

@@ -14,7 +14,10 @@ interface TrackStore {
 
     void save(TrackRecord track);
 
-    TrackPageData findPage(String query, String cursor, int limit, String userId, boolean childOnly);
+    TrackPageData findPage(
+        String query, String cursor, int limit, String userId, boolean childOnly,
+        String sort, String genre, String codec, String metadataStatus
+    );
 
     List<TrackRecord> findRandom(int limit, String userId, boolean childOnly);
 
@@ -35,6 +38,14 @@ interface TrackStore {
     boolean classify(
         String id, String poolType, String audienceType, String genre, String region
     );
+
+    boolean editMetadata(
+        String id, String title, String artist, String album, Integer trackNumber, String genre
+    );
+
+    boolean resetMetadata(String id);
+
+    List<TrackRecord> findUnderPath(Path directory);
 
     default boolean classify(String id, String poolType, String audienceType) {
         return classify(id, poolType, audienceType, null, null);

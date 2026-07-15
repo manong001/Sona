@@ -119,9 +119,13 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
-    public TrackPageData findPage(String query, String cursor, int limit, String userId, boolean childOnly) {
+    public TrackPageData findPage(
+        String query, String cursor, int limit, String userId, boolean childOnly,
+        String sort, String genre, String codec, String metadataStatus
+    ) {
         var normalizedQuery = query == null ? "" : query.strip();
-        var decodedCursor = cursor == null || cursor.isBlank() ? null : cursorCodec.decode(cursor);
+        var normalizedSort = sort == null ? "TITLE" : sort.toUpperCase();
+        var offset = parseOffset(cursor);
 
         var sql = new StringBuilder("""
             SELECT tracks.* FROM tracks
@@ -137,29 +141,50 @@ class JdbcTrackStore implements TrackStore {
         if (!normalizedQuery.isBlank()) {
             sql.append(" AND (title LIKE :query OR artist LIKE :query OR album LIKE :query)");
         }
-        if (decodedCursor != null) {
-            sql.append(" AND (normalized_title > :cursorTitle OR (normalized_title = :cursorTitle AND id > :cursorId))");
+        if (genre != null && !genre.isBlank()) {
+            sql.append(" AND genre = :genre");
         }
-        sql.append(" ORDER BY normalized_title, id LIMIT :limit");
+        if (codec != null && !codec.isBlank()) {
+            sql.append(" AND UPPER(codec) = :codec");
+        }
+        if (metadataStatus != null && !metadataStatus.isBlank()) {
+            sql.append(" AND metadata_status = :metadataStatus");
+        }
+        sql.append(switch (normalizedSort) {
+            case "ARTIST" -> " ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, track_number, id";
+            case "ALBUM" -> " ORDER BY album COLLATE NOCASE, track_number, normalized_title, id";
+            case "NEWEST" -> " ORDER BY created_at DESC, id";
+            default -> " ORDER BY normalized_title, id";
+        });
+        sql.append(" LIMIT :limit OFFSET :offset");
 
-        var statement = jdbcClient.sql(sql.toString()).param("limit", limit + 1).param("userId", userId);
+        var statement = jdbcClient.sql(sql.toString())
+            .param("limit", limit + 1).param("offset", offset).param("userId", userId);
         if (!normalizedQuery.isBlank()) {
             statement = statement.param("query", "%" + normalizedQuery + "%");
         }
-        if (decodedCursor != null) {
-            statement = statement
-                .param("cursorTitle", decodedCursor.normalizedTitle())
-                .param("cursorId", decodedCursor.id());
+        if (genre != null && !genre.isBlank()) statement = statement.param("genre", genre);
+        if (codec != null && !codec.isBlank()) statement = statement.param("codec", codec.toUpperCase());
+        if (metadataStatus != null && !metadataStatus.isBlank()) {
+            statement = statement.param("metadataStatus", metadataStatus);
         }
 
         var results = new ArrayList<>(statement.query(ROW_MAPPER).list());
         String nextCursor = null;
         if (results.size() > limit) {
             results.remove(results.size() - 1);
-            var last = results.get(results.size() - 1);
-            nextCursor = cursorCodec.encode(new TrackCursor(last.normalizedTitle(), last.id()));
+            nextCursor = String.valueOf(offset + limit);
         }
         return new TrackPageData(results, nextCursor);
+    }
+
+    private int parseOffset(String cursor) {
+        if (cursor == null || cursor.isBlank()) return 0;
+        try {
+            return Math.max(0, Integer.parseInt(cursor));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     @Override
@@ -491,6 +516,40 @@ class JdbcTrackStore implements TrackStore {
             .param("region", region)
             .param("updatedAt", System.currentTimeMillis())
             .update() == 1;
+    }
+
+    @Override
+    public boolean editMetadata(
+        String id, String title, String artist, String album, Integer trackNumber, String genre
+    ) {
+        return jdbcClient.sql("""
+                UPDATE tracks SET title = :title, normalized_title = :normalizedTitle,
+                    artist = :artist, album = :album, track_number = :trackNumber,
+                    genre = :genre, metadata_status = 'MANUAL', manual_edited = 1,
+                    updated_at = :updatedAt
+                WHERE id = :id
+                """)
+            .param("id", id).param("title", title).param("normalizedTitle", TextNormalizer.sortKey(title))
+            .param("artist", artist).param("album", album).param("trackNumber", trackNumber)
+            .param("genre", genre).param("updatedAt", System.currentTimeMillis())
+            .update() == 1;
+    }
+
+    @Override
+    public boolean resetMetadata(String id) {
+        return jdbcClient.sql("""
+                UPDATE tracks SET manual_edited = 0, metadata_status = 'NEEDS_REVIEW', updated_at = 0
+                WHERE id = :id
+                """)
+            .param("id", id).update() == 1;
+    }
+
+    @Override
+    public List<TrackRecord> findUnderPath(Path directory) {
+        var prefix = directory.toAbsolutePath().normalize().toString();
+        return jdbcClient.sql("SELECT * FROM tracks WHERE path = :path OR path LIKE :prefix")
+            .param("path", prefix).param("prefix", prefix + java.io.File.separator + "%")
+            .query(ROW_MAPPER).list();
     }
 
     @Override

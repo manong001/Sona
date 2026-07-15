@@ -3,18 +3,25 @@ import SwiftUI
 struct MusicLibraryView: View {
     private enum Filter: String, CaseIterable {
         case playlists = "歌单"
+        case songs = "歌曲"
         case albums = "专辑"
         case artists = "艺人"
     }
 
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var selectedFilter: Filter = .playlists
     @State private var showsSearch = false
     @State private var query = ""
     @State private var showsCreatePlaylist = false
     @State private var playlistName = ""
+    @State private var selectedSort = "TITLE"
+    @State private var selectedGenre: String?
+    @State private var selectedCodec: String?
+    @State private var selectedMetadata: String?
     let openDrawer: () -> Void
 
     private var username: String {
@@ -47,6 +54,8 @@ struct MusicLibraryView: View {
         switch selectedFilter {
         case .playlists:
             values = playlistCollections
+        case .songs:
+            values = []
         case .albums:
             values = sonaAlbums(from: library.tracks)
         case .artists:
@@ -103,7 +112,10 @@ struct MusicLibraryView: View {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showsSearch.toggle()
-                    if !showsSearch { query = "" }
+                    if !showsSearch {
+                        query = ""
+                        Task { await library.refresh() }
+                    }
                 }
             } label: {
                 Image(systemName: showsSearch ? "xmark" : "magnifyingglass")
@@ -130,6 +142,7 @@ struct MusicLibraryView: View {
             TextField("搜索你的音乐库", text: $query)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .onSubmit { Task { await library.refresh(query: query) } }
         }
         .padding(.horizontal, 14)
         .frame(height: 42)
@@ -154,11 +167,35 @@ struct MusicLibraryView: View {
 
     private var sortBar: some View {
         HStack {
-            Label("最近播放", systemImage: "arrow.up.arrow.down")
-                .font(.subheadline.weight(.medium))
+            Menu {
+                sortButton("标题", value: "TITLE")
+                sortButton("艺人", value: "ARTIST")
+                sortButton("专辑", value: "ALBUM")
+                sortButton("最近加入", value: "NEWEST")
+            } label: {
+                Label(sortTitle, systemImage: "arrow.up.arrow.down")
+                    .font(.subheadline.weight(.medium))
+            }
             Spacer()
-            Image(systemName: "list.bullet")
-                .font(.title3)
+            Menu {
+                filterButton("全部格式", codec: nil, metadata: selectedMetadata)
+                ForEach(["MP3", "FLAC", "ALAC", "AAC", "WAV"], id: \.self) { codec in
+                    filterButton(codec, codec: codec, metadata: selectedMetadata)
+                }
+                Divider()
+                filterButton("全部元数据", codec: selectedCodec, metadata: nil)
+                filterButton("待确认", codec: selectedCodec, metadata: "NEEDS_REVIEW")
+                filterButton("人工编辑", codec: selectedCodec, metadata: "MANUAL")
+                Divider()
+                genreFilterButton("全部曲风", genre: nil)
+                ForEach(Array(Set(library.tracks.map(\.genre))).sorted(), id: \.self) { genre in
+                    genreFilterButton(genre, genre: genre)
+                }
+            } label: {
+                Image(systemName: selectedCodec == nil && selectedMetadata == nil && selectedGenre == nil
+                    ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
+                    .font(.title3)
+            }
         }
         .padding(.horizontal, 16)
         .foregroundStyle(.white)
@@ -168,6 +205,35 @@ struct MusicLibraryView: View {
     private var libraryRows: some View {
         let visibleCollections = collections
         VStack(spacing: 3) {
+            if selectedFilter == .songs {
+                ForEach(library.tracks) { track in
+                    Button {
+                        player.play(
+                            track: track, queue: library.tracks,
+                            offlineURLProvider: offline.localURL(for:)
+                        )
+                    } label: {
+                        TrackRow(
+                            track: track,
+                            showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                            isFavorite: personal.favoriteIDs.contains(track.id)
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+                    .task { await library.loadNextPageIfNeeded(currentTrack: track) }
+                    .contextMenu {
+                        Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                            player.playNext(track)
+                        }
+                        Button("添加到播放队列", systemImage: "text.badge.plus") {
+                            player.addToQueue(track)
+                        }
+                    }
+                }
+            }
+
             if selectedFilter == .playlists, query.isEmpty {
                 NavigationLink {
                     SonaTrackListView(collection: SonaCollection(
@@ -198,7 +264,8 @@ struct MusicLibraryView: View {
                 .buttonStyle(.plain)
             }
 
-            ForEach(visibleCollections) { collection in
+            if selectedFilter != .songs {
+              ForEach(visibleCollections) { collection in
                 NavigationLink {
                     if selectedFilter == .playlists {
                         ManagedPlaylistDetailView(playlistID: collection.id)
@@ -221,6 +288,7 @@ struct MusicLibraryView: View {
                         }
                     }
                 }
+              }
             }
 
             if selectedFilter != .playlists, library.isLoadingMore {
@@ -228,7 +296,8 @@ struct MusicLibraryView: View {
                     .padding(.vertical, 18)
             }
 
-            if visibleCollections.isEmpty && !(selectedFilter == .playlists && query.isEmpty) {
+            if selectedFilter != .songs && visibleCollections.isEmpty &&
+                !(selectedFilter == .playlists && query.isEmpty) {
                 VStack(spacing: 10) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 36))
@@ -238,6 +307,54 @@ struct MusicLibraryView: View {
                 .foregroundStyle(Color.sonaSecondaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 60)
+            }
+        }
+    }
+
+    private var sortTitle: String {
+        switch selectedSort {
+        case "ARTIST": "艺人"
+        case "ALBUM": "专辑"
+        case "NEWEST": "最近加入"
+        default: "标题"
+        }
+    }
+
+    private func sortButton(_ title: String, value: String) -> some View {
+        Button(title) {
+            selectedSort = value
+            Task {
+                await library.applyFilters(
+                    sort: value, genre: selectedGenre, codec: selectedCodec,
+                    metadataStatus: selectedMetadata
+                )
+            }
+        }
+    }
+
+    private func filterButton(
+        _ title: String, codec: String?, metadata: String?
+    ) -> some View {
+        Button(title) {
+            selectedCodec = codec
+            selectedMetadata = metadata
+            Task {
+                await library.applyFilters(
+                    sort: selectedSort, genre: selectedGenre, codec: codec,
+                    metadataStatus: metadata
+                )
+            }
+        }
+    }
+
+    private func genreFilterButton(_ title: String, genre: String?) -> some View {
+        Button(title) {
+            selectedGenre = genre
+            Task {
+                await library.applyFilters(
+                    sort: selectedSort, genre: genre, codec: selectedCodec,
+                    metadataStatus: selectedMetadata
+                )
             }
         }
     }
@@ -365,6 +482,13 @@ private struct ManagedPlaylistDetailView: View {
     private var playlistActions: some View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
+                Button {
+                    Task { await offline.downloadAll(tracks) }
+                } label: {
+                    Label("全部离线", systemImage: "arrow.down.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(tracks.isEmpty)
                 if session.currentUser?.isAdmin == true {
                     Menu {
                         Button("扫描服务器音乐目录", systemImage: "externaldrive") {

@@ -136,22 +136,7 @@ struct HomeView: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, 80)
                         } else {
-                            shortcutGrid
-                            mediaSection(
-                                title: "今日推荐",
-                                collections: dailyCollections,
-                                titleDestination: dailyCollection
-                            )
-                            recommendationNavigation
-                            mediaSection(title: "最近播放", collections: recentCollections)
-                            mediaSection(
-                                title: "收藏的歌曲",
-                                collections: favoriteCollections,
-                                titleDestination: likedSongsCollection
-                            )
-                            mediaSection(title: "你的歌单", collections: playlistCollections)
-                            mediaSection(title: "浏览专辑", collections: albums)
-                            mediaSection(title: "常听艺人", collections: artists)
+                            homeContent
                         }
                     }
                     .padding(.bottom, 24)
@@ -175,10 +160,44 @@ struct HomeView: View {
             SonaFilterPill(title: "音乐", isSelected: selectedFilter == "音乐") {
                 withAnimation(.easeInOut(duration: 0.2)) { selectedFilter = "音乐" }
             }
+            SonaFilterPill(title: "歌单", isSelected: selectedFilter == "歌单") {
+                withAnimation(.easeInOut(duration: 0.2)) { selectedFilter = "歌单" }
+            }
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private var homeContent: some View {
+        if selectedFilter != "音乐" {
+            shortcutGrid
+        }
+
+        if selectedFilter != "歌单" {
+            mediaSection(
+                title: "今日推荐",
+                collections: dailyCollections,
+                titleDestination: dailyCollection
+            )
+            recommendationNavigation
+            mediaSection(title: "最近播放", collections: recentCollections)
+        }
+
+        if selectedFilter != "音乐" {
+            mediaSection(
+                title: "收藏的歌曲",
+                collections: favoriteCollections,
+                titleDestination: likedSongsCollection
+            )
+            mediaSection(title: "你的歌单", collections: playlistCollections)
+        }
+
+        if selectedFilter != "歌单" {
+            mediaSection(title: "浏览专辑", collections: albums)
+            mediaSection(title: "常听艺人", collections: artists)
+        }
     }
 
     @ViewBuilder

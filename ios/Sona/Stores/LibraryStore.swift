@@ -13,6 +13,10 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var isLoadingMoreSearch = false
     @Published private(set) var scanStatus: ScanStatus?
     @Published var errorMessage: String?
+    @Published private(set) var sort = "TITLE"
+    @Published private(set) var genreFilter: String?
+    @Published private(set) var codecFilter: String?
+    @Published private(set) var metadataFilter: String?
 
     private let api: APIClient
     private var trackLookup = LibraryTrackLookup([])
@@ -31,7 +35,10 @@ final class LibraryStore: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let page = try await api.tracks(query: query, cursor: nil)
+            let page = try await api.tracks(
+                query: query, cursor: nil, sort: sort, genre: genreFilter,
+                codec: codecFilter, metadataStatus: metadataFilter
+            )
             tracks = page.items
             nextCursor = page.nextCursor
             loadedQuery = query
@@ -53,7 +60,10 @@ final class LibraryStore: ObservableObject {
         errorMessage = nil
         defer { isLoadingMore = false }
         do {
-            let page = try await api.tracks(query: loadedQuery, cursor: cursor)
+            let page = try await api.tracks(
+                query: loadedQuery, cursor: cursor, sort: sort, genre: genreFilter,
+                codec: codecFilter, metadataStatus: metadataFilter
+            )
             let loadedIDs = Set(tracks.map(\.id))
             tracks.append(contentsOf: page.items.filter { !loadedIDs.contains($0.id) })
             nextCursor = page.nextCursor
@@ -143,6 +153,16 @@ final class LibraryStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func applyFilters(
+        sort: String, genre: String?, codec: String?, metadataStatus: String?
+    ) async {
+        self.sort = sort
+        genreFilter = genre
+        codecFilter = codec
+        metadataFilter = metadataStatus
+        await refresh(query: loadedQuery)
     }
 
     func track(id: String) -> Track? {
