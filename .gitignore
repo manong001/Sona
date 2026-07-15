@@ -30,3 +30,4 @@ replay_pid*
 
 # Local Xcode build artifacts
 ios/build/
+ios/Tests/

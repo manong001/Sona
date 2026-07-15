@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
+    @Binding var hidesMiniPlayer: Bool
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
@@ -34,7 +35,7 @@ struct SettingsView: View {
                             showsImporter = true
                         }
                         NavigationLink {
-                            MusicDownloadView()
+                            MusicDownloadView(hidesMiniPlayer: $hidesMiniPlayer)
                         } label: {
                             Label("多源音乐下载", systemImage: "arrow.down.circle")
                         }

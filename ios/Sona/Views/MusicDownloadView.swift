@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MusicDownloadView: View {
+    @Binding var hidesMiniPlayer: Bool
     @State private var query = ""
     @State private var sources: [DownloadSource] = []
     @State private var candidates: [DownloadCandidate] = []
@@ -34,6 +35,8 @@ struct MusicDownloadView: View {
         .background(Color.sonaBackground.ignoresSafeArea())
         .navigationTitle("音乐下载")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { hidesMiniPlayer = true }
+        .onDisappear { hidesMiniPlayer = false }
         .toolbar {
             if selectedSection == 1 {
                 Button("刷新", systemImage: "arrow.clockwise") {
@@ -80,7 +83,7 @@ struct MusicDownloadView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.search)
-                    .onSubmit { Task { await search() } }
+                    .onSubmit { submitSearch() }
                 if !query.isEmpty {
                     Button {
                         query = ""
@@ -90,10 +93,12 @@ struct MusicDownloadView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Button("搜索", systemImage: "magnifyingglass") {
-                    Task { await search() }
+                Button(action: submitSearch) {
+                    Text("搜索")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minWidth: 52, minHeight: 34)
+                        .contentShape(Rectangle())
                 }
-                .labelStyle(.titleOnly)
                 .buttonStyle(.borderedProminent)
                 .tint(.sonaGreen)
                 .foregroundStyle(.black)
@@ -245,11 +250,15 @@ struct MusicDownloadView: View {
         }
     }
 
-    private func search() async {
+    private func submitSearch() {
         let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty, !isSearching else { return }
         isSearching = true
         errorMessage = nil
+        Task { await search(keyword: keyword) }
+    }
+
+    private func search(keyword: String) async {
         defer { isSearching = false }
         do {
             candidates = try await APIClient.shared.searchMusicDownloads(query: keyword).items

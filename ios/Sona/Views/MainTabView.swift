@@ -8,6 +8,7 @@ struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
+    @State private var hidesMiniPlayer = false
     @State private var selectedTab: SonaTab = .home
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
@@ -28,7 +29,7 @@ struct MainTabView: View {
                 tabContent(MusicLibraryView(openDrawer: openDrawer))
                     .tabItem { Label("音乐库", systemImage: "books.vertical.fill") }
                     .tag(SonaTab.library)
-                tabContent(SettingsView())
+                tabContent(SettingsView(hidesMiniPlayer: $hidesMiniPlayer))
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
                     .tag(SonaTab.settings)
             }
@@ -36,7 +37,7 @@ struct MainTabView: View {
             .toolbarBackground(Color.sonaBackgroundDeep.opacity(0.98), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
 
-            if selectedTab != .search {
+            if selectedTab != .search && !hidesMiniPlayer {
                 MiniPlayerView {
                     showsNowPlaying = true
                 }
@@ -104,7 +105,7 @@ struct MainTabView: View {
     private func tabContent<Content: View>(_ content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if miniPlayerMode == "fixed" && selectedTab != .search {
+                if miniPlayerMode == "fixed" && selectedTab != .search && !hidesMiniPlayer {
                     Color.clear
                         .frame(height: 76)
                         .accessibilityHidden(true)
