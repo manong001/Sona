@@ -465,6 +465,14 @@ private struct ManagedPlaylistDetailView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("随机播放", systemImage: "shuffle") {
+                    playRandom()
+                }
+                .disabled(tracks.isEmpty)
+            }
+        }
         .fileImporter(
             isPresented: $showsImporter,
             allowedContentTypes: [.audio],
@@ -538,6 +546,18 @@ private struct ManagedPlaylistDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
+    }
+
+    private func playRandom() {
+        let queue = tracks.shuffled()
+        guard let first = queue.first else { return }
+        player.play(
+            track: first,
+            queue: queue,
+            prioritizedQueueTitle: playlist?.name ?? "歌单",
+            queueContextID: playlistID,
+            offlineURLProvider: offline.localURL(for:)
+        )
     }
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {

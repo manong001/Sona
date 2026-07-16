@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct MusicDownloadView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var personal: PersonalStore
     @State private var query = ""
     @State private var sources: [DownloadSource] = []
     @State private var candidates: [DownloadCandidate] = []
@@ -16,6 +18,7 @@ struct MusicDownloadView: View {
     @State private var isLoadingTasks = false
     @State private var errorMessage: String?
     @State private var showsPlaylistImport = false
+    @State private var needsLibraryRefresh = false
 
     private let candidatePageSize = 20
 
@@ -56,6 +59,7 @@ struct MusicDownloadView: View {
         }
         .task(id: activeTaskKey) {
             guard tasks.contains(where: { $0.state == .queued || $0.state == .running }) else {
+                await refreshLibraryAfterDownloadsIfNeeded()
                 return
             }
             while !Task.isCancelled {
@@ -72,6 +76,7 @@ struct MusicDownloadView: View {
                 tasks = result.tasks + tasks.filter { existing in
                     !result.tasks.contains(where: { $0.id == existing.id })
                 }
+                needsLibraryRefresh = true
                 selectedSection = 1
             }
         }
@@ -349,6 +354,7 @@ struct MusicDownloadView: View {
             let task = try await APIClient.shared.queueMusicDownload(candidate)
             tasks.removeAll { $0.id == task.id }
             tasks.insert(task, at: 0)
+            needsLibraryRefresh = true
             selectedSection = 1
         } catch {
             errorMessage = error.localizedDescription
@@ -371,9 +377,18 @@ struct MusicDownloadView: View {
             if let index = tasks.firstIndex(where: { $0.id == task.id }) {
                 tasks[index] = updated
             }
+            needsLibraryRefresh = true
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func refreshLibraryAfterDownloadsIfNeeded() async {
+        guard needsLibraryRefresh else { return }
+        needsLibraryRefresh = false
+        async let libraryRequest: Void = library.refresh()
+        async let personalRequest: Void = personal.refresh()
+        _ = await (libraryRequest, personalRequest)
     }
 }
 

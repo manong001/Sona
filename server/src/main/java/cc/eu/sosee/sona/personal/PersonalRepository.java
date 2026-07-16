@@ -300,6 +300,20 @@ class PersonalRepository {
         return importedCount;
     }
 
+    @Transactional
+    void promotePendingTracksFromDirectory(Path directory) {
+        var prefix = directory.toAbsolutePath().normalize() + directory.getFileSystem().getSeparator();
+        jdbcClient.sql("""
+                UPDATE tracks
+                SET pool_type = 'NORMAL'
+                WHERE pool_type = 'PENDING'
+                  AND metadata_status IN ('LOCAL', 'SCRAPED', 'MANUAL')
+                  AND path GLOB :pathPattern
+                """)
+            .param("pathPattern", prefix + "*")
+            .update();
+    }
+
     private int insertPlaylistTrack(String playlistId, String trackId) {
         return jdbcClient.sql("""
                 INSERT OR IGNORE INTO playlist_tracks(playlist_id, track_id, position, added_at)

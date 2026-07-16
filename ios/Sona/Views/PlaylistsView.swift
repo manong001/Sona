@@ -135,6 +135,25 @@ private struct PlaylistDetailView: View {
         }
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("随机播放", systemImage: "shuffle") {
+                    playRandom()
+                }
+                .disabled(tracks.isEmpty)
+            }
+        }
+    }
+
+    private func playRandom() {
+        let queue = tracks.shuffled()
+        guard let first = queue.first else { return }
+        player.play(
+            track: first,
+            queue: queue,
+            prioritizedQueueTitle: playlist?.name ?? "歌单",
+            offlineURLProvider: offline.localURL(for:)
+        )
     }
 }
 

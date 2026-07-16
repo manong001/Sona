@@ -54,6 +54,7 @@ class DirectoryImportService {
         var directory = directoryService.resolve(relativeDirectory);
         var source = directory.getFileName() == null ? directory.toString() : directory.getFileName().toString();
         var record = repository.createImportRecord(userId, type, source, target, 0);
+        repository.promotePendingTracksFromDirectory(directory);
         var immediatelyAdded = association.add(directory);
         repository.updateImportRecord(
             userId, record.id(), "RUNNING", null, immediatelyAdded, 0,
