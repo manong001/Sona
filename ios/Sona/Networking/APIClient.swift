@@ -622,7 +622,19 @@ final class APIClient {
     }
 
     func latestAppRelease() async throws -> AppReleaseInfo {
-        try await request(path: "/api/v1/app/releases/latest")
+        var components = URLComponents(
+            url: url(for: "/api/v1/app/releases/latest"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "platform", value: appReleasePlatform)
+        ]
+        let release: AppReleaseInfo = try await request(url: components.url!)
+        if release.available,
+           release.fileName?.lowercased().hasSuffix(".\(appReleaseExtension)") != true {
+            throw APIError.invalidResponse
+        }
+        return release
     }
 
     func downloadAppRelease(
@@ -635,7 +647,7 @@ final class APIClient {
             throw APIError.invalidResponse
         }
         let destination = FileManager.default.temporaryDirectory
-            .appending(path: "Sona-\(version)-\(build)-unsigned.ipa")
+            .appending(path: "Sona-\(version)-\(build).\(appReleaseExtension)")
         var request = URLRequest(url: url(for: downloadURL))
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         return try await withCheckedThrowingContinuation { continuation in
@@ -656,6 +668,22 @@ final class APIClient {
             delegate.session = downloadSession
             downloadSession.downloadTask(with: request).resume()
         }
+    }
+
+    private var appReleasePlatform: String {
+#if targetEnvironment(macCatalyst)
+        "macos"
+#else
+        "ios"
+#endif
+    }
+
+    private var appReleaseExtension: String {
+#if targetEnvironment(macCatalyst)
+        "dmg"
+#else
+        "ipa"
+#endif
     }
 
     func retryMusicDownload(taskID: String) async throws -> MusicDownloadTask {

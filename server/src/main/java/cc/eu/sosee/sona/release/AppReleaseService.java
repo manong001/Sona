@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Clock;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.regex.Pattern;
@@ -19,7 +20,6 @@ import org.springframework.web.server.ResponseStatusException;
 class AppReleaseService {
 
     private static final Pattern VERSION = Pattern.compile("[0-9]+(?:\\.[0-9]+){1,3}");
-    private static final String PACKAGE_NAME = "Sona-unsigned.ipa";
     private final Path releaseDirectory;
     private final Clock clock;
 
@@ -29,8 +29,12 @@ class AppReleaseService {
     }
 
     Optional<AppRelease> latest() {
-        var manifest = releaseDirectory.resolve("latest.properties");
-        var packagePath = releaseDirectory.resolve(PACKAGE_NAME);
+        return latest(AppReleasePlatform.IOS);
+    }
+
+    Optional<AppRelease> latest(AppReleasePlatform platform) {
+        var manifest = releaseDirectory.resolve(platform.manifestName());
+        var packagePath = releaseDirectory.resolve(platform.packageName());
         if (!Files.isRegularFile(manifest) || !Files.isRegularFile(packagePath)) {
             return Optional.empty();
         }
@@ -43,7 +47,7 @@ class AppReleaseService {
                 values.getProperty("notes", ""),
                 Long.parseLong(values.getProperty("publishedAt")),
                 Files.size(packagePath),
-                PACKAGE_NAME
+                platform.packageName()
             );
             return Optional.of(release);
         } catch (Exception exception) {
@@ -56,19 +60,36 @@ class AppReleaseService {
     }
 
     AppRelease publish(String version, int build, String notes, MultipartFile file) {
+        return publish(version, build, notes, file, AppReleasePlatform.IOS);
+    }
+
+    AppRelease publish(
+        String version,
+        int build,
+        String notes,
+        MultipartFile file,
+        AppReleasePlatform platform
+    ) {
         validateMetadata(version, build, notes);
         if (file == null || file.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IPA 文件不能为空");
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                platform.packageLabel() + " 文件不能为空"
+            );
         }
         try {
             Files.createDirectories(releaseDirectory);
-            var temporaryPackage = Files.createTempFile(releaseDirectory, "Sona-", ".ipa.tmp");
+            var temporaryPackage = Files.createTempFile(
+                releaseDirectory,
+                "Sona-",
+                "." + platform.fileExtension() + ".tmp"
+            );
             try {
                 try (var input = file.getInputStream()) {
                     Files.copy(input, temporaryPackage, StandardCopyOption.REPLACE_EXISTING);
                 }
-                validateIpa(temporaryPackage);
-                moveReplacing(temporaryPackage, releaseDirectory.resolve(PACKAGE_NAME));
+                validatePackage(temporaryPackage, file, platform);
+                moveReplacing(temporaryPackage, releaseDirectory.resolve(platform.packageName()));
             } finally {
                 Files.deleteIfExists(temporaryPackage);
             }
@@ -78,17 +99,17 @@ class AppReleaseService {
                 build,
                 notes == null ? "" : notes.strip(),
                 clock.millis(),
-                Files.size(releaseDirectory.resolve(PACKAGE_NAME)),
-                PACKAGE_NAME
+                Files.size(releaseDirectory.resolve(platform.packageName())),
+                platform.packageName()
             );
-            writeManifest(release);
+            writeManifest(release, platform);
             return release;
         } catch (ResponseStatusException exception) {
             throw exception;
         } catch (IOException exception) {
             throw new ResponseStatusException(
                 HttpStatus.INTERNAL_SERVER_ERROR,
-                "保存 IPA 安装包失败",
+                "保存 " + platform.packageLabel() + " 安装包失败",
                 exception
             );
         }
@@ -97,7 +118,7 @@ class AppReleaseService {
     Path packagePath(AppRelease release) {
         var path = releaseDirectory.resolve(release.fileName()).normalize();
         if (!path.startsWith(releaseDirectory) || !Files.isRegularFile(path)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "服务器暂无 IPA 安装包");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "服务器暂无对应安装包");
         }
         return path;
     }
@@ -135,7 +156,47 @@ class AppReleaseService {
         }
     }
 
-    private void writeManifest(AppRelease release) throws IOException {
+    private void validatePackage(
+        Path path,
+        MultipartFile file,
+        AppReleasePlatform platform
+    ) {
+        if (platform == AppReleasePlatform.IOS) {
+            validateIpa(path);
+            return;
+        }
+        validateDmg(path, file.getOriginalFilename());
+    }
+
+    private void validateDmg(Path path, String originalFilename) {
+        if (originalFilename == null
+            || !originalFilename.toLowerCase(Locale.ROOT).endsWith(".dmg")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DMG 文件扩展名无效");
+        }
+        try {
+            var size = Files.size(path);
+            if (size < 512) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DMG 包结构无效");
+            }
+            try (var input = Files.newByteChannel(path)) {
+                input.position(size - 512);
+                var signature = java.nio.ByteBuffer.allocate(4);
+                if (input.read(signature) != 4
+                    || signature.get(0) != 'k'
+                    || signature.get(1) != 'o'
+                    || signature.get(2) != 'l'
+                    || signature.get(3) != 'y') {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DMG 包结构无效");
+                }
+            }
+        } catch (ResponseStatusException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DMG 文件无法读取", exception);
+        }
+    }
+
+    private void writeManifest(AppRelease release, AppReleasePlatform platform) throws IOException {
         var values = new Properties();
         values.setProperty("version", release.version());
         values.setProperty("build", Integer.toString(release.build()));
@@ -146,7 +207,7 @@ class AppReleaseService {
             try (var output = Files.newOutputStream(temporary)) {
                 values.store(output, "Sona app release");
             }
-            moveReplacing(temporary, releaseDirectory.resolve("latest.properties"));
+            moveReplacing(temporary, releaseDirectory.resolve(platform.manifestName()));
         } finally {
             Files.deleteIfExists(temporary);
         }
@@ -164,6 +225,54 @@ class AppReleaseService {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
+}
+
+enum AppReleasePlatform {
+    IOS("ios", "ipa", "IPA", "Sona-unsigned.ipa", "latest.properties"),
+    MACOS("macos", "dmg", "DMG", "Sona-arm64.dmg", "latest-macos.properties");
+
+    private final String value;
+    private final String fileExtension;
+    private final String packageLabel;
+    private final String packageName;
+    private final String manifestName;
+
+    AppReleasePlatform(
+        String value,
+        String fileExtension,
+        String packageLabel,
+        String packageName,
+        String manifestName
+    ) {
+        this.value = value;
+        this.fileExtension = fileExtension;
+        this.packageLabel = packageLabel;
+        this.packageName = packageName;
+        this.manifestName = manifestName;
+    }
+
+    static AppReleasePlatform from(String value) {
+        for (var platform : values()) {
+            if (platform.value.equalsIgnoreCase(value)) {
+                return platform;
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的客户端平台");
+    }
+
+    static AppReleasePlatform fromExtension(String extension) {
+        for (var platform : values()) {
+            if (platform.fileExtension.equalsIgnoreCase(extension)) {
+                return platform;
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "不支持的安装包格式");
+    }
+
+    String fileExtension() { return fileExtension; }
+    String packageLabel() { return packageLabel; }
+    String packageName() { return packageName; }
+    String manifestName() { return manifestName; }
 }
 
 record AppRelease(

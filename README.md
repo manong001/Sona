@@ -79,6 +79,19 @@ mvn spring-boot:run
 
 用 Xcode 打开 `ios/Sona.xcodeproj`，选择开发团队后运行。Bundle ID 为 `cc.eu.sosee.sona`，最低 iOS 17，默认服务器为 `http://sosee.eu.cc:6699`，也可在 App 设置中修改。
 
+统一打包入口会提示选择 `1. IPA（默认）` 或 `2. DMG`，直接回车生成 IPA：
+
+```bash
+./ios/build_package.sh
+```
+
+也可跳过交互直接指定格式：
+
+```bash
+./ios/build_package.sh 1
+./ios/build_package.sh 2
+```
+
 需要生成未签名设备 IPA 时，在 macOS/Xcode 环境执行：
 
 ```bash
@@ -92,3 +105,23 @@ mvn spring-boot:run
 ```
 
 > 当前服务器使用明文 HTTP，因此登录密码和音频流可能被同网络中的第三方窃听。仅建议在可信网络或 VPN 中使用；后续启用 HTTPS 时应同时设置 `SONA_SECURE_COOKIE=true`。
+
+## macOS（Apple Silicon）
+
+Mac 版使用 Mac Catalyst 复用现有播放器功能，并在 Catalyst 环境启用 Spotify 桌面式三栏布局：左侧导航与歌单、中间内容区、右侧播放队列，以及底部固定播放控制栏。最低支持 macOS 14。
+
+版本更新按平台隔离：iOS 请求 `platform=ios`，只接收 IPA；Mac Catalyst 请求 `platform=macos`，只接收 DMG。管理员发布 Mac 安装包时，在现有 `/api/v1/app/releases` multipart 请求中增加 `platform=macos`；iOS 发布接口保持兼容，未传该参数时默认仍为 `ios`。
+
+生成仅包含 Apple Silicon `arm64` 架构的 DMG：
+
+```bash
+./ios/build_arm64_dmg.sh
+```
+
+默认产物写入 `ios/build/macos-arm64/`。也可传入自定义输出路径：
+
+```bash
+./ios/build_arm64_dmg.sh /自定义目录/Sona-arm64.dmg
+```
+
+脚本会执行 Release 构建、临时签名、DMG 创建与挂载验证，并检查应用可执行文件仅包含 `arm64` 架构。该 DMG 未使用 Apple Developer ID 公证；在其他 Mac 上首次打开时可能需要在“系统设置 → 隐私与安全性”中确认。

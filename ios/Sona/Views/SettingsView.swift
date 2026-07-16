@@ -166,7 +166,7 @@ struct SettingsView: View {
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
-                        Button("下载并分享 IPA", systemImage: "square.and.arrow.down") {
+                        Button(updatePackageButtonTitle, systemImage: "square.and.arrow.down") {
                             Task { await downloadUpdate(release) }
                         }
                         .disabled(isDownloadingUpdate)
@@ -412,6 +412,14 @@ struct SettingsView: View {
             isDownloadingUpdate = false
             updateMessage = "下载安装包失败：\(error.localizedDescription)"
         }
+    }
+
+    private var updatePackageButtonTitle: String {
+#if targetEnvironment(macCatalyst)
+        "下载并分享 DMG"
+#else
+        "下载并分享 IPA"
+#endif
     }
 
     private func appIconButton(

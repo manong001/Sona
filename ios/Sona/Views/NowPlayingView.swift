@@ -7,6 +7,7 @@ struct NowPlayingView: View {
     @EnvironmentObject private var personal: PersonalStore
     @State private var showsLyrics = false
     @State private var showsQueue = false
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -21,7 +22,13 @@ struct NowPlayingView: View {
                 if let track = player.currentTrack {
                     VStack(spacing: 0) {
                         HStack {
-                            Button("关闭", systemImage: "chevron.down") { dismiss() }
+                            Button("关闭", systemImage: "chevron.down") {
+                                if let onClose {
+                                    onClose()
+                                } else {
+                                    dismiss()
+                                }
+                            }
                                 .labelStyle(.iconOnly)
                                 .font(.title3.weight(.semibold))
                                 .frame(width: 44, height: 44)
@@ -47,8 +54,8 @@ struct NowPlayingView: View {
 
                         ArtworkView(path: track.artworkURL, cornerRadius: 12)
                             .frame(
-                                width: min(proxy.size.width - 56, proxy.size.height * 0.42),
-                                height: min(proxy.size.width - 56, proxy.size.height * 0.42)
+                                width: artworkSize(in: proxy.size),
+                                height: artworkSize(in: proxy.size)
                             )
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.16), lineWidth: 1))
                             .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
@@ -194,6 +201,10 @@ struct NowPlayingView: View {
         } else {
             Task { await offline.download(track) }
         }
+    }
+
+    private func artworkSize(in size: CGSize) -> CGFloat {
+        max(1, min(max(0, size.width - 56), max(0, size.height * 0.42)))
     }
 
     private func time(_ seconds: Double) -> String {

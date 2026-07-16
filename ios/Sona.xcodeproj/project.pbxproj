@@ -36,6 +36,7 @@
 		20000000000000000000001B /* MusicDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* MusicDownloadView.swift */; };
 		20000000000000000000001C /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C /* LyricsParser.swift */; };
 		20000000000000000000001D /* FloatingMiniPlayerDragState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001D /* FloatingMiniPlayerDragState.swift */; };
+		20000000000000000000001E /* MacMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001E /* MacMainView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -68,6 +69,7 @@
 		10000000000000000000001B /* MusicDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/MusicDownloadView.swift; sourceTree = "<group>"; };
 		10000000000000000000001C /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/LyricsParser.swift; sourceTree = "<group>"; };
 		10000000000000000000001D /* FloatingMiniPlayerDragState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/FloatingMiniPlayerDragState.swift; sourceTree = "<group>"; };
+		10000000000000000000001E /* MacMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/MacMainView.swift; sourceTree = "<group>"; };
 		900000000000000000000001 /* Sona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sona.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -114,6 +116,7 @@
 				10000000000000000000001B /* MusicDownloadView.swift */,
 				10000000000000000000001C /* LyricsParser.swift */,
 				10000000000000000000001D /* FloatingMiniPlayerDragState.swift */,
+				10000000000000000000001E /* MacMainView.swift */,
 				300000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -224,6 +227,7 @@
 				20000000000000000000001B /* MusicDownloadView.swift in Sources */,
 				20000000000000000000001C /* LyricsParser.swift in Sources */,
 				20000000000000000000001D /* FloatingMiniPlayerDragState.swift in Sources */,
+				20000000000000000000001E /* MacMainView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -270,13 +274,17 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sona/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.5.12;
+				MARKETING_VERSION = 0.5.13;
 				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Debug;
 		};
@@ -290,13 +298,17 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sona/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.5.12;
+				MARKETING_VERSION = 0.5.13;
 				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Release;
 		};

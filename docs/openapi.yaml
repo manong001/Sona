@@ -864,7 +864,14 @@ paths:
   /app/releases/latest:
     get:
       operationId: latestAppRelease
-      description: 查询服务器最新 iOS 未签名 IPA 版本
+      description: 按客户端平台查询最新安装包版本
+      parameters:
+        - name: platform
+          in: query
+          schema:
+            type: string
+            enum: [ios, macos]
+            default: ios
       responses:
         "200":
           description: 最新版本信息；未发布安装包时 available 为 false
@@ -888,10 +895,24 @@ paths:
                 format: binary
         "404":
           $ref: "#/components/responses/NotFound"
+  /app/releases/latest/dmg:
+    get:
+      operationId: downloadLatestMacAppRelease
+      description: 下载最新 Apple Silicon Mac Catalyst DMG
+      responses:
+        "200":
+          description: DMG 安装包
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
   /app/releases:
     post:
       operationId: publishAppRelease
-      description: 发布最新 iOS 未签名 IPA（仅管理员）
+      description: 按平台发布最新 IPA 或 DMG（仅管理员）
       requestBody:
         required: true
         content:
@@ -906,6 +927,10 @@ paths:
                 build:
                   type: integer
                   minimum: 1
+                platform:
+                  type: string
+                  enum: [ios, macos]
+                  default: ios
                 notes:
                   type: string
                   maxLength: 4000

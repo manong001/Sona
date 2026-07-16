@@ -18,6 +18,13 @@ struct MainTabView: View {
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
 
     var body: some View {
+        Group {
+#if targetEnvironment(macCatalyst)
+            MacMainView(
+                selectedTab: $selectedTab,
+                showsNowPlaying: $showsNowPlaying
+            )
+#else
         ZStack(alignment: .leading) {
             TabView(selection: $selectedTab) {
                 tabContent(HomeView(openDrawer: openDrawer))
@@ -89,9 +96,13 @@ struct MainTabView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: childMode)
+#endif
+        }
+#if !targetEnvironment(macCatalyst)
         .sheet(isPresented: $showsNowPlaying) {
             NowPlayingView()
         }
+#endif
         .sheet(isPresented: $showsAccountSecurity) {
             NavigationStack { AccountSecurityView() }
         }
@@ -143,7 +154,7 @@ struct MainTabView: View {
     }
 }
 
-private struct DiscoveryView: View {
+struct DiscoveryView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
