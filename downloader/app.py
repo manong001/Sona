@@ -7,12 +7,14 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import urlopen
 
 
 DEFAULT_SOURCES = (
@@ -45,6 +47,7 @@ MAX_PLAYLIST_URL_LENGTH = 2_048
 MAX_CANDIDATES = 1_000
 CANDIDATE_TTL_SECONDS = 30 * 60
 PLAYLIST_CANDIDATE_TTL_SECONDS = 72 * 60 * 60
+PLAYBACK_URL_TTL_SECONDS = 30 * 60
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
@@ -269,6 +272,9 @@ class AppState:
         self.token = token
         self.allowed_sources = allowed_sources
         self.cache = cache or CandidateCache()
+        self._playback_urls: dict[str, CachedCandidate] = {}
+        self._playback_lock = threading.Lock()
+        self._resolvers = {"ikun": _resolve_ikun}
 
     def search(self, query: str, sources: tuple[str, ...]) -> list[dict[str, Any]]:
         items = []
@@ -294,6 +300,45 @@ class AppState:
                 for candidate in candidates
             ],
         }
+
+    def playback_fallback(
+        self, title: str, artist: str, duration_ms: int | None, resolvers: tuple[str, ...]
+    ) -> str:
+        enabled = tuple(resolver for resolver in resolvers if resolver in self._resolvers)
+        if not enabled:
+            raise ValueError("没有启用可用的在线播放音源")
+        key = "\u0000".join((title.casefold(), artist.casefold(), str(duration_ms or 0), ",".join(enabled)))
+        with self._playback_lock:
+            cached = self._playback_urls.get(key)
+            if cached and cached.expires_at > time.monotonic():
+                return cached.candidate.opaque
+        candidates = self.backend.search(f"{title} {artist}", _resolver_musicdl_sources(enabled))
+        matches = [candidate for candidate in candidates if _matches_track(candidate, title, artist, duration_ms)]
+        if not matches:
+            raise LookupError("未找到可靠的在线替代歌曲")
+        with ThreadPoolExecutor(max_workers=len(enabled)) as executor:
+            futures = [
+                executor.submit(self._resolvers[resolver], candidate)
+                for resolver in enabled for candidate in matches
+                if _supports_resolver(resolver, candidate)
+            ]
+            if not futures:
+                raise LookupError("在线候选不包含可解析的平台标识")
+            for future in as_completed(futures):
+                try:
+                    url = future.result()
+                    with self._playback_lock:
+                        now = time.monotonic()
+                        self._playback_urls[key] = CachedCandidate(
+                            BackendCandidate("", "", "", "", "", None, None, None, None, None, None, url),
+                            now, now + PLAYBACK_URL_TTL_SECONDS
+                        )
+                    for other in futures:
+                        other.cancel()
+                    return url
+                except Exception:
+                    continue
+        raise LookupError("所有在线播放音源均未返回可播放链接")
 
 
 class SonaDownloaderServer(ThreadingHTTPServer):
@@ -349,6 +394,9 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/v1/playlists/parse":
             self._parse_playlist()
+            return
+        if parsed.path == "/v1/playback/fallbacks":
+            self._playback_fallback()
             return
         self._error(HTTPStatus.NOT_FOUND, "接口不存在")
 
@@ -410,6 +458,25 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.BAD_REQUEST, str(exception))
         except Exception as exception:
             self._error(HTTPStatus.BAD_GATEWAY, f"歌单解析失败：{exception}")
+
+    def _playback_fallback(self) -> None:
+        try:
+            body = self._read_json()
+            title = _text(body.get("title")).strip()
+            artist = _text(body.get("artist")).strip()
+            duration_ms = _positive_int(body.get("durationMs"))
+            resolvers = tuple(_text(value).strip() for value in body.get("sources", []) if _text(value).strip())
+            if not title or not artist or len(title) > 300 or len(artist) > 300:
+                raise ValueError("歌曲标题和艺人不能为空")
+            self._json(HTTPStatus.OK, {
+                "url": self.server.state.playback_fallback(title, artist, duration_ms, resolvers)
+            })
+        except LookupError as exception:
+            self._error(HTTPStatus.NOT_FOUND, str(exception))
+        except ValueError as exception:
+            self._error(HTTPStatus.BAD_REQUEST, str(exception))
+        except Exception as exception:
+            self._error(HTTPStatus.BAD_GATEWAY, f"在线播放解析失败：{exception}")
 
     def _authorized(self) -> bool:
         supplied = self.headers.get("X-Sona-Token", "")
@@ -502,6 +569,46 @@ def _text(value: Any) -> str:
 def _optional_text(value: Any) -> str | None:
     text = _text(value).strip()
     return text or None
+
+
+def _resolver_musicdl_sources(resolvers: tuple[str, ...]) -> tuple[str, ...]:
+    sources = []
+    if "ikun" in resolvers:
+        sources.extend(("KuwoMusicClient", "NeteaseMusicClient"))
+    return tuple(dict.fromkeys(sources))
+
+
+def _supports_resolver(resolver: str, candidate: BackendCandidate) -> bool:
+    return resolver == "ikun" and candidate.source in {"KuwoMusicClient", "NeteaseMusicClient"}
+
+
+def _matches_track(candidate: BackendCandidate, title: str, artist: str, duration_ms: int | None) -> bool:
+    normalize = lambda value: re.sub(r"[^\\w\\u4e00-\\u9fff]", "", value).casefold()
+    if normalize(candidate.title) != normalize(title):
+        return False
+    if normalize(artist) not in normalize(candidate.artist) and normalize(candidate.artist) not in normalize(artist):
+        return False
+    return not duration_ms or not candidate.duration_ms or abs(candidate.duration_ms - duration_ms) <= 5_000
+
+
+def _opaque_value(opaque: Any, name: str) -> str:
+    value = opaque.get(name) if isinstance(opaque, dict) else getattr(opaque, name, None)
+    return _text(value).strip()
+
+
+def _resolve_ikun(candidate: BackendCandidate) -> str:
+    source = {"KuwoMusicClient": "kw", "NeteaseMusicClient": "wy"}.get(candidate.source)
+    song_id = _opaque_value(candidate.opaque, "hash") or _opaque_value(candidate.opaque, "songmid")
+    if not source or not song_id:
+        raise ValueError("候选缺少 Ikun 所需的平台歌曲标识")
+    quality = "flac" if candidate.extension.lower() == "flac" else "320k"
+    query = urlencode({"source": source, "songId": song_id, "quality": quality})
+    with urlopen(f"http://api.ikunshare.com/url?{query}", timeout=5) as response:
+        body = json.loads(response.read())
+    url = _text(body.get("url")).strip()
+    if body.get("code") != 200 or not re.match(r"^https?://", url, re.I):
+        raise ValueError(_text(body.get("message")) or "Ikun 未返回有效播放链接")
+    return url
 
 
 def main() -> None:

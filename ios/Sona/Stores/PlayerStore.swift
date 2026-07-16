@@ -45,6 +45,8 @@ final class PlayerStore: ObservableObject {
     private var offlineURLProvider: ((Track) -> URL?)?
     private var timeObserver: Any?
     private var itemEndObserver: NSObjectProtocol?
+    private var itemFailureObserver: NSObjectProtocol?
+    private var fallbackTrackID: String?
     private var artworkTask: Task<Void, Never>?
     private var randomQueueTask: Task<Void, Never>?
     private var dailyRecommendationQueues: [[Track]]?
@@ -57,6 +59,7 @@ final class PlayerStore: ObservableObject {
         configureAudioSession()
         observeTime()
         observeItemEnd()
+        observeItemFailure()
         configureRemoteCommands()
     }
 
@@ -66,6 +69,9 @@ final class PlayerStore: ObservableObject {
         }
         if let itemEndObserver {
             NotificationCenter.default.removeObserver(itemEndObserver)
+        }
+        if let itemFailureObserver {
+            NotificationCenter.default.removeObserver(itemFailureObserver)
         }
         artworkTask?.cancel()
         randomQueueTask?.cancel()
@@ -145,13 +151,16 @@ final class PlayerStore: ObservableObject {
         }
     }
 
-    private func startPlayback(_ track: Track) {
+    private func startPlayback(_ track: Track, streamURLOverride: String? = nil) {
+        if streamURLOverride == nil {
+            fallbackTrackID = nil
+        }
         submitCurrentPlayback()
         let item: AVPlayerItem
         if let offlineURL = offlineURLProvider?(track) {
             item = AVPlayerItem(url: offlineURL)
         } else {
-            let streamURL = activeAPI.url(for: track.streamURL)
+            let streamURL = activeAPI.url(for: streamURLOverride ?? track.streamURL)
             let cookies = HTTPCookieStorage.shared.cookies(for: streamURL) ?? []
             let asset = AVURLAsset(
                 url: streamURL,
@@ -311,6 +320,28 @@ final class PlayerStore: ObservableObject {
                       endedItem === self.player.currentItem else { return }
                 self.submitCurrentPlayback(forceProgress: 100)
                 self.advance(by: 1, automatic: true)
+            }
+        }
+    }
+
+    private func observeItemFailure() {
+        itemFailureObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self,
+                      let item = notification.object as? AVPlayerItem,
+                      item === self.player.currentItem,
+                      let track = self.currentTrack else { return }
+                guard self.fallbackTrackID != track.id else {
+                    self.isPlaying = false
+                    self.queueErrorMessage = "本地与在线兜底均无法播放"
+                    return
+                }
+                self.fallbackTrackID = track.id
+                self.startPlayback(track, streamURLOverride: "/api/v1/tracks/\(track.id)/fallback-stream")
             }
         }
     }

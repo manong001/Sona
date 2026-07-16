@@ -2,6 +2,7 @@ package cc.eu.sosee.sona.library;
 
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import cc.eu.sosee.sona.config.SonaProperties;
+import cc.eu.sosee.sona.download.OnlinePlaybackService;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,11 +47,15 @@ class TrackController {
     private final TrackStore trackStore;
     private final Path musicDirectory;
     private final Path dataDirectory;
+    private final OnlinePlaybackService onlinePlaybackService;
 
-    TrackController(TrackStore trackStore, SonaProperties properties) {
+    TrackController(
+        TrackStore trackStore, SonaProperties properties, OnlinePlaybackService onlinePlaybackService
+    ) {
         this.trackStore = trackStore;
         this.musicDirectory = properties.getMusicDir().toAbsolutePath().normalize();
         this.dataDirectory = properties.getDataDir().toAbsolutePath().normalize();
+        this.onlinePlaybackService = onlinePlaybackService;
     }
 
     @GetMapping
@@ -111,6 +116,15 @@ class TrackController {
             .contentType(contentType(audioPath))
             .contentLength(Files.size(audioPath))
             .body(new FileSystemResource(audioPath));
+    }
+
+    @GetMapping("/{id}/fallback-stream")
+    ResponseEntity<Void> fallbackStream(
+        @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id
+    ) {
+        var track = findTrack(id, user.id());
+        var url = onlinePlaybackService.resolve(track.title(), track.artist(), track.durationMs());
+        return ResponseEntity.status(302).header(HttpHeaders.LOCATION, url).build();
     }
 
     @GetMapping("/{id}/artwork")

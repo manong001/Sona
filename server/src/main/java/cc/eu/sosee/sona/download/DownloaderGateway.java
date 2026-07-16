@@ -17,4 +17,6 @@ public interface DownloaderGateway {
     DownloadPlaylistPreview parsePlaylist(String url);
 
     List<String> download(String candidateId);
+
+    String resolvePlaybackFallback(String title, String artist, long durationMs, List<String> sources);
 }

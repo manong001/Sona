@@ -42,7 +42,7 @@ struct HomeView: View {
             return SonaCollection(
                 id: "playlist-\(playlist.id)",
                 title: playlist.name,
-                subtitle: "歌单 · \(username)",
+                subtitle: playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
                 artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
                 tracks: tracks,
                 shape: .square
@@ -197,12 +197,36 @@ struct HomeView: View {
                 collections: favoriteCollections,
                 titleDestination: likedSongsCollection
             )
-            mediaSection(title: "你的歌单", collections: playlistCollections)
+            mediaSection(title: "歌单", collections: playlistCollections)
+            onlinePlaylistPlaceholder
         }
 
         if selectedFilter != "歌单" {
             mediaSection(title: "浏览专辑", collections: albums)
             mediaSection(title: "常听艺人", collections: artists)
+        }
+    }
+
+    private var onlinePlaylistPlaceholder: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SonaSectionHeader(title: "在线歌单")
+                .padding(.horizontal, 16)
+            HStack(spacing: 12) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.title2)
+                    .foregroundStyle(Color.sonaGreen)
+                    .frame(width: 52, height: 52)
+                    .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("即将支持在线歌单")
+                        .font(.subheadline.weight(.semibold))
+                    Text("配置在线音源后可在这里浏览")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
         }
     }
 

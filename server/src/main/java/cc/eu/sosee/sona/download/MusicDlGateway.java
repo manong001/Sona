@@ -103,6 +103,25 @@ class MusicDlGateway implements DownloaderGateway {
         return response;
     }
 
+    @Override
+    public String resolvePlaybackFallback(String title, String artist, long durationMs, List<String> sources) {
+        requireEnabled();
+        var requestBody = requestBody(new PlaybackFallbackBody(title, artist, durationMs, sources));
+        var response = searchClient.post()
+            .uri("/v1/playback/fallbacks")
+            .header("X-Sona-Token", token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .contentLength(requestBody.length)
+            .accept(MediaType.APPLICATION_JSON)
+            .body(requestBody)
+            .retrieve()
+            .body(PlaybackFallbackEnvelope.class);
+        if (response == null || response.url() == null || response.url().isBlank()) {
+            throw new IllegalStateException("在线播放解析服务没有返回链接");
+        }
+        return response.url();
+    }
+
     private byte[] requestBody(Object value) {
         try {
             return objectMapper.writeValueAsBytes(value);
@@ -143,5 +162,11 @@ class MusicDlGateway implements DownloaderGateway {
     }
 
     private record DownloadEnvelope(List<String> files) {
+    }
+
+    private record PlaybackFallbackBody(String title, String artist, long durationMs, List<String> sources) {
+    }
+
+    private record PlaybackFallbackEnvelope(String url) {
     }
 }

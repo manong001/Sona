@@ -29,6 +29,11 @@ public class PlaylistDownloadImportService {
         return new Target(playlist.id(), playlist.name());
     }
 
+    public Target createFeatured(String userId, String name) {
+        var playlist = repository.createFeaturedPlaylist(userId, name.strip());
+        return new Target(playlist.id(), playlist.name());
+    }
+
     public void addDownloadedFiles(String playlistId, List<String> relativeFiles) {
         var files = relativeFiles.stream().map(this::resolveFile).distinct().toList();
         var directories = files.stream()

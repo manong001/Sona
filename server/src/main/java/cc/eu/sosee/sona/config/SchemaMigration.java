@@ -61,6 +61,9 @@ class SchemaMigration implements ApplicationRunner {
         if (tableExists("download_tasks") && !columns("download_tasks").contains("target_playlist_id")) {
             jdbcClient.sql("ALTER TABLE download_tasks ADD COLUMN target_playlist_id TEXT").update();
         }
+        if (tableExists("playlists") && !columns("playlists").contains("featured")) {
+            jdbcClient.sql("ALTER TABLE playlists ADD COLUMN featured INTEGER NOT NULL DEFAULT 0").update();
+        }
     }
 
     private boolean tableExists(String table) {

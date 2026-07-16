@@ -555,6 +555,18 @@ final class APIClient {
         try await request(path: "/api/v1/downloads/sources")
     }
 
+    func onlinePlaybackSources() async throws -> [OnlinePlaybackSource] {
+        try await request(path: "/api/v1/online-playback/sources")
+    }
+
+    func setOnlinePlaybackSource(id: String, enabled: Bool) async throws {
+        struct Body: Encodable { let enabled: Bool }
+        try await requestVoid(
+            path: "/api/v1/online-playback/sources/\(id)", method: "PUT",
+            body: try encoder.encode(Body(enabled: enabled))
+        )
+    }
+
     func searchMusicDownloads(
         query: String, sources: [String] = []
     ) async throws -> DownloadSearchResponse {

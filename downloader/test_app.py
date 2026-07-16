@@ -100,6 +100,22 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(["download/测试.flac"], result["files"])
         self.assertEqual(1, len(self.backend.downloaded))
 
+    def test_playback_fallback_caches_the_first_valid_url(self):
+        calls = 0
+
+        def resolve(candidate):
+            nonlocal calls
+            calls += 1
+            return "https://audio.example.test/song.flac"
+
+        self.server.state._resolvers["ikun"] = resolve
+        first = self.server.state.playback_fallback("测试歌曲", "测试歌手", 180_000, ("ikun",))
+        second = self.server.state.playback_fallback("测试歌曲", "测试歌手", 180_000, ("ikun",))
+
+        self.assertEqual("https://audio.example.test/song.flac", first)
+        self.assertEqual(first, second)
+        self.assertEqual(1, calls)
+
     def test_parses_playlist_url_and_caches_every_candidate(self):
         status, body = self.request(
             "POST",

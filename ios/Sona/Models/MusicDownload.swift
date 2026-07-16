@@ -5,6 +5,12 @@ struct DownloadSource: Codable, Identifiable, Hashable {
     let name: String
 }
 
+struct OnlinePlaybackSource: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let enabled: Bool
+}
+
 struct DownloadCandidate: Codable, Identifiable, Hashable {
     let candidateId: String
     let source: String

@@ -34,7 +34,8 @@ class SecurityConfig {
                 .requestMatchers(
                     "/api/v1/users/**",
                     "/api/v1/library/**",
-                    "/api/v1/downloads/**"
+                    "/api/v1/downloads/**",
+                    "/api/v1/online-playback/sources/**"
                 ).hasRole("ADMIN")
                 .anyRequest().authenticated()
             )

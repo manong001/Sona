@@ -564,6 +564,20 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+  /tracks/{trackId}/fallback-stream:
+    get:
+      operationId: streamTrackFallback
+      description: 本地播放失败时解析并重定向至已启用的在线兜底音源
+      parameters:
+        - $ref: "#/components/parameters/TrackId"
+      responses:
+        "302":
+          description: 已解析的临时播放链接
+          headers:
+            Location:
+              schema: {type: string, format: uri}
+        "404":
+          $ref: "#/components/responses/NotFound"
   /tracks/{trackId}/lyrics:
     get:
       operationId: getLyrics
@@ -745,6 +759,37 @@ paths:
                   $ref: "#/components/schemas/DownloadSource"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /online-playback/sources:
+    get:
+      operationId: onlinePlaybackSources
+      description: 在线播放兜底音源配置（仅管理员）
+      responses:
+        "200":
+          description: 音源列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/OnlinePlaybackSource"}
+  /online-playback/sources/{sourceId}:
+    put:
+      operationId: setOnlinePlaybackSource
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        "200": {description: 配置已更新}
   /downloads/search:
     get:
       operationId: searchDownloads
@@ -1246,6 +1291,13 @@ components:
           type: string
         name:
           type: string
+    OnlinePlaybackSource:
+      type: object
+      required: [id, name, enabled]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        enabled: {type: boolean}
     DownloadPlaylistPreview:
       type: object
       required: [name, items]

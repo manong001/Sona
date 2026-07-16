@@ -43,6 +43,11 @@ struct SettingsView: View {
                         } label: {
                             Label("多源音乐下载", systemImage: "arrow.down.circle")
                         }
+                        NavigationLink {
+                            OnlinePlaybackSourceSettingsView()
+                        } label: {
+                            Label("在线播放兜底音源", systemImage: "dot.radiowaves.left.and.right")
+                        }
 
                         Button {
                             Task { await library.scan() }
@@ -477,6 +482,57 @@ struct SettingsView: View {
         case "COMPLETED": "已完成"
         case "FAILED": "失败"
         default: "空闲"
+        }
+    }
+}
+
+private struct OnlinePlaybackSourceSettingsView: View {
+    @State private var sources: [OnlinePlaybackSource] = []
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section("在线播放兜底") {
+                Text("仅在本地歌曲播放失败时并发解析；首个有效直链会缓存 30 分钟。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(sources) { source in
+                    Toggle(source.name, isOn: binding(for: source))
+                }
+            }
+            if let errorMessage {
+                Section {
+                    Text(errorMessage).foregroundStyle(.red)
+                }
+            }
+        }
+        .navigationTitle("在线播放音源")
+        .task { await load() }
+    }
+
+    private func binding(for source: OnlinePlaybackSource) -> Binding<Bool> {
+        Binding(
+            get: { sources.first(where: { $0.id == source.id })?.enabled ?? false },
+            set: { enabled in Task { await update(source.id, enabled: enabled) } }
+        )
+    }
+
+    private func load() async {
+        do {
+            sources = try await APIClient.shared.onlinePlaybackSources()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func update(_ id: String, enabled: Bool) async {
+        do {
+            try await APIClient.shared.setOnlinePlaybackSource(id: id, enabled: enabled)
+            if let index = sources.firstIndex(where: { $0.id == id }) {
+                sources[index] = OnlinePlaybackSource(id: id, name: sources[index].name, enabled: enabled)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

@@ -232,9 +232,9 @@ class PersonalRepository {
 
     List<PlaylistData> playlists(String userId) {
         return jdbcClient.sql("""
-                SELECT id, name, created_at
+                SELECT id, name, featured, created_at
                 FROM playlists
-                WHERE user_id = :userId
+                WHERE user_id = :userId OR featured = 1
                 ORDER BY created_at
                 """)
             .param("userId", userId)
@@ -242,7 +242,8 @@ class PersonalRepository {
                 resultSet.getString("id"),
                 resultSet.getString("name"),
                 trackIds(userId, resultSet.getString("id")),
-                resultSet.getLong("created_at")
+                resultSet.getLong("created_at"),
+                resultSet.getBoolean("featured")
             ))
             .list();
     }
@@ -251,15 +252,27 @@ class PersonalRepository {
         var id = UUID.randomUUID().toString();
         var createdAt = clock.millis();
         jdbcClient.sql("""
-                INSERT INTO playlists(id, user_id, name, created_at)
-                VALUES (:id, :userId, :name, :createdAt)
+                INSERT INTO playlists(id, user_id, name, featured, created_at)
+                VALUES (:id, :userId, :name, 0, :createdAt)
                 """)
             .param("id", id)
             .param("userId", userId)
             .param("name", name)
             .param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), createdAt);
+        return new PlaylistData(id, name, List.of(), createdAt, false);
+    }
+
+    PlaylistData createFeaturedPlaylist(String userId, String name) {
+        var id = UUID.randomUUID().toString();
+        var createdAt = clock.millis();
+        jdbcClient.sql("""
+                INSERT INTO playlists(id, user_id, name, featured, created_at)
+                VALUES (:id, :userId, :name, 1, :createdAt)
+                """)
+            .param("id", id).param("userId", userId).param("name", name).param("createdAt", createdAt)
+            .update();
+        return new PlaylistData(id, name, List.of(), createdAt, true);
     }
 
     boolean ownsPlaylist(String userId, String playlistId) {
@@ -651,7 +664,7 @@ class PersonalRepository {
         return separator < 0 ? "" : filename.substring(separator + 1).toLowerCase();
     }
 
-    record PlaylistData(String id, String name, List<String> trackIds, long createdAt) {
+    record PlaylistData(String id, String name, List<String> trackIds, long createdAt, boolean featured) {
     }
 
     record HistoryData(String trackId, long playedAt) {

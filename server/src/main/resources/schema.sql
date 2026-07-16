@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    featured INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -214,3 +215,8 @@ CREATE TABLE IF NOT EXISTS directory_track_memberships (
 
 CREATE INDEX IF NOT EXISTS idx_directory_track_memberships_track
     ON directory_track_memberships(track_id);
+
+CREATE TABLE IF NOT EXISTS online_playback_sources (
+    source_id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 0
+);

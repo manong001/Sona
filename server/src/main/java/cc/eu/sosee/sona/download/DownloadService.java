@@ -62,7 +62,7 @@ class DownloadService {
         String name, List<DownloadCandidate> candidates, String userId, String username
     ) {
         requireEnabled();
-        var target = playlistImportService.create(userId, name);
+        var target = playlistImportService.createFeatured(userId, name);
         var tasks = candidates.stream()
             .map(candidate -> {
                 var task = repository.create(candidate, username, target.id());

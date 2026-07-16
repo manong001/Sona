@@ -5,10 +5,28 @@ struct Playlist: Codable, Identifiable, Equatable {
     let name: String
     let trackIDs: [String]
     let createdAt: Int64
+    let featured: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, createdAt
+        case id, name, createdAt, featured
         case trackIDs = "trackIds"
+    }
+
+    init(id: String, name: String, trackIDs: [String], createdAt: Int64, featured: Bool = false) {
+        self.id = id
+        self.name = name
+        self.trackIDs = trackIDs
+        self.createdAt = createdAt
+        self.featured = featured
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        trackIDs = try values.decode([String].self, forKey: .trackIDs)
+        createdAt = try values.decode(Int64.self, forKey: .createdAt)
+        featured = try values.decodeIfPresent(Bool.self, forKey: .featured) ?? false
     }
 }
 
