@@ -50,7 +50,7 @@ docker compose up -d --build
 
 管理员可在 App 的“设置 → 多源音乐下载”中搜索并加入下载队列。下载器只在 Docker 内网监听
 `6700`，服务端通过 `SONA_SIDECAR_TOKEN` 鉴权；不要把该端口映射到公网。支持的默认来源为咪咕、网易云、QQ、酷我和千千，
-也可以在 `.env` 的 `SONA_DOWNLOAD_SOURCES` 中按 `musicdl` 的客户端名称替换来源。下载文件写入音乐目录下的 `Downloads/`，
+也可以在 `.env` 的 `SONA_DOWNLOAD_SOURCES` 中按 `musicdl` 的客户端名称替换来源。下载文件仅写入服务器挂载音乐目录下的 `download/`，
 随后由服务端自动扫描入库。
 
 默认映射：

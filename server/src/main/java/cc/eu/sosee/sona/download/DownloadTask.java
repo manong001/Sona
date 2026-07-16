@@ -12,6 +12,7 @@ public record DownloadTask(
     String album,
     String quality,
     String artworkUrl,
+    String targetPlaylistId,
     String requestedBy,
     DownloadTaskState state,
     List<String> files,

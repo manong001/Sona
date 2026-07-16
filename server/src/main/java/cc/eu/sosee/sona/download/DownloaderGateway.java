@@ -14,5 +14,7 @@ public interface DownloaderGateway {
         return search(query);
     }
 
+    DownloadPlaylistPreview parsePlaylist(String url);
+
     List<String> download(String candidateId);
 }

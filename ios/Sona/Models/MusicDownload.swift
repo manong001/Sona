@@ -37,6 +37,17 @@ struct DownloadSearchResponse: Decodable {
     let items: [DownloadCandidate]
 }
 
+struct DownloadPlaylistPreview: Decodable {
+    let name: String
+    let items: [DownloadCandidate]
+}
+
+struct PlaylistDownloadQueueResponse: Decodable {
+    let playlistId: String
+    let playlistName: String
+    let tasks: [MusicDownloadTask]
+}
+
 enum MusicDownloadState: String, Codable {
     case queued = "QUEUED"
     case running = "RUNNING"
@@ -63,6 +74,7 @@ struct MusicDownloadTask: Decodable, Identifiable {
     let album: String
     let quality: String
     let artworkUrl: String?
+    let targetPlaylistId: String?
     let requestedBy: String
     let state: MusicDownloadState
     let files: [String]

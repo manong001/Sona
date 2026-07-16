@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -40,11 +41,17 @@ SOURCE_LABELS = {
 }
 MAX_QUERY_LENGTH = 120
 MAX_BODY_BYTES = 64 * 1024
+MAX_PLAYLIST_URL_LENGTH = 2_048
 MAX_CANDIDATES = 1_000
 CANDIDATE_TTL_SECONDS = 30 * 60
+PLAYLIST_CANDIDATE_TTL_SECONDS = 72 * 60 * 60
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
+PLAYLIST_HOSTS = frozenset({
+    "kuwo.cn", "music.migu.cn", "migu.cn", "music.163.com", "163cn.tv",
+    "y.qq.com", "music.qq.com", "music.91q.com", "music.taihe.com", "music.baidu.com",
+})
 
 
 def source_label(source: str) -> str:
@@ -77,6 +84,7 @@ class BackendCandidate:
 class CachedCandidate:
     candidate: BackendCandidate
     created_at: float
+    expires_at: float
 
 
 class CandidateCache:
@@ -85,14 +93,15 @@ class CandidateCache:
         self._items: dict[str, CachedCandidate] = {}
         self._lock = threading.Lock()
 
-    def add(self, candidate: BackendCandidate) -> str:
+    def add(self, candidate: BackendCandidate, ttl_seconds: int = CANDIDATE_TTL_SECONDS) -> str:
         with self._lock:
             self._purge_locked()
             if len(self._items) >= MAX_CANDIDATES:
                 oldest = min(self._items, key=lambda key: self._items[key].created_at)
                 self._items.pop(oldest, None)
             candidate_id = str(uuid.uuid4())
-            self._items[candidate_id] = CachedCandidate(candidate, self._clock())
+            now = self._clock()
+            self._items[candidate_id] = CachedCandidate(candidate, now, now + ttl_seconds)
             return candidate_id
 
     def get(self, candidate_id: str) -> BackendCandidate | None:
@@ -102,11 +111,10 @@ class CandidateCache:
             return cached.candidate if cached else None
 
     def _purge_locked(self) -> None:
-        expires_before = self._clock() - CANDIDATE_TTL_SECONDS
         expired = [
             candidate_id
             for candidate_id, cached in self._items.items()
-            if cached.created_at < expires_before
+            if cached.expires_at <= self._clock()
         ]
         for candidate_id in expired:
             self._items.pop(candidate_id, None)
@@ -124,13 +132,14 @@ class MusicDlBackend:
 
         self._musicdl = musicdl
         self._music_dir = music_dir.resolve()
-        self._output_dir = self._music_dir / "Downloads"
+        self._output_dir = self._music_dir / "download"
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._state_dir = state_dir.resolve()
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._allowed_sources = allowed_sources
         self._registered_sources = frozenset(MusicClientBuilder.REGISTERED_MODULES)
         self._clients: dict[tuple[str, ...], Any] = {}
+        self._source_locks: dict[tuple[str, ...], threading.Lock] = {}
         self._lock = threading.Lock()
 
     @property
@@ -138,7 +147,7 @@ class MusicDlBackend:
         return self._registered_sources
 
     def search(self, query: str, sources: tuple[str, ...]) -> list[BackendCandidate]:
-        with self._lock:
+        with self._lock_for(sources):
             client = self._client(sources)
             results = client.search(keyword=query)
         candidates: list[BackendCandidate] = []
@@ -163,9 +172,40 @@ class MusicDlBackend:
                 )
         return candidates
 
+    def parse_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+        sources = self._allowed_sources
+        with self._lock_for(sources):
+            songs = self._client(sources).parseplaylist(url)
+        if not songs:
+            raise ValueError("无法解析歌单，请确认链接公开且属于已启用音源")
+        playlist_name = Path(_text(getattr(songs[0], "work_dir", ""))).name.strip()
+        playlist_name = re.sub(r"^\d{4}(?:-\d{2}){5}\s+", "", playlist_name)
+        playlist_name = (playlist_name or "导入歌单")[:80]
+        output_dir = self._output_dir / playlist_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        candidates = []
+        for song in songs:
+            song.work_dir = str(output_dir)
+            candidates.append(BackendCandidate(
+                source=song.source,
+                title=_text(song.song_name),
+                artist=_text(song.singers),
+                album=_text(song.album),
+                extension=_text(song.ext).removeprefix(".").lower(),
+                duration_ms=_duration_ms(song.duration_s, song.duration),
+                file_size_bytes=_positive_int(song.file_size_bytes),
+                bitrate=_positive_int(song.bitrate),
+                sample_rate=_positive_int(song.samplerate),
+                artwork_url=_optional_text(song.cover_url),
+                lyrics=_optional_text(song.lyric),
+                opaque=song,
+            ))
+        return playlist_name, candidates
+
     def download(self, candidate: BackendCandidate) -> list[str]:
-        with self._lock:
-            client = self._client((candidate.source,))
+        sources = (candidate.source,)
+        with self._lock_for(sources):
+            client = self._client(sources)
             downloaded = client.download(song_infos=[candidate.opaque])
         files: list[str] = []
         for song in downloaded:
@@ -209,6 +249,11 @@ class MusicDlBackend:
         self._clients[key] = client
         return client
 
+    def _lock_for(self, sources: tuple[str, ...]) -> threading.Lock:
+        key = tuple(sorted(sources))
+        with self._lock:
+            return self._source_locks.setdefault(key, threading.Lock())
+
 
 class AppState:
     def __init__(
@@ -237,6 +282,18 @@ class AppState:
         if candidate is None:
             raise LookupError("候选结果不存在或已过期，请重新搜索")
         return self.backend.download(candidate)
+
+    def parse_playlist(self, url: str) -> dict[str, Any]:
+        name, candidates = self.backend.parse_playlist(url)
+        return {
+            "name": name,
+            "items": [
+                _public_candidate(
+                    self.cache.add(candidate, PLAYLIST_CANDIDATE_TTL_SECONDS), candidate
+                )
+                for candidate in candidates
+            ],
+        }
 
 
 class SonaDownloaderServer(ThreadingHTTPServer):
@@ -290,6 +347,9 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/downloads":
             self._download()
             return
+        if parsed.path == "/v1/playlists/parse":
+            self._parse_playlist()
+            return
         self._error(HTTPStatus.NOT_FOUND, "接口不存在")
 
     def _search(self, raw_query: str) -> None:
@@ -331,6 +391,25 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.BAD_REQUEST, str(exception))
         except Exception as exception:
             self._error(HTTPStatus.BAD_GATEWAY, f"下载失败：{exception}")
+
+    def _parse_playlist(self) -> None:
+        try:
+            url = _text(self._read_json().get("url")).strip()
+            if not url or len(url) > MAX_PLAYLIST_URL_LENGTH:
+                raise ValueError("歌单链接长度必须为 1 到 2048 个字符")
+            normalized_url = url if "://" in url else "https://" + url
+            parsed = urlparse(normalized_url)
+            hostname = (parsed.hostname or "").lower().strip(".")
+            if parsed.scheme not in {"http", "https"} or not any(
+                hostname == host or hostname.endswith("." + host)
+                for host in PLAYLIST_HOSTS
+            ):
+                raise ValueError("仅支持已启用的咪咕、网易云、QQ、酷我和千千歌单链接")
+            self._json(HTTPStatus.OK, self.server.state.parse_playlist(normalized_url))
+        except ValueError as exception:
+            self._error(HTTPStatus.BAD_REQUEST, str(exception))
+        except Exception as exception:
+            self._error(HTTPStatus.BAD_GATEWAY, f"歌单解析失败：{exception}")
 
     def _authorized(self) -> bool:
         supplied = self.headers.get("X-Sona-Token", "")

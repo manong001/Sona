@@ -1,13 +1,16 @@
 import json
 import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from app import AppState, BackendCandidate, SonaDownloaderServer
+from app import AppState, BackendCandidate, MusicDlBackend, SonaDownloaderServer
 
 
 class FakeBackend:
@@ -35,10 +38,13 @@ class FakeBackend:
 
     def download(self, candidate):
         self.downloaded.append(candidate)
-        target = self.music_dir / "Downloads" / "测试.flac"
+        target = self.music_dir / "download" / "测试.flac"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"audio")
-        return ["Downloads/测试.flac"]
+        return ["download/测试.flac"]
+
+    def parse_playlist(self, url):
+        return "测试歌单", self.search("歌单歌曲", ("NeteaseMusicClient",))
 
 
 class DownloaderApiTest(unittest.TestCase):
@@ -91,8 +97,20 @@ class DownloaderApiTest(unittest.TestCase):
         )
 
         self.assertEqual(200, status)
-        self.assertEqual(["Downloads/测试.flac"], result["files"])
+        self.assertEqual(["download/测试.flac"], result["files"])
         self.assertEqual(1, len(self.backend.downloaded))
+
+    def test_parses_playlist_url_and_caches_every_candidate(self):
+        status, body = self.request(
+            "POST",
+            "/v1/playlists/parse",
+            {"url": "https://music.163.com/#/playlist?id=123"},
+        )
+
+        self.assertEqual(200, status)
+        self.assertEqual("测试歌单", body["name"])
+        self.assertEqual("歌单歌曲", body["items"][0]["title"])
+        self.assertTrue(body["items"][0]["candidateId"])
 
     def test_rejects_unknown_source_and_candidate(self):
         with self.assertRaises(HTTPError) as source_error:
@@ -104,6 +122,59 @@ class DownloaderApiTest(unittest.TestCase):
             self.request("POST", "/v1/downloads", {"candidateId": "missing"})
         self.assertEqual(404, candidate_error.exception.code)
         candidate_error.exception.close()
+
+    def test_different_source_searches_are_not_serialized(self):
+        class SlowClient:
+            def search(self, keyword):
+                time.sleep(0.2)
+                return {"MiguMusicClient": [], "QQMusicClient": []}
+
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._lock = threading.Lock()
+        backend._source_locks = {}
+        backend._client = lambda sources: SlowClient()
+        started = time.monotonic()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(backend.search, "test", ("MiguMusicClient",)),
+                executor.submit(backend.search, "test", ("QQMusicClient",)),
+            ]
+            for future in futures:
+                future.result()
+
+        self.assertLess(time.monotonic() - started, 0.35)
+
+    def test_playlist_name_omits_musicdl_timestamp_prefix(self):
+        song = SimpleNamespace(
+            source="NeteaseMusicClient",
+            work_dir="/tmp/NeteaseMusicClient/2026-07-16-02-30-00 我的歌单",
+            song_name="测试歌曲",
+            singers="测试歌手",
+            album="测试专辑",
+            ext="flac",
+            duration_s=180,
+            duration="03:00",
+            file_size_bytes=100,
+            bitrate=1411,
+            samplerate=44100,
+            cover_url=None,
+            lyric=None,
+        )
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("NeteaseMusicClient",)
+            backend._output_dir = Path(directory)
+            backend._lock = threading.Lock()
+            backend._source_locks = {}
+            backend._client = lambda sources: SimpleNamespace(
+                parseplaylist=lambda url: [song]
+            )
+
+            name, candidates = backend.parse_playlist("https://music.163.com/playlist?id=1")
+
+        self.assertEqual("我的歌单", name)
+        self.assertEqual("我的歌单", Path(song.work_dir).name)
+        self.assertEqual("测试歌曲", candidates[0].title)
 
     def request(self, method, path, body=None, authenticated=True):
         data = None if body is None else json.dumps(body).encode()

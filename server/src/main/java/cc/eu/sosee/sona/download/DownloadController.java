@@ -3,6 +3,7 @@ package cc.eu.sosee.sona.download;
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.util.List;
@@ -50,6 +51,21 @@ class DownloadController {
         return service.tasks(user.username());
     }
 
+    @PostMapping("/playlists/preview")
+    DownloadPlaylistPreview previewPlaylist(@Valid @RequestBody PlaylistPreviewRequest request) {
+        return service.parsePlaylist(request.url());
+    }
+
+    @PostMapping("/playlists")
+    ResponseEntity<DownloadService.PlaylistQueueResult> queuePlaylist(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody PlaylistQueueRequest request
+    ) {
+        return ResponseEntity.accepted().body(service.queuePlaylist(
+            request.name().strip(), request.items(), user.id(), user.username()
+        ));
+    }
+
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -76,5 +92,14 @@ class DownloadController {
     }
 
     record SearchResponse(List<DownloadCandidate> items) {
+    }
+
+    record PlaylistPreviewRequest(@NotBlank @Size(max = 2048) String url) {
+    }
+
+    record PlaylistQueueRequest(
+        @NotBlank @Size(max = 80) String name,
+        @NotNull @Size(min = 1, max = 500) List<@Valid DownloadCandidate> items
+    ) {
     }
 }

@@ -24,6 +24,10 @@ class DownloadTaskRepository {
     }
 
     DownloadTask create(DownloadCandidate candidate, String requestedBy) {
+        return create(candidate, requestedBy, null);
+    }
+
+    DownloadTask create(DownloadCandidate candidate, String requestedBy, String targetPlaylistId) {
         var now = clock.millis();
         var task = new DownloadTask(
             UUID.randomUUID().toString(),
@@ -35,6 +39,7 @@ class DownloadTaskRepository {
             text(candidate.album()),
             text(candidate.quality()),
             blankToNull(candidate.artworkUrl()),
+            targetPlaylistId,
             requestedBy,
             DownloadTaskState.QUEUED,
             List.of(),
@@ -45,10 +50,10 @@ class DownloadTaskRepository {
         jdbcClient.sql("""
                 INSERT INTO download_tasks (
                     id, candidate_id, source, source_name, title, artist, album, quality,
-                    artwork_url, requested_by, state, files_json, message, created_at, updated_at
+                    artwork_url, target_playlist_id, requested_by, state, files_json, message, created_at, updated_at
                 ) VALUES (
                     :id, :candidateId, :source, :sourceName, :title, :artist, :album, :quality,
-                    :artworkUrl, :requestedBy, :state, :files, :message, :createdAt, :updatedAt
+                    :artworkUrl, :targetPlaylistId, :requestedBy, :state, :files, :message, :createdAt, :updatedAt
                 )
                 """)
             .param("id", task.id())
@@ -60,6 +65,7 @@ class DownloadTaskRepository {
             .param("album", task.album())
             .param("quality", task.quality())
             .param("artworkUrl", task.artworkUrl())
+            .param("targetPlaylistId", task.targetPlaylistId())
             .param("requestedBy", task.requestedBy())
             .param("state", task.state().name())
             .param("files", writeFiles(task.files()))
@@ -121,6 +127,7 @@ class DownloadTaskRepository {
             resultSet.getString("album"),
             resultSet.getString("quality"),
             resultSet.getString("artwork_url"),
+            resultSet.getString("target_playlist_id"),
             resultSet.getString("requested_by"),
             DownloadTaskState.valueOf(resultSet.getString("state")),
             readFiles(resultSet.getString("files_json")),

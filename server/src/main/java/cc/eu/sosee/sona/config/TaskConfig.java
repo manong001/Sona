@@ -25,7 +25,7 @@ class TaskConfig {
         executor.setThreadNamePrefix("sona-download-");
         executor.setCorePoolSize(2);
         executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(20);
+        executor.setQueueCapacity(500);
         executor.initialize();
         return executor;
     }

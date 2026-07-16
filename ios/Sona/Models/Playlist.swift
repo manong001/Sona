@@ -98,6 +98,52 @@ struct LocalUploadResult {
     let message: String?
 }
 
+struct AchievementSummary: Decodable {
+    let level: AchievementLevel
+    let stats: AchievementStats
+    let badges: [AchievementBadge]
+    let history: [AchievementHistoryItem]
+}
+
+struct AchievementLevel: Decodable {
+    let id: String
+    let title: String
+    let englishTitle: String
+    let icon: String
+    let minimum: Int
+    let nextTitle: String?
+    let nextThreshold: Int?
+}
+
+struct AchievementStats: Decodable {
+    let total: Int
+    let today: Int
+    let uniqueTracks: Int
+    let bestDaily: Int
+    let longestStreak: Int
+    let nightListens: Int
+    let listenedMs: Int64
+}
+
+struct AchievementBadge: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let icon: String
+    let unlocked: Bool
+}
+
+struct AchievementHistoryItem: Decodable, Identifiable {
+    let trackId: String
+    let title: String
+    let artist: String
+    let listenedMs: Int64
+    let progressPercent: Double
+    let playedAt: Int64
+
+    var id: String { "\(trackId)-\(playedAt)" }
+}
+
 func scanRecordUpdate(
     state: ImportRecordState,
     status: ScanStatus?,

@@ -9,6 +9,8 @@ import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URI;
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -40,18 +42,33 @@ class PersonalController {
 
     private final PersonalRepository repository;
     private final DirectoryImportService directoryImportService;
+    private final AchievementService achievementService;
 
     PersonalController(
         PersonalRepository repository,
-        DirectoryImportService directoryImportService
+        DirectoryImportService directoryImportService,
+        AchievementService achievementService
     ) {
         this.repository = repository;
         this.directoryImportService = directoryImportService;
+        this.achievementService = achievementService;
     }
 
     @GetMapping("/favorites")
     FavoriteResponse favorites(@AuthenticationPrincipal AuthenticatedUser user) {
         return new FavoriteResponse(repository.favoriteTrackIds(user.id()));
+    }
+
+    @GetMapping("/achievements")
+    AchievementService.AchievementSummary achievements(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam(defaultValue = "UTC") String timezone
+    ) {
+        try {
+            return achievementService.summary(user.id(), ZoneId.of(timezone));
+        } catch (DateTimeException exception) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid timezone");
+        }
     }
 
     @GetMapping("/import-records")

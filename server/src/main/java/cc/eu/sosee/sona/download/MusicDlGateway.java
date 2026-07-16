@@ -1,6 +1,8 @@
 package cc.eu.sosee.sona.download;
 
 import cc.eu.sosee.sona.config.SonaProperties;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
 import org.springframework.http.MediaType;
@@ -15,11 +17,13 @@ class MusicDlGateway implements DownloaderGateway {
     private final String token;
     private final RestClient searchClient;
     private final RestClient downloadClient;
+    private final ObjectMapper objectMapper;
 
-    MusicDlGateway(SonaProperties properties) {
+    MusicDlGateway(SonaProperties properties, ObjectMapper objectMapper) {
         var downloader = properties.getDownloader();
         enabled = downloader.isEnabled();
         token = downloader.getToken();
+        this.objectMapper = objectMapper;
         searchClient = client(downloader.getBaseUrl(), Duration.ofMinutes(3));
         downloadClient = client(downloader.getBaseUrl(), Duration.ofHours(2));
     }
@@ -67,15 +71,44 @@ class MusicDlGateway implements DownloaderGateway {
     @Override
     public List<String> download(String candidateId) {
         requireEnabled();
+        var requestBody = requestBody(new DownloadBody(candidateId));
         var response = downloadClient.post()
             .uri("/v1/downloads")
             .header("X-Sona-Token", token)
             .contentType(MediaType.APPLICATION_JSON)
+            .contentLength(requestBody.length)
             .accept(MediaType.APPLICATION_JSON)
-            .body(new DownloadBody(candidateId))
+            .body(requestBody)
             .retrieve()
             .body(DownloadEnvelope.class);
         return response == null || response.files() == null ? List.of() : response.files();
+    }
+
+    @Override
+    public DownloadPlaylistPreview parsePlaylist(String url) {
+        requireEnabled();
+        var requestBody = requestBody(new PlaylistBody(url));
+        var response = searchClient.post()
+            .uri("/v1/playlists/parse")
+            .header("X-Sona-Token", token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .contentLength(requestBody.length)
+            .accept(MediaType.APPLICATION_JSON)
+            .body(requestBody)
+            .retrieve()
+            .body(DownloadPlaylistPreview.class);
+        if (response == null || response.items() == null || response.items().isEmpty()) {
+            throw new IllegalStateException("歌单中没有可下载歌曲");
+        }
+        return response;
+    }
+
+    private byte[] requestBody(Object value) {
+        try {
+            return objectMapper.writeValueAsBytes(value);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("无法创建下载请求", exception);
+        }
     }
 
     private RestClient client(String baseUrl, Duration readTimeout) {
@@ -104,6 +137,9 @@ class MusicDlGateway implements DownloaderGateway {
     }
 
     private record DownloadBody(String candidateId) {
+    }
+
+    private record PlaylistBody(String url) {
     }
 
     private record DownloadEnvelope(List<String> files) {

@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.download;
 
 import cc.eu.sosee.sona.library.ScanCoordinator;
+import cc.eu.sosee.sona.personal.PlaylistDownloadImportService;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
@@ -17,16 +18,19 @@ class DownloadService {
     private final DownloadTaskRepository repository;
     private final ScanCoordinator scanCoordinator;
     private final TaskExecutor taskExecutor;
+    private final PlaylistDownloadImportService playlistImportService;
 
     DownloadService(
         DownloaderGateway gateway,
         DownloadTaskRepository repository,
         ScanCoordinator scanCoordinator,
+        PlaylistDownloadImportService playlistImportService,
         @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
         this.gateway = gateway;
         this.repository = repository;
         this.scanCoordinator = scanCoordinator;
+        this.playlistImportService = playlistImportService;
         this.taskExecutor = taskExecutor;
     }
 
@@ -47,6 +51,26 @@ class DownloadService {
 
     List<DownloadTask> tasks(String requestedBy) {
         return repository.findRecent(requestedBy);
+    }
+
+    DownloadPlaylistPreview parsePlaylist(String url) {
+        requireEnabled();
+        return gateway.parsePlaylist(url.strip());
+    }
+
+    PlaylistQueueResult queuePlaylist(
+        String name, List<DownloadCandidate> candidates, String userId, String username
+    ) {
+        requireEnabled();
+        var target = playlistImportService.create(userId, name);
+        var tasks = candidates.stream()
+            .map(candidate -> {
+                var task = repository.create(candidate, username, target.id());
+                submit(task);
+                return task;
+            })
+            .toList();
+        return new PlaylistQueueResult(target.id(), target.name(), tasks);
     }
 
     DownloadTask queue(DownloadCandidate candidate, String requestedBy) {
@@ -91,8 +115,12 @@ class DownloadService {
             if (files.isEmpty()) {
                 throw new IllegalStateException("下载服务没有返回文件");
             }
+            if (task.targetPlaylistId() == null) {
+                scanCoordinator.trigger();
+            } else {
+                playlistImportService.addDownloadedFiles(task.targetPlaylistId(), files);
+            }
             repository.update(task.id(), DownloadTaskState.COMPLETED, files, null);
-            scanCoordinator.trigger();
         } catch (Exception exception) {
             repository.update(
                 task.id(),
@@ -115,5 +143,8 @@ class DownloadService {
             message = exception.getClass().getSimpleName();
         }
         return message.length() <= 500 ? message : message.substring(0, 500);
+    }
+
+    record PlaylistQueueResult(String playlistId, String playlistName, List<DownloadTask> tasks) {
     }
 }

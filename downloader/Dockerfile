@@ -18,7 +18,7 @@ COPY app.py THIRD_PARTY_NOTICES.md ./
 # compose can run this image with an arbitrary host PUID/PGID.  Keep the
 # sidecar cache writable by that runtime UID rather than only by build-time
 # user 10001.
-RUN mkdir -p /music/Downloads /tmp/sona-downloader \
+RUN mkdir -p /music/download /tmp/sona-downloader \
     && chown -R 10001:10001 /app /music \
     && chmod 1777 /tmp/sona-downloader
 

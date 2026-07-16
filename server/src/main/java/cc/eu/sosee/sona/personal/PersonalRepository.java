@@ -304,6 +304,21 @@ class PersonalRepository {
     }
 
     @Transactional
+    int addPlaylistTracksByPaths(String playlistId, List<Path> paths) {
+        if (paths.isEmpty()) {
+            return 0;
+        }
+        var trackIds = jdbcClient.sql("SELECT id FROM tracks WHERE path IN (:paths)")
+            .param("paths", paths.stream().map(path -> path.toAbsolutePath().normalize().toString()).toList())
+            .query(String.class)
+            .list();
+        for (var trackId : trackIds) {
+            insertPlaylistTrack(playlistId, trackId);
+        }
+        return trackIds.size();
+    }
+
+    @Transactional
     void refreshDirectoryIndex(Path directory) {
         var directoryPath = directory.toAbsolutePath().normalize().toString();
         var trackIds = pathTrackIds(directory);
