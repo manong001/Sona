@@ -45,6 +45,12 @@ public class DirectoryPlaylistService {
             syncTracks(playlist.id(), playlist.poolType(), directory);
         }
 
+        pruneStalePlaylists(directoryPaths.stream().toList());
+    }
+
+    @Transactional
+    public void pruneStalePlaylists(List<String> directoryPaths) {
+        var currentPaths = new HashSet<>(directoryPaths);
         var stalePlaylists = jdbcClient.sql("""
                 SELECT id, directory_path FROM playlists
                 WHERE directory_path IS NOT NULL
@@ -54,7 +60,7 @@ public class DirectoryPlaylistService {
             ))
             .list();
         for (var playlist : stalePlaylists) {
-            if (!directoryPaths.contains(playlist.directoryPath())) {
+            if (!currentPaths.contains(playlist.directoryPath())) {
                 jdbcClient.sql("DELETE FROM playlists WHERE id = :id")
                     .param("id", playlist.id())
                     .update();

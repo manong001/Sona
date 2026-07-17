@@ -18,11 +18,12 @@ class DatabaseConfig {
 
         var sqliteConfig = new SQLiteConfig();
         sqliteConfig.enforceForeignKeys(true);
-        sqliteConfig.setBusyTimeout(5_000);
+        sqliteConfig.setJournalMode(SQLiteConfig.JournalMode.WAL);
+        sqliteConfig.setSynchronous(SQLiteConfig.SynchronousMode.NORMAL);
+        sqliteConfig.setBusyTimeout(30_000);
 
         var dataSource = new SQLiteDataSource(sqliteConfig);
         dataSource.setUrl("jdbc:sqlite:" + dataDirectory.resolve("sona.db"));
         return dataSource;
     }
 }
-

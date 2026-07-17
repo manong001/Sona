@@ -46,7 +46,8 @@ public class ScanCoordinator {
                 var errors = new ArrayList<String>();
                 var result = new ScanResult(0, 0, 0, 0, 0);
                 if (relativeDirectory == null || relativeDirectory.isBlank()) {
-                    for (var directory : directoryPlaylistService.leafDirectoryPaths()) {
+                    var directories = directoryPlaylistService.leafDirectoryPaths();
+                    for (var directory : directories) {
                         try {
                             directoryPlaylistService.sync(directory);
                             result = add(result, libraryScanner.scan(directory));
@@ -63,7 +64,7 @@ public class ScanCoordinator {
                     result = add(result, new ScanResult(
                         0, 0, libraryScanner.removeMissingTracks(), 0, 0
                     ));
-                    directoryPlaylistService.sync();
+                    directoryPlaylistService.pruneStalePlaylists(directories);
                 } else {
                     directoryPlaylistService.sync(relativeDirectory);
                     result = libraryScanner.scan(relativeDirectory);
@@ -92,7 +93,7 @@ public class ScanCoordinator {
             taskExecutor.execute(() -> {
                 try {
                     var scanResult = libraryScanner.scan(relativeDirectory);
-                    directoryPlaylistService.sync();
+                    directoryPlaylistService.sync(relativeDirectory);
                     result.complete(scanResult);
                 } catch (Exception exception) {
                     result.completeExceptionally(exception);
