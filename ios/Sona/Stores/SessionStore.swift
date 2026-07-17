@@ -42,6 +42,7 @@ final class SessionStore: ObservableObject {
         errorMessage = nil
         defer { isSubmitting = false }
         do {
+            RemoteImageCache.shared.removeAll()
             let user = try await api.login(username: username, password: password)
             state = .signedIn(user)
             return true
@@ -54,6 +55,7 @@ final class SessionStore: ObservableObject {
     func logout() async {
         LoginCredentialStore.disableAutoLogin()
         try? await api.logout()
+        RemoteImageCache.shared.removeAll()
         state = .signedOut
     }
 
@@ -72,6 +74,7 @@ final class SessionStore: ObservableObject {
             )
             LoginCredentialStore.disableAutoLogin()
             LoginCredentialStore.delete()
+            RemoteImageCache.shared.removeAll()
             state = .signedOut
             return true
         } catch {
@@ -83,6 +86,7 @@ final class SessionStore: ObservableObject {
     func logoutAll() async {
         LoginCredentialStore.disableAutoLogin()
         try? await api.logoutAll()
+        RemoteImageCache.shared.removeAll()
         state = .signedOut
     }
 

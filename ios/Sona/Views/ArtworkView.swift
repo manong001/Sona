@@ -4,9 +4,10 @@ import UIKit
 struct ArtworkView: View {
     let path: String?
     var cornerRadius: CGFloat = 8
+    var thumbnailSize: Int? = nil
 
     var body: some View {
-        CachedRemoteImage(url: path.map(APIClient.shared.url(for:))) { image in
+        CachedRemoteImage(url: artworkURL) { image in
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.sonaSurface)
@@ -29,5 +30,19 @@ struct ArtworkView: View {
         }
         .aspectRatio(1, contentMode: .fill)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+
+    private var artworkURL: URL? {
+        guard let path else { return nil }
+        let url = APIClient.shared.url(for: path)
+        guard let thumbnailSize,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        var queryItems = components.queryItems ?? []
+        queryItems.removeAll { $0.name == "size" }
+        queryItems.append(URLQueryItem(name: "size", value: String(thumbnailSize)))
+        components.queryItems = queryItems
+        return components.url
     }
 }

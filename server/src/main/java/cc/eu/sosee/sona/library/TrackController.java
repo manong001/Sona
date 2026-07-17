@@ -3,13 +3,20 @@ package cc.eu.sosee.sona.library;
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import cc.eu.sosee.sona.config.SonaProperties;
 import cc.eu.sosee.sona.download.OnlinePlaybackService;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import javax.imageio.ImageIO;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +34,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @RequestMapping("/api/v1/tracks")
 class TrackController {
 
+    private static final CacheControl ARTWORK_CACHE = CacheControl.maxAge(Duration.ofHours(1)).cachePrivate();
     private static final Map<String, MediaType> AUDIO_TYPES = Map.ofEntries(
         Map.entry("mp3", MediaType.parseMediaType("audio/mpeg")),
         Map.entry("m4a", MediaType.parseMediaType("audio/mp4")),
@@ -143,7 +151,9 @@ class TrackController {
 
     @GetMapping("/{id}/artwork")
     ResponseEntity<Resource> artwork(
-        @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @RequestParam(required = false) Integer size
     ) throws IOException {
         var track = findTrack(id, user.id());
         if (track.artworkPath() == null) {
@@ -153,7 +163,16 @@ class TrackController {
         var contentType = artworkPath.getFileName().toString().endsWith(".png")
             ? MediaType.IMAGE_PNG
             : MediaType.IMAGE_JPEG;
+        var thumbnail = thumbnail(artworkPath, contentType, size);
+        if (thumbnail != null) {
+            return ResponseEntity.ok()
+                .cacheControl(ARTWORK_CACHE)
+                .contentType(contentType)
+                .contentLength(thumbnail.length)
+                .body(new ByteArrayResource(thumbnail));
+        }
         return ResponseEntity.ok()
+            .cacheControl(ARTWORK_CACHE)
             .contentType(contentType)
             .contentLength(Files.size(artworkPath))
             .body(new FileSystemResource(artworkPath));
@@ -187,6 +206,35 @@ class TrackController {
         var separator = filename.lastIndexOf('.');
         var extension = separator < 0 ? "" : filename.substring(separator + 1).toLowerCase();
         return AUDIO_TYPES.getOrDefault(extension, MediaType.APPLICATION_OCTET_STREAM);
+    }
+
+    private byte[] thumbnail(Path artworkPath, MediaType contentType, Integer requestedSize) throws IOException {
+        if (requestedSize == null) {
+            return null;
+        }
+        var size = Math.max(64, Math.min(requestedSize, 1_024));
+        var source = ImageIO.read(artworkPath.toFile());
+        if (source == null || source.getWidth() <= size && source.getHeight() <= size) {
+            return null;
+        }
+        var scale = Math.min((double) size / source.getWidth(), (double) size / source.getHeight());
+        var width = Math.max(1, (int) Math.round(source.getWidth() * scale));
+        var height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+        var imageType = contentType.equals(MediaType.IMAGE_PNG)
+            ? BufferedImage.TYPE_INT_ARGB
+            : BufferedImage.TYPE_INT_RGB;
+        var target = new BufferedImage(width, height, imageType);
+        var graphics = target.createGraphics();
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            graphics.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            graphics.dispose();
+        }
+        var output = new ByteArrayOutputStream();
+        ImageIO.write(target, contentType.equals(MediaType.IMAGE_PNG) ? "png" : "jpg", output);
+        return output.toByteArray();
     }
 
     record TrackPageResponse(List<TrackResponse> items, String nextCursor) {

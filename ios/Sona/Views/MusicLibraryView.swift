@@ -208,7 +208,7 @@ struct MusicLibraryView: View {
     @ViewBuilder
     private var libraryRows: some View {
         let visibleCollections = collections
-        VStack(spacing: 3) {
+        LazyVStack(spacing: 3) {
             if selectedFilter == .songs {
                 ForEach(library.tracks) { track in
                     Button {

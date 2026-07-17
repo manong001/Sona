@@ -226,16 +226,21 @@ struct SonaCollectionArtwork: View {
                 TimelineView(.periodic(from: .now, by: 60 * 60)) { context in
                     ArtworkView(
                         path: rotatingArtwork(at: context.date),
-                        cornerRadius: collection.shape == .circle ? size / 2 : 6
+                        cornerRadius: collection.shape == .circle ? size / 2 : 6,
+                        thumbnailSize: requestedThumbnailSize
                     )
                 }
             } else if collection.artworkURLs.count < 2 {
                 ArtworkView(
                     path: collection.artworkURLs.first ?? collection.artworkURL,
-                    cornerRadius: collection.shape == .circle ? size / 2 : 6
+                    cornerRadius: collection.shape == .circle ? size / 2 : 6,
+                    thumbnailSize: requestedThumbnailSize
                 )
             } else {
-                SonaMosaicArtwork(paths: collection.artworkURLs)
+                SonaMosaicArtwork(
+                    paths: collection.artworkURLs,
+                    thumbnailSize: requestedThumbnailSize / 2
+                )
             }
         }
             .frame(width: size, height: size)
@@ -249,10 +254,15 @@ struct SonaCollectionArtwork: View {
         let index = Int((hour &+ offset) % UInt64(collection.artworkURLs.count))
         return collection.artworkURLs[index]
     }
+
+    private var requestedThumbnailSize: Int {
+        size <= 80 ? 256 : 768
+    }
 }
 
 private struct SonaMosaicArtwork: View {
     let paths: [String]
+    let thumbnailSize: Int
 
     var body: some View {
         GeometryReader { proxy in
@@ -264,7 +274,8 @@ private struct SonaMosaicArtwork: View {
                 ForEach(0..<4, id: \.self) { index in
                     ArtworkView(
                         path: index < paths.count ? paths[index] : nil,
-                        cornerRadius: 0
+                        cornerRadius: 0,
+                        thumbnailSize: thumbnailSize
                     )
                     .frame(width: cellSize, height: cellSize)
                 }

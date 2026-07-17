@@ -861,6 +861,10 @@ paths:
       operationId: getArtwork
       parameters:
         - $ref: "#/components/parameters/TrackId"
+        - name: size
+          in: query
+          description: 可选的封面最长边像素，限制为 64–1024
+          schema: {type: integer, minimum: 64, maximum: 1024}
       responses:
         "200":
           description: 封面图片

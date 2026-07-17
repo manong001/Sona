@@ -20,7 +20,7 @@ final class RemoteImageCache: @unchecked Sendable {
         )
         let configuration = URLSessionConfiguration.default
         configuration.urlCache = urlCache
-        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        configuration.requestCachePolicy = .useProtocolCachePolicy
         configuration.httpCookieAcceptPolicy = .always
         configuration.httpCookieStorage = .shared
         loader = RemoteImageLoader(
@@ -55,13 +55,14 @@ final class RemoteImageCache: @unchecked Sendable {
         return bytes
     }
 
+    func removeAll() {
+        images.removeAllObjects()
+        data.removeAllObjects()
+        urlCache.removeAllCachedResponses()
+    }
+
     private func cachedData(for url: URL) -> Data? {
-        if let cached = data.object(forKey: url as NSURL) { return cached as Data }
-        var request = URLRequest(url: url)
-        request.cachePolicy = .returnCacheDataElseLoad
-        guard let cached = urlCache.cachedResponse(for: request) else { return nil }
-        data.setObject(cached.data as NSData, forKey: url as NSURL, cost: cached.data.count)
-        return cached.data
+        data.object(forKey: url as NSURL) as Data?
     }
 }
 
@@ -77,10 +78,7 @@ private actor RemoteImageLoader {
 
     func data(for url: URL) async throws -> Data {
         var request = URLRequest(url: url)
-        request.cachePolicy = .returnCacheDataElseLoad
-        if let cached = urlCache.cachedResponse(for: request) {
-            return cached.data
-        }
+        request.cachePolicy = .useProtocolCachePolicy
         if let task = inFlight[url] {
             return try await task.value
         }
