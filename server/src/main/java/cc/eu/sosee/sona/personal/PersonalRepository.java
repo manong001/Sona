@@ -1,5 +1,7 @@
 package cc.eu.sosee.sona.personal;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -245,6 +247,7 @@ class PersonalRepository {
                 resultSet.getString("id"),
                 resultSet.getString("name"),
                 trackIds(userId, resultSet.getString("id")),
+                playlistArtworkUrls(userId, resultSet.getString("id")),
                 resultSet.getLong("created_at"),
                 resultSet.getBoolean("featured"),
                 resultSet.getString("directory_path"),
@@ -265,7 +268,7 @@ class PersonalRepository {
             .param("name", name)
             .param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), createdAt, false, null, "NORMAL");
+        return new PlaylistData(id, name, List.of(), List.of(), createdAt, false, null, "NORMAL");
     }
 
     PlaylistData createFeaturedPlaylist(String userId, String name) {
@@ -277,7 +280,7 @@ class PersonalRepository {
                 """)
             .param("id", id).param("userId", userId).param("name", name).param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), createdAt, true, null, "NORMAL");
+        return new PlaylistData(id, name, List.of(), List.of(), createdAt, true, null, "NORMAL");
     }
 
     @Transactional
@@ -668,6 +671,54 @@ class PersonalRepository {
             .list();
     }
 
+    private List<String> playlistArtworkUrls(String userId, String playlistId) {
+        var artworks = jdbcClient.sql("""
+                SELECT playlist_tracks.track_id, tracks.artwork_path
+                FROM playlist_tracks
+                JOIN tracks ON tracks.id = playlist_tracks.track_id
+                WHERE playlist_tracks.playlist_id = :playlistId
+                  AND tracks.artwork_path IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId
+                      AND hidden_tracks.track_id = playlist_tracks.track_id
+                  )
+                ORDER BY playlist_tracks.position
+                """)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .query((resultSet, rowNumber) -> new PlaylistArtwork(
+                resultSet.getString("track_id"),
+                Path.of(resultSet.getString("artwork_path"))
+            ))
+            .list();
+        var selected = allArtworkFilesMatch(artworks)
+            ? artworks.stream().limit(1)
+            : artworks.stream().limit(4);
+        return selected
+            .map(artwork -> "/api/v1/tracks/" + artwork.trackId() + "/artwork")
+            .toList();
+    }
+
+    private static boolean allArtworkFilesMatch(List<PlaylistArtwork> artworks) {
+        if (artworks.size() < 2) {
+            return true;
+        }
+        var first = artworks.get(0).path();
+        return artworks.stream().skip(1).allMatch(artwork -> sameFileContent(first, artwork.path()));
+    }
+
+    private static boolean sameFileContent(Path first, Path other) {
+        if (first.equals(other)) {
+            return true;
+        }
+        try {
+            return Files.mismatch(first, other) == -1;
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
     private static FavoriteTrackData favoriteTrack(ResultSet resultSet, int rowNumber)
         throws SQLException {
         var id = resultSet.getString("id");
@@ -701,9 +752,13 @@ class PersonalRepository {
     }
 
     record PlaylistData(
-        String id, String name, List<String> trackIds, long createdAt, boolean featured,
+        String id, String name, List<String> trackIds, List<String> artworkUrls,
+        long createdAt, boolean featured,
         String directoryPath, String poolType
     ) {
+    }
+
+    private record PlaylistArtwork(String trackId, Path path) {
     }
 
     record HistoryData(String trackId, long playedAt) {

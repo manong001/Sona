@@ -4,6 +4,7 @@ struct Playlist: Codable, Identifiable, Equatable {
     let id: String
     let name: String
     let trackIDs: [String]
+    let artworkURLs: [String]
     let createdAt: Int64
     let featured: Bool
     let directoryPath: String?
@@ -12,15 +13,17 @@ struct Playlist: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, createdAt, featured, directoryPath, poolType
         case trackIDs = "trackIds"
+        case artworkURLs = "artworkUrls"
     }
 
     init(
-        id: String, name: String, trackIDs: [String], createdAt: Int64,
+        id: String, name: String, trackIDs: [String], artworkURLs: [String] = [], createdAt: Int64,
         featured: Bool = false, directoryPath: String? = nil, poolType: String = "NORMAL"
     ) {
         self.id = id
         self.name = name
         self.trackIDs = trackIDs
+        self.artworkURLs = artworkURLs
         self.createdAt = createdAt
         self.featured = featured
         self.directoryPath = directoryPath
@@ -32,6 +35,7 @@ struct Playlist: Codable, Identifiable, Equatable {
         id = try values.decode(String.self, forKey: .id)
         name = try values.decode(String.self, forKey: .name)
         trackIDs = try values.decode([String].self, forKey: .trackIDs)
+        artworkURLs = try values.decodeIfPresent([String].self, forKey: .artworkURLs) ?? []
         createdAt = try values.decode(Int64.self, forKey: .createdAt)
         featured = try values.decodeIfPresent(Bool.self, forKey: .featured) ?? false
         directoryPath = try values.decodeIfPresent(String.self, forKey: .directoryPath)

@@ -218,9 +218,9 @@ struct SonaCollectionArtwork: View {
 
     var body: some View {
         Group {
-            if collection.artworkURLs.isEmpty {
+            if collection.artworkURLs.count < 2 {
                 ArtworkView(
-                    path: collection.artworkURL,
+                    path: collection.artworkURLs.first ?? collection.artworkURL,
                     cornerRadius: collection.shape == .circle ? size / 2 : 6
                 )
             } else {
