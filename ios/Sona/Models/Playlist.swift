@@ -82,9 +82,12 @@ struct Playlist: Codable, Identifiable, Equatable {
 
 struct FavoritesResponse: Decodable {
     let trackIDs: [String]
+    let shownOnHome: Bool?
+    let homePosition: Int?
 
     private enum CodingKeys: String, CodingKey {
         case trackIDs = "trackIds"
+        case shownOnHome, homePosition
     }
 }
 

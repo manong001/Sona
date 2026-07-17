@@ -63,7 +63,12 @@ class PersonalController {
 
     @GetMapping("/favorites")
     FavoriteResponse favorites(@AuthenticationPrincipal AuthenticatedUser user) {
-        return new FavoriteResponse(repository.favoriteTrackIds(user.id()));
+        var homeItem = repository.favoriteHomeItem(user.id());
+        return new FavoriteResponse(
+            repository.favoriteTrackIds(user.id()),
+            homeItem.shownOnHome(),
+            homeItem.homePosition()
+        );
     }
 
     @GetMapping("/achievements")
@@ -155,6 +160,18 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @PutMapping("/home-items/liked-songs")
+    ResponseEntity<Void> showFavoritesOnHome(@AuthenticationPrincipal AuthenticatedUser user) {
+        repository.setFavoriteShownOnHome(user.id(), true);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/home-items/liked-songs")
+    ResponseEntity<Void> hideFavoritesFromHome(@AuthenticationPrincipal AuthenticatedUser user) {
+        repository.setFavoriteShownOnHome(user.id(), false);
+        return ResponseEntity.noContent().build();
+    }
+
     @DeleteMapping("/favorites/{trackId}")
     ResponseEntity<Void> removeFavorite(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -227,12 +244,12 @@ class PersonalController {
     }
 
     @PutMapping("/playlists/home-order")
-    ResponseEntity<Void> reorderHomePlaylists(
+    ResponseEntity<Void> reorderHomeItems(
         @AuthenticationPrincipal AuthenticatedUser user,
-        @Valid @RequestBody PlaylistIdsRequest request
+        @Valid @RequestBody HomeItemIdsRequest request
     ) {
-        if (!repository.reorderHomePlaylists(user.id(), request.playlistIds())) {
-            throw new ResponseStatusException(BAD_REQUEST, "Invalid home playlist order");
+        if (!repository.reorderHomeItems(user.id(), request.itemIds())) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid home item order");
         }
         return ResponseEntity.noContent().build();
     }
@@ -425,7 +442,9 @@ class PersonalController {
         }
     }
 
-    record FavoriteResponse(List<String> trackIds) {
+    record FavoriteResponse(
+        List<String> trackIds, boolean shownOnHome, Integer homePosition
+    ) {
     }
 
     record FavoriteTrackPageResponse(
@@ -469,8 +488,8 @@ class PersonalController {
     ) {
     }
 
-    record PlaylistIdsRequest(
-        @NotNull @Size(max = 500) List<@NotBlank String> playlistIds
+    record HomeItemIdsRequest(
+        @NotNull @Size(max = 500) List<@NotBlank String> itemIds
     ) {
     }
 

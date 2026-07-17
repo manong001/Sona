@@ -119,10 +119,26 @@ class SchemaMigration implements ApplicationRunner {
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_directory ON playlists(directory_path)"
             ).update();
         }
-        if (tableExists("home_playlists") && !columns("home_playlists").contains("position")) {
-            jdbcClient.sql(
-                "ALTER TABLE home_playlists ADD COLUMN position INTEGER NOT NULL DEFAULT 0"
-            ).update();
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS home_items (
+                    user_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, item_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """).update();
+        if (tableExists("home_playlists")) {
+            if (!columns("home_playlists").contains("position")) {
+                jdbcClient.sql(
+                    "ALTER TABLE home_playlists ADD COLUMN position INTEGER NOT NULL DEFAULT 0"
+                ).update();
+            }
+            jdbcClient.sql("""
+                    INSERT OR IGNORE INTO home_items(user_id, item_id, position, created_at)
+                    SELECT user_id, playlist_id, position, created_at FROM home_playlists
+                    """).update();
         }
     }
 

@@ -95,6 +95,29 @@ struct HomeView: View {
         }
     }
 
+    private var orderedHomePlaylistCollections: [SonaCollection] {
+        var values: [(position: Int, id: String, collection: SonaCollection)] = []
+        if personal.favoritesShownOnHome {
+            values.append((
+                personal.favoritesHomePosition ?? Int.max,
+                likedSongsCollection.id,
+                likedSongsCollection
+            ))
+        }
+        let collectionsByID = Dictionary(
+            uniqueKeysWithValues: playlistCollections.map { ($0.id, $0) }
+        )
+        for playlist in personal.playlists where playlist.shownOnHome {
+            let id = "playlist-\(playlist.id)"
+            if let collection = collectionsByID[id] {
+                values.append((playlist.homePosition ?? Int.max, id, collection))
+            }
+        }
+        return values.sorted {
+            ($0.position, $0.id) < ($1.position, $1.id)
+        }.map(\.collection)
+    }
+
     private var favoriteCollections: [SonaCollection] {
         let collections = favoriteTracks.prefix(12).map { track in
             SonaCollection(
@@ -243,10 +266,7 @@ struct HomeView: View {
 
     private var shortcuts: [SonaCollection] {
         var values: [SonaCollection] = []
-        if !favoriteTracks.isEmpty {
-            values.append(likedSongsCollection)
-        }
-        values.append(contentsOf: playlistCollections.prefix(3))
+        values.append(contentsOf: orderedHomePlaylistCollections.prefix(3))
         values.append(contentsOf: recentCollections.prefix(max(0, 8 - values.count)))
         return Array(values.prefix(8))
     }
@@ -323,11 +343,13 @@ struct HomeView: View {
         }
 
         if selectedFilter != "音乐" {
-            mediaSection(
-                title: "收藏的歌曲",
-                collections: favoriteCollections,
-                titleDestination: likedSongsCollection
-            )
+            if personal.favoritesShownOnHome {
+                mediaSection(
+                    title: "收藏的歌曲",
+                    collections: favoriteCollections,
+                    titleDestination: likedSongsCollection
+                )
+            }
             mediaSection(title: "歌单", collections: playlistCollections)
             onlinePlaylistPlaceholder
         }

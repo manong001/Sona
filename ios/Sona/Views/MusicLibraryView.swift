@@ -986,12 +986,6 @@ private struct HomePlaylistSelectionView: View {
     @State private var editMode: EditMode = .active
     @State private var errorMessage: String?
 
-    private var selectedPlaylists: [Playlist] {
-        orderedSelectedIDs.compactMap { id in
-            personal.playlists.first { $0.id == id && $0.shownOnHome }
-        }
-    }
-
     private var unselectedPlaylists: [Playlist] {
         personal.playlists.filter { !$0.shownOnHome }
     }
@@ -999,15 +993,18 @@ private struct HomePlaylistSelectionView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !selectedPlaylists.isEmpty {
+                if !orderedSelectedIDs.isEmpty {
                     Section("已选择 · 拖动排序") {
-                        ForEach(selectedPlaylists) { playlist in
-                            playlistRow(playlist)
+                        ForEach(orderedSelectedIDs, id: \.self) { id in
+                            homeItemRow(id)
                         }
                         .onMove(perform: moveSelectedPlaylists)
                     }
                 }
                 Section {
+                    if !personal.favoritesShownOnHome {
+                        likedSongsRow
+                    }
                     ForEach(unselectedPlaylists) { playlist in
                         playlistRow(playlist)
                     }
@@ -1017,6 +1014,11 @@ private struct HomePlaylistSelectionView: View {
             }
             .environment(\.editMode, $editMode)
             .onAppear(perform: syncSelectedOrder)
+            .task {
+                if personal.playlists.isEmpty {
+                    await personal.refreshPlaylists()
+                }
+            }
             .scrollContentBackground(.hidden)
             .background(Color.sonaBackground)
             .navigationTitle("首页展示")
@@ -1036,6 +1038,46 @@ private struct HomePlaylistSelectionView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    @ViewBuilder
+    private func homeItemRow(_ id: String) -> some View {
+        if id == "liked-songs" {
+            likedSongsRow
+        } else if let playlist = personal.playlists.first(where: { $0.id == id }) {
+            playlistRow(playlist)
+        }
+    }
+
+    private var likedSongsRow: some View {
+        Button {
+            toggleLikedSongs()
+        } label: {
+            HStack(spacing: 12) {
+                SonaLikedCover()
+                    .frame(width: 48, height: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("收藏的歌曲")
+                        .foregroundStyle(.primary)
+                    Text("\(personal.favoriteIDs.count) 首歌曲")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if updatingIDs.contains("liked-songs") {
+                    ProgressView()
+                } else {
+                    Image(systemName: personal.favoritesShownOnHome
+                        ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(personal.favoritesShownOnHome
+                            ? Color.sonaGreen : .secondary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(updatingIDs.contains("liked-songs"))
     }
 
     private func playlistRow(_ playlist: Playlist) -> some View {
@@ -1087,11 +1129,26 @@ private struct HomePlaylistSelectionView: View {
         }
     }
 
+    private func toggleLikedSongs() {
+        updatingIDs.insert("liked-songs")
+        Task {
+            let succeeded = await personal.setFavoritesShownOnHome(
+                !personal.favoritesShownOnHome
+            )
+            updatingIDs.remove("liked-songs")
+            if succeeded {
+                syncSelectedOrder()
+            } else {
+                errorMessage = personal.errorMessage ?? "请稍后重试"
+            }
+        }
+    }
+
     private func moveSelectedPlaylists(from offsets: IndexSet, to destination: Int) {
         orderedSelectedIDs.move(fromOffsets: offsets, toOffset: destination)
         let ids = orderedSelectedIDs
         Task {
-            if !(await personal.reorderHomePlaylists(ids: ids)) {
+            if !(await personal.reorderHomeItems(ids: ids)) {
                 syncSelectedOrder()
                 errorMessage = personal.errorMessage ?? "排序保存失败"
             }
@@ -1099,8 +1156,14 @@ private struct HomePlaylistSelectionView: View {
     }
 
     private func syncSelectedOrder() {
-        orderedSelectedIDs = personal.playlists.filter(\.shownOnHome).sorted {
-            ($0.homePosition ?? Int.max) < ($1.homePosition ?? Int.max)
+        var items = personal.playlists.filter(\.shownOnHome).map {
+            (id: $0.id, position: $0.homePosition)
+        }
+        if personal.favoritesShownOnHome {
+            items.append((id: "liked-songs", position: personal.favoritesHomePosition))
+        }
+        orderedSelectedIDs = items.sorted {
+            ($0.position ?? Int.max, $0.id) < ($1.position ?? Int.max, $1.id)
         }.map(\.id)
     }
 }

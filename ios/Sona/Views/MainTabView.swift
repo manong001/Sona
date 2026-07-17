@@ -135,6 +135,7 @@ struct MainTabView: View {
         }
         .task {
             guard let userID = session.currentUser?.id else { return }
+            personal.configure(userID: userID)
             player.configureFavoriteCommand(
                 isFavorite: { personal.favoriteIDs.contains($0) },
                 updateFavorite: { trackID, isFavorite in

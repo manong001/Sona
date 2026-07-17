@@ -220,17 +220,30 @@ final class LibraryStore: ObservableObject {
 final class PersonalStore: ObservableObject {
     @Published private(set) var favoriteIDs: Set<String> = []
     @Published private(set) var favoriteTracks: [Track] = []
+    @Published private(set) var favoritesShownOnHome = false
+    @Published private(set) var favoritesHomePosition: Int?
     @Published private(set) var isLoadingMoreFavorites = false
     @Published private(set) var playlists: [Playlist] = []
+    @Published private(set) var isLoadingPlaylists = false
+    @Published private(set) var playlistErrorMessage: String?
     @Published private(set) var history: [HistoryItem] = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
     private let api: APIClient
     private var favoriteNextCursor: String?
+    private var currentUserID: String?
+    private var serverSupportsHomeItems: Bool?
 
     init(api: APIClient = .shared) {
         self.api = api
+    }
+
+    func configure(userID: String) {
+        guard currentUserID != userID else { return }
+        currentUserID = userID
+        serverSupportsHomeItems = nil
+        applyLocalHomeItems()
     }
 
     func refresh() async {
@@ -238,15 +251,50 @@ final class PersonalStore: ObservableObject {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        var firstError: String?
         do {
-            favoriteIDs = Set(try await api.favorites().trackIDs)
+            let favorites = try await api.favorites()
+            favoriteIDs = Set(favorites.trackIDs)
+            if let shownOnHome = favorites.shownOnHome {
+                serverSupportsHomeItems = true
+                favoritesShownOnHome = shownOnHome
+                favoritesHomePosition = favorites.homePosition
+            } else {
+                serverSupportsHomeItems = false
+                applyLocalHomeItems()
+            }
+        } catch {
+            firstError = error.localizedDescription
+        }
+        do {
             let favoritePage = try await api.favoriteTracks(cursor: nil)
             favoriteTracks = favoritePage.items
             favoriteNextCursor = favoritePage.nextCursor
-            playlists = try await api.playlists()
+        } catch {
+            firstError = firstError ?? error.localizedDescription
+        }
+        await refreshPlaylists()
+        firstError = firstError ?? playlistErrorMessage
+        do {
             history = try await api.history().items
         } catch {
-            errorMessage = error.localizedDescription
+            firstError = firstError ?? error.localizedDescription
+        }
+        errorMessage = firstError
+    }
+
+    func refreshPlaylists() async {
+        guard !isLoadingPlaylists else { return }
+        isLoadingPlaylists = true
+        playlistErrorMessage = nil
+        defer { isLoadingPlaylists = false }
+        do {
+            playlists = try await api.playlists()
+            if serverSupportsHomeItems == false {
+                applyLocalHomeItems()
+            }
+        } catch {
+            playlistErrorMessage = error.localizedDescription
         }
     }
 
@@ -336,45 +384,152 @@ final class PersonalStore: ObservableObject {
 
     @discardableResult
     func setPlaylistShownOnHome(id: String, shown: Bool) async -> Bool {
+        if serverSupportsHomeItems == false {
+            updatePlaylistShownLocally(id: id, shown: shown)
+            return true
+        }
         do {
             try await api.setPlaylistShownOnHome(id: id, shown: shown)
             guard let index = playlists.firstIndex(where: { $0.id == id }) else { return false }
             playlists[index] = playlists[index].withShownOnHome(shown)
-            normalizeHomePlaylistPositions()
+            normalizeHomeItemPositions()
             return true
         } catch {
+            if isMissingHomeEndpoint(error) {
+                serverSupportsHomeItems = false
+                updatePlaylistShownLocally(id: id, shown: shown)
+                return true
+            }
             errorMessage = error.localizedDescription
             return false
         }
     }
 
     @discardableResult
-    func reorderHomePlaylists(ids: [String]) async -> Bool {
+    func setFavoritesShownOnHome(_ shown: Bool) async -> Bool {
+        if serverSupportsHomeItems == false {
+            favoritesShownOnHome = shown
+            favoritesHomePosition = shown ? -1 : nil
+            normalizeHomeItemPositions()
+            persistLocalHomeItems()
+            return true
+        }
         do {
-            try await api.reorderHomePlaylists(ids: ids)
-            let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
-            playlists = playlists.map { playlist in
-                guard let position = positions[playlist.id] else { return playlist }
-                return playlist.withHomePosition(position)
-            }
+            try await api.setFavoritesShownOnHome(shown)
+            favoritesShownOnHome = shown
+            favoritesHomePosition = shown ? -1 : nil
+            normalizeHomeItemPositions()
             return true
         } catch {
+            if isMissingHomeEndpoint(error) {
+                serverSupportsHomeItems = false
+                favoritesShownOnHome = shown
+                favoritesHomePosition = shown ? -1 : nil
+                normalizeHomeItemPositions()
+                persistLocalHomeItems()
+                return true
+            }
             errorMessage = error.localizedDescription
             return false
         }
     }
 
-    private func normalizeHomePlaylistPositions() {
-        let selected = playlists.filter(\.shownOnHome).sorted {
-            ($0.homePosition ?? Int.max) < ($1.homePosition ?? Int.max)
+    @discardableResult
+    func reorderHomeItems(ids: [String]) async -> Bool {
+        if serverSupportsHomeItems == false {
+            applyHomeItemOrder(ids)
+            persistLocalHomeItems()
+            return true
+        }
+        do {
+            try await api.reorderHomeItems(ids: ids)
+            applyHomeItemOrder(ids)
+            return true
+        } catch {
+            if isMissingHomeEndpoint(error) {
+                serverSupportsHomeItems = false
+                applyHomeItemOrder(ids)
+                persistLocalHomeItems()
+                return true
+            }
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func normalizeHomeItemPositions() {
+        var selected: [(id: String, position: Int?)] = playlists.filter(\.shownOnHome).map {
+            ($0.id, $0.homePosition)
+        }
+        if favoritesShownOnHome {
+            selected.append(("liked-songs", favoritesHomePosition))
+        }
+        selected.sort {
+            ($0.position ?? Int.max, $0.id) < ($1.position ?? Int.max, $1.id)
         }
         let positions = Dictionary(
             uniqueKeysWithValues: selected.enumerated().map { ($1.id, $0) }
         )
+        favoritesHomePosition = positions["liked-songs"]
         playlists = playlists.map { playlist in
             guard let position = positions[playlist.id] else { return playlist }
             return playlist.withHomePosition(position)
         }
+    }
+
+    private func updatePlaylistShownLocally(id: String, shown: Bool) {
+        guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
+        playlists[index] = playlists[index].withShownOnHome(shown)
+        normalizeHomeItemPositions()
+        persistLocalHomeItems()
+    }
+
+    private func applyHomeItemOrder(_ ids: [String]) {
+        let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
+        favoritesHomePosition = positions["liked-songs"]
+        playlists = playlists.map { playlist in
+            guard let position = positions[playlist.id] else { return playlist }
+            return playlist.withHomePosition(position)
+        }
+    }
+
+    private func applyLocalHomeItems() {
+        guard let key = localHomeItemsKey else { return }
+        let ids = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
+        favoritesShownOnHome = positions["liked-songs"] != nil
+        favoritesHomePosition = positions["liked-songs"]
+        playlists = playlists.map { playlist in
+            guard let position = positions[playlist.id] else {
+                return playlist.withShownOnHome(false)
+            }
+            return playlist.withShownOnHome(true).withHomePosition(position)
+        }
+    }
+
+    private func persistLocalHomeItems() {
+        guard let key = localHomeItemsKey else { return }
+        var items = playlists.filter(\.shownOnHome).map {
+            (id: $0.id, position: $0.homePosition)
+        }
+        if favoritesShownOnHome {
+            items.append((id: "liked-songs", position: favoritesHomePosition))
+        }
+        let ids = items.sorted {
+            ($0.position ?? Int.max, $0.id) < ($1.position ?? Int.max, $1.id)
+        }.map(\.id)
+        UserDefaults.standard.set(ids, forKey: key)
+    }
+
+    private var localHomeItemsKey: String? {
+        guard let currentUserID else { return nil }
+        return "homeItems.\(api.serverURL.absoluteString).\(currentUserID)"
+    }
+
+    private func isMissingHomeEndpoint(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError,
+              case let .server(status, _) = apiError else { return false }
+        return status == 404
     }
 
     func updateDirectoryPlaylist(id: String, name: String, poolType: String) async {

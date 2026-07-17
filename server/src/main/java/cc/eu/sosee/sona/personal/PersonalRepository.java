@@ -239,14 +239,14 @@ class PersonalRepository {
         return jdbcClient.sql("""
                 SELECT id, name, featured, directory_path, pool_type, artwork_track_id, created_at,
                        EXISTS (
-                           SELECT 1 FROM home_playlists
-                           WHERE home_playlists.user_id = :userId
-                             AND home_playlists.playlist_id = playlists.id
+                           SELECT 1 FROM home_items
+                           WHERE home_items.user_id = :userId
+                             AND home_items.item_id = playlists.id
                        ) AS shown_on_home,
                        (
-                           SELECT position FROM home_playlists
-                           WHERE home_playlists.user_id = :userId
-                             AND home_playlists.playlist_id = playlists.id
+                           SELECT position FROM home_items
+                           WHERE home_items.user_id = :userId
+                             AND home_items.item_id = playlists.id
                        ) AS home_position
                 FROM playlists
                 WHERE user_id = :userId OR featured = 1
@@ -284,60 +284,101 @@ class PersonalRepository {
         if (!visible) {
             return false;
         }
+        setHomeItemShown(userId, playlistId, shown);
+        return true;
+    }
+
+    HomeItemData favoriteHomeItem(String userId) {
+        return homeItem(userId, "liked-songs");
+    }
+
+    @Transactional
+    void setFavoriteShownOnHome(String userId, boolean shown) {
+        var wasShown = favoriteHomeItem(userId).shownOnHome();
+        setHomeItemShown(userId, "liked-songs", shown);
+        if (shown && !wasShown) {
+            jdbcClient.sql("""
+                    UPDATE home_items SET position = position + 1
+                    WHERE user_id = :userId AND item_id <> 'liked-songs'
+                    """)
+                .param("userId", userId)
+                .update();
+            jdbcClient.sql("""
+                    UPDATE home_items SET position = 0
+                    WHERE user_id = :userId AND item_id = 'liked-songs'
+                    """)
+                .param("userId", userId)
+                .update();
+        }
+    }
+
+    private void setHomeItemShown(String userId, String itemId, boolean shown) {
         if (shown) {
             jdbcClient.sql("""
-                    INSERT OR IGNORE INTO home_playlists(
-                        user_id, playlist_id, position, created_at
+                    INSERT OR IGNORE INTO home_items(
+                        user_id, item_id, position, created_at
                     ) VALUES (
-                        :userId, :playlistId,
+                        :userId, :itemId,
                         COALESCE((
-                            SELECT MAX(position) + 1 FROM home_playlists WHERE user_id = :userId
+                            SELECT MAX(position) + 1 FROM home_items WHERE user_id = :userId
                         ), 0),
                         :createdAt
                     )
                     """)
                 .param("userId", userId)
-                .param("playlistId", playlistId)
+                .param("itemId", itemId)
                 .param("createdAt", clock.millis())
                 .update();
         } else {
             jdbcClient.sql("""
-                    DELETE FROM home_playlists
-                    WHERE user_id = :userId AND playlist_id = :playlistId
+                    DELETE FROM home_items
+                    WHERE user_id = :userId AND item_id = :itemId
                     """)
                 .param("userId", userId)
-                .param("playlistId", playlistId)
+                .param("itemId", itemId)
                 .update();
         }
-        return true;
     }
 
     @Transactional
-    boolean reorderHomePlaylists(String userId, List<String> playlistIds) {
-        if (playlistIds.size() != new LinkedHashSet<>(playlistIds).size()) {
+    boolean reorderHomeItems(String userId, List<String> itemIds) {
+        if (itemIds.size() != new LinkedHashSet<>(itemIds).size()) {
             return false;
         }
         var currentIds = jdbcClient.sql("""
-                SELECT playlist_id FROM home_playlists
+                SELECT item_id FROM home_items
                 WHERE user_id = :userId
                 """)
             .param("userId", userId)
             .query(String.class)
             .list();
-        if (currentIds.size() != playlistIds.size() || !currentIds.containsAll(playlistIds)) {
+        if (currentIds.size() != itemIds.size() || !currentIds.containsAll(itemIds)) {
             return false;
         }
-        for (var position = 0; position < playlistIds.size(); position++) {
+        for (var position = 0; position < itemIds.size(); position++) {
             jdbcClient.sql("""
-                    UPDATE home_playlists SET position = :position
-                    WHERE user_id = :userId AND playlist_id = :playlistId
+                    UPDATE home_items SET position = :position
+                    WHERE user_id = :userId AND item_id = :itemId
                     """)
                 .param("position", position)
                 .param("userId", userId)
-                .param("playlistId", playlistIds.get(position))
+                .param("itemId", itemIds.get(position))
                 .update();
         }
         return true;
+    }
+
+    private HomeItemData homeItem(String userId, String itemId) {
+        return jdbcClient.sql("""
+                SELECT position FROM home_items
+                WHERE user_id = :userId AND item_id = :itemId
+                """)
+            .param("userId", userId)
+            .param("itemId", itemId)
+            .query(Integer.class)
+            .optional()
+            .map(position -> new HomeItemData(true, position))
+            .orElseGet(() -> new HomeItemData(false, null));
     }
 
     Optional<PlaylistScanData> playlistForScan(String userId, String playlistId) {
@@ -563,14 +604,21 @@ class PersonalRepository {
             .update();
     }
 
+    @Transactional
     boolean deletePlaylist(String userId, String playlistId) {
-        return jdbcClient.sql("""
+        var deleted = jdbcClient.sql("""
                 DELETE FROM playlists
                 WHERE id = :playlistId AND user_id = :userId AND directory_path IS NULL
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
             .update() == 1;
+        if (deleted) {
+            jdbcClient.sql("DELETE FROM home_items WHERE item_id = :playlistId")
+                .param("playlistId", playlistId)
+                .update();
+        }
+        return deleted;
     }
 
     List<HistoryData> history(String userId) {
@@ -895,6 +943,9 @@ class PersonalRepository {
     }
 
     record PlaylistScanData(String name, List<String> trackIds) {
+    }
+
+    record HomeItemData(boolean shownOnHome, Integer homePosition) {
     }
 
     private record PlaylistArtwork(String trackId, Path path) {

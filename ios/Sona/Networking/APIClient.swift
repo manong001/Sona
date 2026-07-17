@@ -173,6 +173,13 @@ final class APIClient {
         )
     }
 
+    func setFavoritesShownOnHome(_ shown: Bool) async throws {
+        try await requestVoid(
+            path: "/api/v1/me/home-items/liked-songs",
+            method: shown ? "PUT" : "DELETE"
+        )
+    }
+
     func removeFavorites(trackIDs: [String]) async throws {
         struct Body: Encodable { let trackIds: [String] }
         try await requestVoid(
@@ -215,12 +222,12 @@ final class APIClient {
         )
     }
 
-    func reorderHomePlaylists(ids: [String]) async throws {
-        struct Body: Encodable { let playlistIds: [String] }
+    func reorderHomeItems(ids: [String]) async throws {
+        struct Body: Encodable { let itemIds: [String] }
         try await requestVoid(
             path: "/api/v1/me/playlists/home-order",
             method: "PUT",
-            body: try encoder.encode(Body(playlistIds: ids))
+            body: try encoder.encode(Body(itemIds: ids))
         )
     }
 
