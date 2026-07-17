@@ -690,7 +690,6 @@ class PersonalRepository {
                 JOIN tracks ON tracks.id = playlist_tracks.track_id
                 WHERE playlist_tracks.playlist_id = :playlistId
                   AND tracks.artwork_path IS NOT NULL
-                  AND tracks.artwork_source = 'SCRAPED'
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId
