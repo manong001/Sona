@@ -237,7 +237,17 @@ class PersonalRepository {
 
     List<PlaylistData> playlists(String userId) {
         return jdbcClient.sql("""
-                SELECT id, name, featured, directory_path, pool_type, artwork_track_id, created_at
+                SELECT id, name, featured, directory_path, pool_type, artwork_track_id, created_at,
+                       EXISTS (
+                           SELECT 1 FROM home_playlists
+                           WHERE home_playlists.user_id = :userId
+                             AND home_playlists.playlist_id = playlists.id
+                       ) AS shown_on_home,
+                       (
+                           SELECT position FROM home_playlists
+                           WHERE home_playlists.user_id = :userId
+                             AND home_playlists.playlist_id = playlists.id
+                       ) AS home_position
                 FROM playlists
                 WHERE user_id = :userId OR featured = 1
                 ORDER BY created_at
@@ -254,9 +264,80 @@ class PersonalRepository {
                 resultSet.getLong("created_at"),
                 resultSet.getBoolean("featured"),
                 resultSet.getString("directory_path"),
-                resultSet.getString("pool_type")
+                resultSet.getString("pool_type"),
+                resultSet.getBoolean("shown_on_home"),
+                integer(resultSet, "home_position")
             ))
             .list();
+    }
+
+    @Transactional
+    boolean setPlaylistShownOnHome(String userId, String playlistId, boolean shown) {
+        var visible = jdbcClient.sql("""
+                SELECT COUNT(*) FROM playlists
+                WHERE id = :playlistId AND (user_id = :userId OR featured = 1)
+                """)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .query(Integer.class)
+            .single() == 1;
+        if (!visible) {
+            return false;
+        }
+        if (shown) {
+            jdbcClient.sql("""
+                    INSERT OR IGNORE INTO home_playlists(
+                        user_id, playlist_id, position, created_at
+                    ) VALUES (
+                        :userId, :playlistId,
+                        COALESCE((
+                            SELECT MAX(position) + 1 FROM home_playlists WHERE user_id = :userId
+                        ), 0),
+                        :createdAt
+                    )
+                    """)
+                .param("userId", userId)
+                .param("playlistId", playlistId)
+                .param("createdAt", clock.millis())
+                .update();
+        } else {
+            jdbcClient.sql("""
+                    DELETE FROM home_playlists
+                    WHERE user_id = :userId AND playlist_id = :playlistId
+                    """)
+                .param("userId", userId)
+                .param("playlistId", playlistId)
+                .update();
+        }
+        return true;
+    }
+
+    @Transactional
+    boolean reorderHomePlaylists(String userId, List<String> playlistIds) {
+        if (playlistIds.size() != new LinkedHashSet<>(playlistIds).size()) {
+            return false;
+        }
+        var currentIds = jdbcClient.sql("""
+                SELECT playlist_id FROM home_playlists
+                WHERE user_id = :userId
+                """)
+            .param("userId", userId)
+            .query(String.class)
+            .list();
+        if (currentIds.size() != playlistIds.size() || !currentIds.containsAll(playlistIds)) {
+            return false;
+        }
+        for (var position = 0; position < playlistIds.size(); position++) {
+            jdbcClient.sql("""
+                    UPDATE home_playlists SET position = :position
+                    WHERE user_id = :userId AND playlist_id = :playlistId
+                    """)
+                .param("position", position)
+                .param("userId", userId)
+                .param("playlistId", playlistIds.get(position))
+                .update();
+        }
+        return true;
     }
 
     Optional<PlaylistScanData> playlistForScan(String userId, String playlistId) {
@@ -284,7 +365,7 @@ class PersonalRepository {
             .param("createdAt", createdAt)
             .update();
         return new PlaylistData(
-            id, name, List.of(), List.of(), null, createdAt, false, null, "NORMAL"
+            id, name, List.of(), List.of(), null, createdAt, false, null, "NORMAL", false, null
         );
     }
 
@@ -298,7 +379,7 @@ class PersonalRepository {
             .param("id", id).param("userId", userId).param("name", name).param("createdAt", createdAt)
             .update();
         return new PlaylistData(
-            id, name, List.of(), List.of(), null, createdAt, true, null, "NORMAL"
+            id, name, List.of(), List.of(), null, createdAt, true, null, "NORMAL", false, null
         );
     }
 
@@ -809,7 +890,7 @@ class PersonalRepository {
     record PlaylistData(
         String id, String name, List<String> trackIds, List<String> artworkUrls,
         String artworkTrackId, long createdAt, boolean featured,
-        String directoryPath, String poolType
+        String directoryPath, String poolType, boolean shownOnHome, Integer homePosition
     ) {
     }
 

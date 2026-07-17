@@ -119,6 +119,11 @@ class SchemaMigration implements ApplicationRunner {
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_directory ON playlists(directory_path)"
             ).update();
         }
+        if (tableExists("home_playlists") && !columns("home_playlists").contains("position")) {
+            jdbcClient.sql(
+                "ALTER TABLE home_playlists ADD COLUMN position INTEGER NOT NULL DEFAULT 0"
+            ).update();
+        }
     }
 
     private boolean tableExists(String table) {

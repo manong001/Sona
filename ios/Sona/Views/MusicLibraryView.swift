@@ -17,6 +17,7 @@ struct MusicLibraryView: View {
     @State private var showsSearch = false
     @State private var query = ""
     @State private var showsCreatePlaylist = false
+    @State private var showsHomePlaylistPicker = false
     @State private var playlistName = ""
     @State private var selectedSort = "TITLE"
     @State private var selectedGenre: String?
@@ -114,6 +115,10 @@ struct MusicLibraryView: View {
                 library.applyTrackUpdate(updated)
                 personal.applyTrackUpdate(updated)
             }
+        }
+        .sheet(isPresented: $showsHomePlaylistPicker) {
+            HomePlaylistSelectionView()
+                .environmentObject(personal)
         }
         .confirmationDialog(
             "覆盖信息刮削",
@@ -241,6 +246,14 @@ struct MusicLibraryView: View {
                     .font(.subheadline.weight(.medium))
             }
             Spacer()
+            if selectedFilter == .playlists {
+                Button {
+                    showsHomePlaylistPicker = true
+                } label: {
+                    Label("首页展示", systemImage: "house")
+                        .font(.subheadline.weight(.medium))
+                }
+            }
             Menu {
                 filterButton("全部格式", codec: nil, metadata: selectedMetadata)
                 ForEach(["MP3", "FLAC", "ALAC", "AAC", "WAV"], id: \.self) { codec in
@@ -962,6 +975,133 @@ struct ServerDirectoryPicker: View {
                 select(directory)
             }
         }
+    }
+}
+
+private struct HomePlaylistSelectionView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var personal: PersonalStore
+    @State private var updatingIDs: Set<String> = []
+    @State private var orderedSelectedIDs: [String] = []
+    @State private var editMode: EditMode = .active
+    @State private var errorMessage: String?
+
+    private var selectedPlaylists: [Playlist] {
+        orderedSelectedIDs.compactMap { id in
+            personal.playlists.first { $0.id == id && $0.shownOnHome }
+        }
+    }
+
+    private var unselectedPlaylists: [Playlist] {
+        personal.playlists.filter { !$0.shownOnHome }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !selectedPlaylists.isEmpty {
+                    Section("已选择 · 拖动排序") {
+                        ForEach(selectedPlaylists) { playlist in
+                            playlistRow(playlist)
+                        }
+                        .onMove(perform: moveSelectedPlaylists)
+                    }
+                }
+                Section {
+                    ForEach(unselectedPlaylists) { playlist in
+                        playlistRow(playlist)
+                    }
+                } footer: {
+                    Text("只有勾选的歌单会展示在当前用户的首页。")
+                }
+            }
+            .environment(\.editMode, $editMode)
+            .onAppear(perform: syncSelectedOrder)
+            .scrollContentBackground(.hidden)
+            .background(Color.sonaBackground)
+            .navigationTitle("首页展示")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .alert("设置失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好") { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func playlistRow(_ playlist: Playlist) -> some View {
+        Button {
+            toggle(playlist)
+        } label: {
+            HStack(spacing: 12) {
+                ArtworkView(
+                    path: playlist.artworkURLs.first,
+                    cornerRadius: 6,
+                    thumbnailSize: 128
+                )
+                .frame(width: 48, height: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(playlist.name)
+                        .foregroundStyle(.primary)
+                    Text("\(playlist.trackIDs.count) 首歌曲")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if updatingIDs.contains(playlist.id) {
+                    ProgressView()
+                } else {
+                    Image(systemName: playlist.shownOnHome ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(playlist.shownOnHome ? Color.sonaGreen : .secondary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(updatingIDs.contains(playlist.id))
+    }
+
+    private func toggle(_ playlist: Playlist) {
+        updatingIDs.insert(playlist.id)
+        Task {
+            let succeeded = await personal.setPlaylistShownOnHome(
+                id: playlist.id,
+                shown: !playlist.shownOnHome
+            )
+            updatingIDs.remove(playlist.id)
+            if succeeded {
+                syncSelectedOrder()
+            } else {
+                errorMessage = personal.errorMessage ?? "请稍后重试"
+            }
+        }
+    }
+
+    private func moveSelectedPlaylists(from offsets: IndexSet, to destination: Int) {
+        orderedSelectedIDs.move(fromOffsets: offsets, toOffset: destination)
+        let ids = orderedSelectedIDs
+        Task {
+            if !(await personal.reorderHomePlaylists(ids: ids)) {
+                syncSelectedOrder()
+                errorMessage = personal.errorMessage ?? "排序保存失败"
+            }
+        }
+    }
+
+    private func syncSelectedOrder() {
+        orderedSelectedIDs = personal.playlists.filter(\.shownOnHome).sorted {
+            ($0.homePosition ?? Int.max) < ($1.homePosition ?? Int.max)
+        }.map(\.id)
     }
 }
 

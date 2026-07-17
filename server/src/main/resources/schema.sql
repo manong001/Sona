@@ -129,6 +129,16 @@ CREATE TABLE IF NOT EXISTS playlists (
 
 CREATE INDEX IF NOT EXISTS idx_playlists_user ON playlists(user_id, created_at);
 
+CREATE TABLE IF NOT EXISTS home_playlists (
+    user_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, playlist_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS playlist_tracks (
     playlist_id TEXT NOT NULL,
     track_id TEXT NOT NULL,

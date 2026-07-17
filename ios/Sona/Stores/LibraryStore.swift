@@ -334,6 +334,49 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func setPlaylistShownOnHome(id: String, shown: Bool) async -> Bool {
+        do {
+            try await api.setPlaylistShownOnHome(id: id, shown: shown)
+            guard let index = playlists.firstIndex(where: { $0.id == id }) else { return false }
+            playlists[index] = playlists[index].withShownOnHome(shown)
+            normalizeHomePlaylistPositions()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func reorderHomePlaylists(ids: [String]) async -> Bool {
+        do {
+            try await api.reorderHomePlaylists(ids: ids)
+            let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
+            playlists = playlists.map { playlist in
+                guard let position = positions[playlist.id] else { return playlist }
+                return playlist.withHomePosition(position)
+            }
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func normalizeHomePlaylistPositions() {
+        let selected = playlists.filter(\.shownOnHome).sorted {
+            ($0.homePosition ?? Int.max) < ($1.homePosition ?? Int.max)
+        }
+        let positions = Dictionary(
+            uniqueKeysWithValues: selected.enumerated().map { ($1.id, $0) }
+        )
+        playlists = playlists.map { playlist in
+            guard let position = positions[playlist.id] else { return playlist }
+            return playlist.withHomePosition(position)
+        }
+    }
+
     func updateDirectoryPlaylist(id: String, name: String, poolType: String) async {
         do {
             let updated = try await api.updateDirectoryPlaylist(
@@ -370,7 +413,9 @@ final class PersonalStore: ObservableObject {
                 createdAt: playlist.createdAt,
                 featured: playlist.featured,
                 directoryPath: playlist.directoryPath,
-                poolType: playlist.poolType
+                poolType: playlist.poolType,
+                shownOnHome: playlist.shownOnHome,
+                homePosition: playlist.homePosition
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -413,7 +458,9 @@ final class PersonalStore: ObservableObject {
                 createdAt: playlist.createdAt,
                 featured: playlist.featured,
                 directoryPath: playlist.directoryPath,
-                poolType: playlist.poolType
+                poolType: playlist.poolType,
+                shownOnHome: playlist.shownOnHome,
+                homePosition: playlist.homePosition
             )
         } catch {
             errorMessage = error.localizedDescription

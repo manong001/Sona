@@ -210,6 +210,33 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @PutMapping("/playlists/{playlistId}/home")
+    ResponseEntity<Void> showPlaylistOnHome(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId
+    ) {
+        return setPlaylistShownOnHome(user.id(), playlistId, true);
+    }
+
+    @DeleteMapping("/playlists/{playlistId}/home")
+    ResponseEntity<Void> hidePlaylistFromHome(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId
+    ) {
+        return setPlaylistShownOnHome(user.id(), playlistId, false);
+    }
+
+    @PutMapping("/playlists/home-order")
+    ResponseEntity<Void> reorderHomePlaylists(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @Valid @RequestBody PlaylistIdsRequest request
+    ) {
+        if (!repository.reorderHomePlaylists(user.id(), request.playlistIds())) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid home playlist order");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     @PatchMapping("/playlists/{playlistId}")
     PersonalRepository.PlaylistData updateDirectoryPlaylist(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -378,6 +405,15 @@ class PersonalController {
         }
     }
 
+    private ResponseEntity<Void> setPlaylistShownOnHome(
+        String userId, String playlistId, boolean shown
+    ) {
+        if (!repository.setPlaylistShownOnHome(userId, playlistId, shown)) {
+            throw new ResponseStatusException(NOT_FOUND, "Playlist not found");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     private int parseOffset(String cursor) {
         if (cursor == null || cursor.isBlank()) {
             return 0;
@@ -430,6 +466,11 @@ class PersonalController {
 
     record TrackIdsRequest(
         @NotNull @Size(min = 1, max = 500) List<@NotBlank String> trackIds
+    ) {
+    }
+
+    record PlaylistIdsRequest(
+        @NotNull @Size(max = 500) List<@NotBlank String> playlistIds
     ) {
     }
 

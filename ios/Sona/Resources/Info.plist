@@ -32,7 +32,28 @@
         <true/>
         <key>NSExceptionDomains</key>
         <dict>
+            <key>12140303.xyz</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+                <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+            <key>lski.dpdns.org</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+                <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
             <key>sosee.eu.cc</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+                <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+            <key>vpnson.us.ci</key>
             <dict>
                 <key>NSIncludesSubdomains</key>
                 <false/>
