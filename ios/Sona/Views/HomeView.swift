@@ -172,20 +172,26 @@ struct HomeView: View {
     }
 
     private var radioCollections: [SonaCollection] {
-        let source = Array(personalizedSourceTracks.prefix(180))
+        let source = diverseTracks(
+            excluding: Set(dailyTracks.map(\.id)),
+            limit: 180
+        )
         var seenArtists = Set<String>()
         let anchors = source.filter {
             let artist = $0.artist.trimmingCharacters(in: .whitespacesAndNewlines)
             return !artist.isEmpty && seenArtists.insert(artist).inserted
         }.prefix(4)
 
+        var assignedTrackIDs = Set<String>()
         return anchors.map { anchor in
-            var seenTracks = Set<String>()
-            let related = ([anchor] + source.filter {
+            let related = uniqueTracks([anchor] + source.filter {
                 $0.artist == anchor.artist ||
                     (anchor.genre != "未分类" && $0.genre == anchor.genre)
-            } + source).filter { seenTracks.insert($0.id).inserted }
-            let tracks = Array(related.prefix(30))
+            } + source)
+            let unused = related.filter { !assignedTrackIDs.contains($0.id) }
+            let fallback = related.filter { assignedTrackIDs.contains($0.id) }
+            let tracks = Array((unused + fallback).prefix(30))
+            assignedTrackIDs.formUnion(tracks.map(\.id))
             return SonaCollection(
                 id: "radio-\(anchor.id)",
                 title: anchor.artist,
@@ -199,7 +205,11 @@ struct HomeView: View {
     }
 
     private var madeForYouCollections: [SonaCollection] {
-        let source = Array(personalizedSourceTracks.prefix(100))
+        let radioTrackIDs = Set(radioCollections.flatMap(\.tracks).map(\.id))
+        let source = diverseTracks(
+            excluding: Set(dailyTracks.map(\.id)).union(radioTrackIDs),
+            limit: 100
+        )
         let groupCount = min(2, source.count)
         guard groupCount > 0 else { return [] }
         var groups = Array(repeating: [Track](), count: groupCount)
@@ -234,6 +244,17 @@ struct HomeView: View {
         }
         let names = artists.prefix(3).joined(separator: "、")
         return artists.count > 3 ? "\(names) 等更多曲风" : names
+    }
+
+    private func uniqueTracks(_ tracks: [Track]) -> [Track] {
+        var seen = Set<String>()
+        return tracks.filter { seen.insert($0.id).inserted }
+    }
+
+    private func diverseTracks(excluding excludedIDs: Set<String>, limit: Int) -> [Track] {
+        let preferred = personalizedSourceTracks.filter { !excludedIDs.contains($0.id) }
+        let fallback = personalizedSourceTracks.filter { excludedIDs.contains($0.id) }
+        return Array((preferred + fallback).prefix(limit))
     }
 
     private var albums: [SonaCollection] {
@@ -598,7 +619,7 @@ struct HomeView: View {
         do {
             async let loadedDaily = APIClient.shared.dailyRecommendations()
             async let loadedGenres = APIClient.shared.recommendationGenres()
-            dailyTracks = try await loadedDaily
+            dailyTracks = uniqueTracks(try await loadedDaily)
             genres = try await loadedGenres
         } catch {
             dailyTracks = []
