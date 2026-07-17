@@ -19,6 +19,7 @@ struct MusicDownloadView: View {
     @State private var errorMessage: String?
     @State private var showsPlaylistImport = false
     @State private var needsLibraryRefresh = false
+    @FocusState private var isSearchFieldFocused: Bool
 
     private let candidatePageSize = 20
 
@@ -106,6 +107,7 @@ struct MusicDownloadView: View {
                     .foregroundStyle(.black)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .focused($isSearchFieldFocused)
                     .submitLabel(.search)
                     .onSubmit { submitSearch() }
                 if !query.isEmpty {
@@ -117,7 +119,7 @@ struct MusicDownloadView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Button(action: submitSearch) {
+                Button(action: commitInputAndSearch) {
                     Text(isSearching ? "重新搜索" : "搜索")
                         .font(.subheadline.weight(.semibold))
                         .frame(minWidth: 52, minHeight: 34)
@@ -299,6 +301,14 @@ struct MusicDownloadView: View {
         searchGeneration += 1
         let generation = searchGeneration
         searchTask = Task { await search(keyword: keyword, generation: generation) }
+    }
+
+    private func commitInputAndSearch() {
+        isSearchFieldFocused = false
+        Task { @MainActor in
+            await Task.yield()
+            submitSearch()
+        }
     }
 
     private func search(keyword: String, generation: Int) async {
