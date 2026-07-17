@@ -32,7 +32,7 @@ struct SettingsView: View {
                         NavigationLink {
                             TrackManagementView()
                         } label: {
-                            Label("歌曲入库与分类", systemImage: "tray.full")
+                            Label("歌曲分类", systemImage: "tray.full")
                         }
 
                         Button("从 App 批量导入", systemImage: "square.and.arrow.down") {
@@ -701,14 +701,13 @@ private struct AppShareSheet: UIViewControllerRepresentable {
 
 private struct TrackManagementView: View {
     @State private var tracks: [Track] = []
-    @State private var filter = "PENDING"
+    @State private var filter = "NORMAL"
     @State private var errorMessage: String?
     @State private var editingTrack: Track?
 
     var body: some View {
         List {
             Picker("歌曲池", selection: $filter) {
-                Text("待入库").tag("PENDING")
                 Text("正常").tag("NORMAL")
                 Text("发现").tag("DISCOVERY")
             }
@@ -729,7 +728,6 @@ private struct TrackManagementView: View {
                         Menu("划入歌曲池") {
                             Button("正常池") { update(track, pool: "NORMAL", audience: track.audienceType) }
                             Button("发现池") { update(track, pool: "DISCOVERY", audience: track.audienceType) }
-                            Button("待入库") { update(track, pool: "PENDING", audience: track.audienceType) }
                         }
                     }
                     HStack {
@@ -768,7 +766,7 @@ private struct TrackManagementView: View {
                 }
             }
         }
-        .navigationTitle("歌曲入库与分类")
+        .navigationTitle("歌曲分类")
         .onChange(of: filter) { _, _ in Task { await load() } }
         .task { await load() }
         .refreshable { await load() }
@@ -823,7 +821,7 @@ private struct TrackManagementView: View {
     }
 }
 
-private struct MetadataEditorView: View {
+struct MetadataEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let track: Track
     let saved: () async -> Void
@@ -856,11 +854,11 @@ private struct MetadataEditorView: View {
                     TextField("曲风", text: $genre)
                 }
                 Section {
-                    Button("清除人工修改并重新刮削", role: .destructive) {
+                    Button("使用当前信息重新刮削") {
                         Task { await rescrape() }
                     }
                 } footer: {
-                    Text("只修改 Sona 数据库，不会写入原始音频文件。")
+                    Text("当前标题、艺人和专辑会作为重新刮削的匹配信息；不会写入原始音频文件。")
                 }
                 if let errorMessage {
                     Section { Text(errorMessage).foregroundStyle(.red) }
@@ -1012,6 +1010,7 @@ private struct TrashView: View {
 
 struct AccountSecurityView: View {
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var player: PlayerStore
     @State private var currentPassword = ""
     @State private var newPassword = ""
     @State private var confirmation = ""
@@ -1027,6 +1026,7 @@ struct AccountSecurityView: View {
                     .textContentType(.newPassword)
                 Button("修改密码") {
                     Task {
+                        await player.flushState()
                         _ = await session.changePassword(
                             currentPassword: currentPassword,
                             newPassword: newPassword
@@ -1049,7 +1049,10 @@ struct AccountSecurityView: View {
 
             Section {
                 Button("退出所有设备", role: .destructive) {
-                    Task { await session.logoutAll() }
+                    Task {
+                        await player.flushState()
+                        await session.logoutAll()
+                    }
                 }
             } footer: {
                 Text("修改密码也会使所有已登录设备退出。")

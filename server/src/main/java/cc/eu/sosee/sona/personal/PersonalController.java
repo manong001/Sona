@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.personal;
 
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
+import cc.eu.sosee.sona.auth.UserRole;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -39,6 +40,7 @@ class PersonalController {
         "LOCAL_FILES", "FAVORITE_DIRECTORY", "PLAYLIST_DIRECTORY"
     );
     private static final Set<String> IMPORT_STATES = Set.of("RUNNING", "COMPLETED", "FAILED");
+    private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY");
 
     private final PersonalRepository repository;
     private final DirectoryImportService directoryImportService;
@@ -203,6 +205,23 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @PatchMapping("/playlists/{playlistId}")
+    PersonalRepository.PlaylistData updateDirectoryPlaylist(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId,
+        @Valid @RequestBody UpdateDirectoryPlaylistRequest request
+    ) {
+        if (user.role() != UserRole.ADMIN) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        if (!POOL_TYPES.contains(request.poolType())) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid pool type");
+        }
+        return repository.updateDirectoryPlaylist(
+            user.id(), playlistId, request.name().strip(), request.poolType()
+        ).orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Directory playlist not found"));
+    }
+
     @PutMapping("/playlists/{playlistId}/tracks/{trackId}")
     ResponseEntity<Void> addPlaylistTrack(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -350,6 +369,12 @@ class PersonalController {
     record CreatePlaylistRequest(@NotBlank @Size(max = 80) String name) {
     }
 
+    record UpdateDirectoryPlaylistRequest(
+        @NotBlank @Size(max = 80) String name,
+        @NotBlank String poolType
+    ) {
+    }
+
     record PlaybackRecordRequest(
         @PositiveOrZero long listenedMs,
         @DecimalMin("0") @DecimalMax("100") double progressPercent
@@ -360,7 +385,7 @@ class PersonalController {
         @NotBlank String queueType,
         String queueContextId,
         @NotBlank String trackId,
-        List<@NotBlank String> queueTrackIds,
+        @NotNull @Size(max = 500) List<@NotBlank String> queueTrackIds,
         @PositiveOrZero long progressMs
     ) {
     }

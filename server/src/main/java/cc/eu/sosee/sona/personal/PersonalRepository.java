@@ -5,8 +5,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -232,7 +235,7 @@ class PersonalRepository {
 
     List<PlaylistData> playlists(String userId) {
         return jdbcClient.sql("""
-                SELECT id, name, featured, created_at
+                SELECT id, name, featured, directory_path, pool_type, created_at
                 FROM playlists
                 WHERE user_id = :userId OR featured = 1
                 ORDER BY created_at
@@ -243,7 +246,9 @@ class PersonalRepository {
                 resultSet.getString("name"),
                 trackIds(userId, resultSet.getString("id")),
                 resultSet.getLong("created_at"),
-                resultSet.getBoolean("featured")
+                resultSet.getBoolean("featured"),
+                resultSet.getString("directory_path"),
+                resultSet.getString("pool_type")
             ))
             .list();
     }
@@ -260,7 +265,7 @@ class PersonalRepository {
             .param("name", name)
             .param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), createdAt, false);
+        return new PlaylistData(id, name, List.of(), createdAt, false, null, "NORMAL");
     }
 
     PlaylistData createFeaturedPlaylist(String userId, String name) {
@@ -272,14 +277,40 @@ class PersonalRepository {
                 """)
             .param("id", id).param("userId", userId).param("name", name).param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), createdAt, true);
+        return new PlaylistData(id, name, List.of(), createdAt, true, null, "NORMAL");
+    }
+
+    @Transactional
+    Optional<PlaylistData> updateDirectoryPlaylist(String userId, String playlistId, String name, String poolType) {
+        var updated = jdbcClient.sql("""
+                UPDATE playlists
+                SET name = :name, pool_type = :poolType
+                WHERE id = :playlistId AND directory_path IS NOT NULL
+                """)
+            .param("name", name)
+            .param("poolType", poolType)
+            .param("playlistId", playlistId)
+            .update();
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        jdbcClient.sql("""
+                UPDATE tracks SET pool_type = :poolType
+                WHERE id IN (
+                    SELECT track_id FROM playlist_tracks WHERE playlist_id = :playlistId
+                )
+                """)
+            .param("poolType", poolType)
+            .param("playlistId", playlistId)
+            .update();
+        return playlists(userId).stream().filter(playlist -> playlist.id().equals(playlistId)).findFirst();
     }
 
     boolean ownsPlaylist(String userId, String playlistId) {
         return jdbcClient.sql("""
                 SELECT COUNT(*)
                 FROM playlists
-                WHERE id = :playlistId AND user_id = :userId
+                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NULL
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
@@ -298,20 +329,6 @@ class PersonalRepository {
             importedCount += insertPlaylistTrack(playlistId, trackId);
         }
         return importedCount;
-    }
-
-    @Transactional
-    void promotePendingTracksFromDirectory(Path directory) {
-        var prefix = directory.toAbsolutePath().normalize() + directory.getFileSystem().getSeparator();
-        jdbcClient.sql("""
-                UPDATE tracks
-                SET pool_type = 'NORMAL'
-                WHERE pool_type = 'PENDING'
-                  AND metadata_status IN ('LOCAL', 'SCRAPED', 'MANUAL')
-                  AND path GLOB :pathPattern
-                """)
-            .param("pathPattern", prefix + "*")
-            .update();
     }
 
     private int insertPlaylistTrack(String playlistId, String trackId) {
@@ -387,8 +404,7 @@ class PersonalRepository {
         var prefix = directory.toAbsolutePath().normalize() + directory.getFileSystem().getSeparator();
         return jdbcClient.sql("""
                 SELECT id FROM tracks
-                WHERE pool_type <> 'PENDING'
-                  AND metadata_status IN ('LOCAL', 'SCRAPED', 'MANUAL')
+                WHERE metadata_status IN ('LOCAL', 'SCRAPED', 'MANUAL', 'NEEDS_REVIEW')
                   AND path GLOB :pathPattern
                 ORDER BY path, id
                 """)
@@ -420,7 +436,7 @@ class PersonalRepository {
     boolean deletePlaylist(String userId, String playlistId) {
         return jdbcClient.sql("""
                 DELETE FROM playlists
-                WHERE id = :playlistId AND user_id = :userId
+                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NULL
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
@@ -593,6 +609,12 @@ class PersonalRepository {
         String userId, String queueType, String queueContextId, String trackId,
         List<String> queueTrackIds, long progressMs
     ) {
+        var normalizedTrackIds = queueTrackIds == null
+            ? new ArrayList<String>()
+            : new ArrayList<>(new LinkedHashSet<>(queueTrackIds));
+        if (!normalizedTrackIds.contains(trackId)) {
+            normalizedTrackIds.add(0, trackId);
+        }
         jdbcClient.sql("""
                 INSERT INTO playback_state(
                     user_id, queue_type, queue_context_id, track_id, queue_track_ids, progress_ms, updated_at
@@ -609,7 +631,7 @@ class PersonalRepository {
             .param("queueType", queueType)
             .param("queueContextId", queueContextId)
             .param("trackId", trackId)
-            .param("queueTrackIds", String.join(",", queueTrackIds))
+            .param("queueTrackIds", String.join(",", normalizedTrackIds))
             .param("progressMs", Math.max(0, progressMs))
             .param("updatedAt", clock.millis())
             .update();
@@ -678,7 +700,10 @@ class PersonalRepository {
         return separator < 0 ? "" : filename.substring(separator + 1).toLowerCase();
     }
 
-    record PlaylistData(String id, String name, List<String> trackIds, long createdAt, boolean featured) {
+    record PlaylistData(
+        String id, String name, List<String> trackIds, long createdAt, boolean featured,
+        String directoryPath, String poolType
+    ) {
     }
 
     record HistoryData(String trackId, long playedAt) {

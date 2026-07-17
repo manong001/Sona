@@ -31,7 +31,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @RequestMapping("/api/v1/library/tracks")
 class LibraryTrackController {
 
-    private static final Set<String> POOL_TYPES = Set.of("PENDING", "NORMAL", "DISCOVERY");
+    private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY");
     private static final Set<String> AUDIENCE_TYPES = Set.of("GENERAL", "CHILD");
     private static final Set<String> REGIONS = Set.of("CN", "KR", "US", "JP", "OTHER");
 

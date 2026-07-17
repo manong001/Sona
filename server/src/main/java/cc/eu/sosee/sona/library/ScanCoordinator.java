@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.library;
 
+import cc.eu.sosee.sona.personal.DirectoryPlaylistService;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
 public class ScanCoordinator {
 
     private final LibraryScanner libraryScanner;
+    private final DirectoryPlaylistService directoryPlaylistService;
     private final TaskExecutor taskExecutor;
     private final AtomicReference<ScanStatus> status = new AtomicReference<>(ScanStatus.idle());
     private final AtomicBoolean rerunRequested = new AtomicBoolean();
@@ -18,9 +20,11 @@ public class ScanCoordinator {
 
     ScanCoordinator(
         LibraryScanner libraryScanner,
+        DirectoryPlaylistService directoryPlaylistService,
         @Qualifier("scanTaskExecutor") TaskExecutor scanTaskExecutor
     ) {
         this.libraryScanner = libraryScanner;
+        this.directoryPlaylistService = directoryPlaylistService;
         this.taskExecutor = scanTaskExecutor;
     }
 
@@ -38,6 +42,7 @@ public class ScanCoordinator {
         taskExecutor.execute(() -> {
             try {
                 var result = libraryScanner.scan(relativeDirectory);
+                directoryPlaylistService.sync();
                 status.set(ScanStatus.completed(result, libraryScanner.lastErrors()));
             } catch (Exception exception) {
                 status.set(ScanStatus.failed(exception));
@@ -59,7 +64,9 @@ public class ScanCoordinator {
         try {
             taskExecutor.execute(() -> {
                 try {
-                    result.complete(libraryScanner.scan(relativeDirectory));
+                    var scanResult = libraryScanner.scan(relativeDirectory);
+                    directoryPlaylistService.sync();
+                    result.complete(scanResult);
                 } catch (Exception exception) {
                     result.completeExceptionally(exception);
                 }

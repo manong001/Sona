@@ -5,6 +5,7 @@ struct MainTabView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var personal: PersonalStore
     @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var session: SessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
@@ -116,19 +117,23 @@ struct MainTabView: View {
             NavigationStack { AchievementsView() }
         }
         .task {
+            guard let userID = session.currentUser?.id else { return }
+            player.beginSession(userID: userID)
             if library.tracks.isEmpty {
                 await library.refresh()
             }
             await personal.refresh()
             await player.restoreStateIfNeeded { offline.localURL(for: $0) }
-            await player.prepareRandomQueueIfNeeded()
+            await player.prepareRandomQueueIfNeeded { offline.localURL(for: $0) }
         }
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }
             personal.notePlayback(trackID: newValue)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { player.saveState() }
+            if phase == .background {
+                Task { await player.flushState() }
+            }
         }
     }
 

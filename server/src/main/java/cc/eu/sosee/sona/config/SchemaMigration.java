@@ -35,9 +35,25 @@ class SchemaMigration implements ApplicationRunner {
         if (tableExists("tracks")) {
             var trackColumns = columns("tracks");
             if (!trackColumns.contains("pool_type")) {
-                jdbcClient.sql("ALTER TABLE tracks ADD COLUMN pool_type TEXT NOT NULL DEFAULT 'PENDING'").update();
-                jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL'").update();
+                jdbcClient.sql("ALTER TABLE tracks ADD COLUMN pool_type TEXT NOT NULL DEFAULT 'NORMAL'").update();
             }
+            jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE pool_type = 'PENDING'").update();
+            jdbcClient.sql("""
+                    CREATE TRIGGER IF NOT EXISTS normalize_pending_track_insert
+                    AFTER INSERT ON tracks
+                    WHEN NEW.pool_type = 'PENDING'
+                    BEGIN
+                        UPDATE tracks SET pool_type = 'NORMAL' WHERE id = NEW.id;
+                    END
+                    """).update();
+            jdbcClient.sql("""
+                    CREATE TRIGGER IF NOT EXISTS normalize_pending_track_update
+                    AFTER UPDATE OF pool_type ON tracks
+                    WHEN NEW.pool_type = 'PENDING'
+                    BEGIN
+                        UPDATE tracks SET pool_type = 'NORMAL' WHERE id = NEW.id;
+                    END
+                    """).update();
             if (!trackColumns.contains("audience_type")) {
                 jdbcClient.sql("ALTER TABLE tracks ADD COLUMN audience_type TEXT NOT NULL DEFAULT 'GENERAL'").update();
             }
@@ -61,8 +77,20 @@ class SchemaMigration implements ApplicationRunner {
         if (tableExists("download_tasks") && !columns("download_tasks").contains("target_playlist_id")) {
             jdbcClient.sql("ALTER TABLE download_tasks ADD COLUMN target_playlist_id TEXT").update();
         }
-        if (tableExists("playlists") && !columns("playlists").contains("featured")) {
-            jdbcClient.sql("ALTER TABLE playlists ADD COLUMN featured INTEGER NOT NULL DEFAULT 0").update();
+        if (tableExists("playlists")) {
+            var playlistColumns = columns("playlists");
+            if (!playlistColumns.contains("featured")) {
+                jdbcClient.sql("ALTER TABLE playlists ADD COLUMN featured INTEGER NOT NULL DEFAULT 0").update();
+            }
+            if (!playlistColumns.contains("directory_path")) {
+                jdbcClient.sql("ALTER TABLE playlists ADD COLUMN directory_path TEXT").update();
+            }
+            if (!playlistColumns.contains("pool_type")) {
+                jdbcClient.sql("ALTER TABLE playlists ADD COLUMN pool_type TEXT NOT NULL DEFAULT 'NORMAL'").update();
+            }
+            jdbcClient.sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_directory ON playlists(directory_path)"
+            ).update();
         }
     }
 

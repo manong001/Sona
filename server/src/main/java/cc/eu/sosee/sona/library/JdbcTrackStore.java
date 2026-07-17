@@ -44,7 +44,7 @@ class JdbcTrackStore implements TrackStore {
     public Optional<TrackRecord> findVisibleById(String id, String userId) {
         return jdbcClient.sql("""
                 SELECT tracks.* FROM tracks
-                WHERE tracks.id = :id AND tracks.pool_type <> 'PENDING'
+                WHERE tracks.id = :id AND tracks.pool_type IN ('NORMAL', 'DISCOVERY')
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id

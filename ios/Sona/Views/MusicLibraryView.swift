@@ -41,7 +41,9 @@ struct MusicLibraryView: View {
             return SonaCollection(
                 id: playlist.id,
                 title: playlist.name,
-                subtitle: "歌单 · \(username)",
+                subtitle: playlist.isDirectoryPlaylist
+                    ? "\(playlist.poolType == "DISCOVERY" ? "发现歌曲池" : "正常歌曲池") · Sona"
+                    : "歌单 · \(username)",
                 artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
                 tracks: tracks,
                 shape: .square
@@ -282,7 +284,8 @@ struct MusicLibraryView: View {
                     await library.loadNextPage()
                 }
                 .contextMenu {
-                    if selectedFilter == .playlists {
+                    if selectedFilter == .playlists,
+                       personal.playlists.first(where: { $0.id == collection.id })?.isDirectoryPlaylist != true {
                         Button("删除歌单", systemImage: "trash", role: .destructive) {
                             Task { await personal.deletePlaylist(id: collection.id) }
                         }
@@ -393,6 +396,9 @@ private struct ManagedPlaylistDetailView: View {
     @State private var importMessage: String?
     @State private var isImportingServerDirectory = false
     @State private var importProgressMessage = ""
+    @State private var loadedTracks: [String: Track] = [:]
+    @State private var editingDirectoryPlaylist: Playlist?
+    @State private var editingTrack: Track?
     let playlistID: String
 
     private var playlist: Playlist? {
@@ -400,7 +406,7 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private var tracks: [Track] {
-        playlist?.trackIDs.compactMap(library.track(id:)) ?? []
+        playlist?.trackIDs.compactMap { library.track(id: $0) ?? loadedTracks[$0] } ?? []
     }
 
     var body: some View {
@@ -419,8 +425,8 @@ private struct ManagedPlaylistDetailView: View {
                                 track: track,
                                 showsOfflineBadge: offline.downloadedIDs.contains(track.id),
                                 isFavorite: personal.favoriteIDs.contains(track.id),
-                                deleteTitle: "从歌单中移除",
-                                deleteAction: {
+                                deleteTitle: playlist?.isDirectoryPlaylist == true ? nil : "从歌单中移除",
+                                deleteAction: playlist?.isDirectoryPlaylist == true ? nil : {
                                     Task {
                                         await personal.setTrack(
                                             track.id, in: playlistID, isIncluded: false
@@ -447,9 +453,18 @@ private struct ManagedPlaylistDetailView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 6)
                         .contextMenu {
-                            Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
-                                Task {
-                                    await personal.setTrack(track.id, in: playlistID, isIncluded: false)
+                            if playlist?.isDirectoryPlaylist == true {
+                                if session.currentUser?.isAdmin == true,
+                                   track.metadataStatus == "NEEDS_REVIEW" {
+                                    Button("编辑歌曲信息", systemImage: "pencil") {
+                                        editingTrack = track
+                                    }
+                                }
+                            } else {
+                                Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
+                                    Task {
+                                        await personal.setTrack(track.id, in: playlistID, isIncluded: false)
+                                    }
                                 }
                             }
                         }
@@ -471,6 +486,24 @@ private struct ManagedPlaylistDetailView: View {
                     playRandom()
                 }
                 .disabled(tracks.isEmpty)
+            }
+        }
+        .task { await loadMissingTracks() }
+        .sheet(item: $editingDirectoryPlaylist) { playlist in
+            DirectoryPlaylistEditor(playlist: playlist) { name, poolType in
+                await personal.updateDirectoryPlaylist(
+                    id: playlist.id, name: name, poolType: poolType
+                )
+                await library.refresh()
+                loadedTracks = [:]
+                await loadMissingTracks()
+            }
+        }
+        .sheet(item: $editingTrack) { track in
+            MetadataEditorView(track: track) {
+                await library.refresh()
+                loadedTracks[track.id] = nil
+                await loadMissingTracks()
             }
         }
         .fileImporter(
@@ -505,7 +538,16 @@ private struct ManagedPlaylistDetailView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(tracks.isEmpty)
-                if session.currentUser?.isAdmin == true {
+                if playlist?.isDirectoryPlaylist == true {
+                    if session.currentUser?.isAdmin == true, let playlist {
+                        Button {
+                            editingDirectoryPlaylist = playlist
+                        } label: {
+                            Label("编辑歌单", systemImage: "pencil")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                } else if session.currentUser?.isAdmin == true {
                     Menu {
                         Button("扫描服务器音乐目录", systemImage: "externaldrive") {
                             showsServerDirectoryPicker = true
@@ -519,18 +561,20 @@ private struct ManagedPlaylistDetailView: View {
                     }
                 }
 
-                Button {
-                    isSelecting.toggle()
-                    if !isSelecting { selectedIDs.removeAll() }
-                } label: {
-                    Label(isSelecting ? "完成" : "多选", systemImage: "checklist")
-                        .frame(maxWidth: .infinity)
+                if playlist?.isDirectoryPlaylist != true {
+                    Button {
+                        isSelecting.toggle()
+                        if !isSelecting { selectedIDs.removeAll() }
+                    } label: {
+                        Label(isSelecting ? "完成" : "多选", systemImage: "checklist")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(tracks.isEmpty)
                 }
-                .disabled(tracks.isEmpty)
             }
             .buttonStyle(.bordered)
 
-            if isSelecting, !selectedIDs.isEmpty {
+            if playlist?.isDirectoryPlaylist != true, isSelecting, !selectedIDs.isEmpty {
                 Button("移除选中的 \(selectedIDs.count) 首", role: .destructive) {
                     let ids = selectedIDs
                     Task {
@@ -560,6 +604,15 @@ private struct ManagedPlaylistDetailView: View {
         )
     }
 
+    private func loadMissingTracks() async {
+        guard let playlist else { return }
+        for id in playlist.trackIDs where library.track(id: id) == nil && loadedTracks[id] == nil {
+            if let track = try? await APIClient.shared.track(id: id) {
+                loadedTracks[id] = track
+            }
+        }
+    }
+
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {
         isImportingServerDirectory = true
         importProgressMessage = "正在加入已入库歌曲…"
@@ -569,21 +622,11 @@ private struct ManagedPlaylistDetailView: View {
                 playlistID: playlistID,
                 directory: directory.path
             )
-            var importedCount = result.importedCount
-            if result.scanning == true, let importRecordID = result.importRecordID {
-                importProgressMessage = "正在扫描目录并加入歌单…"
-                let record = try await APIClient.shared.waitForImportRecord(id: importRecordID)
-                importedCount = max(importedCount, record.added)
-                if record.state == .failed {
-                    await library.refresh()
-                    await personal.refresh()
-                    importMessage = record.message ?? "目录扫描失败"
-                    return
-                }
-            }
             await library.refresh()
             await personal.refresh()
-            importMessage = "“\(directory.name)”已加入歌单 \(importedCount) 首"
+            importMessage = result.scanning == true
+                ? "“\(directory.name)”已加入歌单 \(result.importedCount) 首，后台正在扫描目录"
+                : "“\(directory.name)”已加入歌单 \(result.importedCount) 首"
         } catch {
             importMessage = error.localizedDescription
         }
@@ -661,6 +704,61 @@ private struct ManagedPlaylistDetailView: View {
         } catch {
             importMessage = error.localizedDescription
         }
+    }
+}
+
+private struct DirectoryPlaylistEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let playlist: Playlist
+    let saved: (String, String) async -> Void
+    @State private var name: String
+    @State private var poolType: String
+    @State private var isSaving = false
+
+    init(playlist: Playlist, saved: @escaping (String, String) async -> Void) {
+        self.playlist = playlist
+        self.saved = saved
+        _name = State(initialValue: playlist.name)
+        _poolType = State(initialValue: playlist.poolType)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("歌单") {
+                    TextField("歌单名称", text: $name)
+                    LabeledContent("目录", value: playlist.directoryPath ?? "")
+                }
+                Section {
+                    Picker("歌曲池", selection: $poolType) {
+                        Text("正常歌曲池").tag("NORMAL")
+                        Text("发现歌曲池").tag("DISCOVERY")
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("歌曲池")
+                } footer: {
+                    Text("修改后，目录内全部歌曲会统一切换到所选歌曲池。")
+                }
+            }
+            .navigationTitle("编辑歌单")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { Task { await save() } }
+                        .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        await saved(name.trimmingCharacters(in: .whitespacesAndNewlines), poolType)
+        dismiss()
     }
 }
 

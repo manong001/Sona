@@ -98,14 +98,22 @@ class LibraryScanner {
 
             var metadata = metadataExtractor.extract(normalizedPath);
             var parsed = fileNameParser.parse(normalizedPath);
-            var titleFromTag = hasText(metadata.title());
-            var artistFromTag = hasText(metadata.artist());
-            var title = fileNameParser.stripTrackNumberPrefix(
-                firstText(metadata.title(), parsed.title(), "Unknown Title")
+            var retry = existing.filter(
+                track -> "NEEDS_REVIEW".equals(track.metadataStatus()) && track.updatedAt() == 0
             );
-            var artist = firstText(metadata.artist(), parsed.artist(), "Unknown Artist");
-            var album = firstText(metadata.album(), "Unknown Album");
-            var trackNumber = metadata.trackNumber() != null ? metadata.trackNumber() : parsed.trackNumber();
+            var titleHint = retry.map(TrackRecord::title).orElse("");
+            var artistHint = retry.map(TrackRecord::artist).orElse("");
+            var albumHint = retry.map(TrackRecord::album).orElse("");
+            var titleFromTag = hasText(titleHint) || hasText(metadata.title());
+            var artistFromTag = hasText(artistHint) || hasText(metadata.artist());
+            var title = fileNameParser.stripTrackNumberPrefix(
+                firstText(titleHint, metadata.title(), parsed.title(), "Unknown Title")
+            );
+            var artist = firstText(artistHint, metadata.artist(), parsed.artist(), "Unknown Artist");
+            var album = firstText(albumHint, metadata.album(), "Unknown Album");
+            var trackNumber = retry.map(TrackRecord::trackNumber).orElseGet(
+                () -> metadata.trackNumber() != null ? metadata.trackNumber() : parsed.trackNumber()
+            );
             var id = existing.map(TrackRecord::id).orElseGet(() -> UUID.randomUUID().toString());
             var artworkPath = existing.map(TrackRecord::artworkPath).orElse(null);
             if (artworkPath == null && metadata.artwork() != null) {

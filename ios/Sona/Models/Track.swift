@@ -167,6 +167,27 @@ struct PlaybackState: Decodable {
     let updatedAt: Int64
 }
 
+enum PlaybackRestoration {
+    static func orderedTrackIDs(currentTrackID: String, queueTrackIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var values = queueTrackIDs.filter { seen.insert($0).inserted }
+        if !seen.contains(currentTrackID) {
+            values.insert(currentTrackID, at: 0)
+        }
+        return values
+    }
+
+    static func currentTrackID(preferredID: String, availableIDs: [String]) -> String? {
+        availableIDs.contains(preferredID) ? preferredID : availableIDs.first
+    }
+}
+
+enum PlaybackQueueTransition {
+    static func canLeaveQueue(automatic: Bool) -> Bool {
+        automatic
+    }
+}
+
 enum UserRole: String, Codable, CaseIterable, Identifiable {
     case admin = "ADMIN"
     case user = "USER"

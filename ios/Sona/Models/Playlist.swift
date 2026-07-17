@@ -6,18 +6,25 @@ struct Playlist: Codable, Identifiable, Equatable {
     let trackIDs: [String]
     let createdAt: Int64
     let featured: Bool
+    let directoryPath: String?
+    let poolType: String
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, createdAt, featured
+        case id, name, createdAt, featured, directoryPath, poolType
         case trackIDs = "trackIds"
     }
 
-    init(id: String, name: String, trackIDs: [String], createdAt: Int64, featured: Bool = false) {
+    init(
+        id: String, name: String, trackIDs: [String], createdAt: Int64,
+        featured: Bool = false, directoryPath: String? = nil, poolType: String = "NORMAL"
+    ) {
         self.id = id
         self.name = name
         self.trackIDs = trackIDs
         self.createdAt = createdAt
         self.featured = featured
+        self.directoryPath = directoryPath
+        self.poolType = poolType
     }
 
     init(from decoder: Decoder) throws {
@@ -27,7 +34,11 @@ struct Playlist: Codable, Identifiable, Equatable {
         trackIDs = try values.decode([String].self, forKey: .trackIDs)
         createdAt = try values.decode(Int64.self, forKey: .createdAt)
         featured = try values.decodeIfPresent(Bool.self, forKey: .featured) ?? false
+        directoryPath = try values.decodeIfPresent(String.self, forKey: .directoryPath)
+        poolType = try values.decodeIfPresent(String.self, forKey: .poolType) ?? "NORMAL"
     }
+
+    var isDirectoryPlaylist: Bool { directoryPath != nil }
 }
 
 struct FavoritesResponse: Decodable {

@@ -275,6 +275,18 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    func updateDirectoryPlaylist(id: String, name: String, poolType: String) async {
+        do {
+            let updated = try await api.updateDirectoryPlaylist(
+                id: id, name: name, poolType: poolType
+            )
+            guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
+            playlists[index] = updated
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func setTrack(_ trackID: String, in playlistID: String, isIncluded: Bool) async {
         do {
             try await api.setPlaylistTrack(
@@ -294,7 +306,10 @@ final class PersonalStore: ObservableObject {
                 id: playlist.id,
                 name: playlist.name,
                 trackIDs: trackIDs,
-                createdAt: playlist.createdAt
+                createdAt: playlist.createdAt,
+                featured: playlist.featured,
+                directoryPath: playlist.directoryPath,
+                poolType: playlist.poolType
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -314,7 +329,10 @@ final class PersonalStore: ObservableObject {
                 id: playlist.id,
                 name: playlist.name,
                 trackIDs: playlist.trackIDs.filter { !trackIDs.contains($0) },
-                createdAt: playlist.createdAt
+                createdAt: playlist.createdAt,
+                featured: playlist.featured,
+                directoryPath: playlist.directoryPath,
+                poolType: playlist.poolType
             )
         } catch {
             errorMessage = error.localizedDescription

@@ -208,6 +208,15 @@ final class APIClient {
         try await requestVoid(path: "/api/v1/me/playlists/\(id)", method: "DELETE")
     }
 
+    func updateDirectoryPlaylist(id: String, name: String, poolType: String) async throws -> Playlist {
+        struct Body: Encodable { let name: String; let poolType: String }
+        return try await request(
+            path: "/api/v1/me/playlists/\(id)",
+            method: "PATCH",
+            body: try encoder.encode(Body(name: name, poolType: poolType))
+        )
+    }
+
     func setPlaylistTrack(playlistID: String, trackID: String, isIncluded: Bool) async throws {
         try await requestVoid(
             path: "/api/v1/me/playlists/\(playlistID)/tracks/\(trackID)",

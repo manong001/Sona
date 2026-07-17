@@ -10,6 +10,7 @@ enum SonaTab: Hashable {
 
 struct ProfileDrawerView: View {
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var player: PlayerStore
     let selectTab: (SonaTab) -> Void
     let manageAccount: () -> Void
     let editAvatar: () -> Void
@@ -80,7 +81,10 @@ struct ProfileDrawerView: View {
             Divider().overlay(Color.white.opacity(0.12))
             Button(role: .destructive) {
                 close()
-                Task { await session.logout() }
+                Task {
+                    await player.flushState()
+                    await session.logout()
+                }
             } label: {
                 Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
                     .font(.body.weight(.medium))

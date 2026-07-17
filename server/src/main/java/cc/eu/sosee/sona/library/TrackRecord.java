@@ -39,7 +39,7 @@ record TrackRecord(
         this(
             id, path, fileSize, modifiedAt, title, normalizedTitle, artist, album, trackNumber,
             durationMs, codec, sampleRate, bitDepth, artworkPath, plainLyrics, syncedLyrics,
-            lyricsSource, metadataStatus, manualEdited, createdAt, updatedAt, "PENDING", "GENERAL",
+            lyricsSource, metadataStatus, manualEdited, createdAt, updatedAt, "NORMAL", "GENERAL",
             "未分类", "OTHER"
         );
     }

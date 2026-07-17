@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS playlists (
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     featured INTEGER NOT NULL DEFAULT 0,
+    directory_path TEXT,
+    pool_type TEXT NOT NULL DEFAULT 'NORMAL',
     created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -107,7 +109,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     synced_lyrics TEXT,
     lyrics_source TEXT,
     metadata_status TEXT NOT NULL,
-    pool_type TEXT NOT NULL DEFAULT 'PENDING',
+    pool_type TEXT NOT NULL DEFAULT 'NORMAL',
     audience_type TEXT NOT NULL DEFAULT 'GENERAL',
     genre TEXT NOT NULL DEFAULT '未分类',
     region TEXT NOT NULL DEFAULT 'OTHER',

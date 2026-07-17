@@ -98,7 +98,7 @@ if ! version_is_greater; then
     exit 1
 fi
 
-echo "Building unsigned Sona.app $NEXT_VERSION (iOS Release)..."
+echo "[1/4] 正在构建未签名 Sona.app ${NEXT_VERSION}（iOS Release）…"
 xcodebuild \
     -project "$PROJECT" \
     -scheme Sona \
@@ -110,7 +110,21 @@ xcodebuild \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_IDENTITY='' \
     MARKETING_VERSION="$NEXT_VERSION" \
-    build | tee "$WORK_DIR/xcodebuild.log"
+    build > "$WORK_DIR/xcodebuild.log" 2>&1 &
+BUILD_PID=$!
+BUILD_SECONDS=0
+while kill -0 "$BUILD_PID" 2>/dev/null; do
+    sleep 10
+    BUILD_SECONDS=$((BUILD_SECONDS + 10))
+    if kill -0 "$BUILD_PID" 2>/dev/null; then
+        echo "[1/4] 仍在编译（${BUILD_SECONDS} 秒）…"
+    fi
+done
+if ! wait "$BUILD_PID"; then
+    cat "$WORK_DIR/xcodebuild.log" >&2
+    exit 1
+fi
+echo "[1/4] 构建完成。"
 
 APP="$DERIVED_DATA/Build/Products/Release-iphoneos/Sona.app"
 EXECUTABLE="$APP/Sona"
@@ -194,11 +208,14 @@ for icon in AppIcon60x60@2x.png AppIcon76x76@2x~ipad.png; do
 done
 
 STAGE="$WORK_DIR/stage"
+echo "[2/4] 正在准备 IPA 内容…"
 mkdir -p "$STAGE/Payload"
 cp -R "$APP" "$STAGE/Payload/Sona.app"
 
+echo "[3/4] 正在压缩 IPA…"
 (cd "$STAGE" && zip -qry "$OUTPUT" Payload)
 
+echo "[4/4] 正在校验 IPA…"
 if ! unzip -tqq "$OUTPUT"; then
     echo "Generated IPA failed ZIP validation: $OUTPUT" >&2
     exit 1

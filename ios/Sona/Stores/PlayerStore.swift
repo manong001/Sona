@@ -49,11 +49,14 @@ final class PlayerStore: ObservableObject {
     private var fallbackTrackID: String?
     private var artworkTask: Task<Void, Never>?
     private var randomQueueTask: Task<Void, Never>?
+    private var stateSaveTask: Task<Void, Never>?
     private var dailyRecommendationQueues: [[Track]]?
     private var dailyRecommendationQueueIndex: Int?
     private var nowPlayingArtwork: MPMediaItemArtwork?
     private var listenedSeconds: Double = 0
     private var hasRestoredState = false
+    private var activeUserID: String?
+    private var lastSavedProgressBucket: Int64 = -1
 
     init() {
         configureAudioSession()
@@ -75,6 +78,7 @@ final class PlayerStore: ObservableObject {
         }
         artworkTask?.cancel()
         randomQueueTask?.cancel()
+        stateSaveTask?.cancel()
     }
 
     var canGoPrevious: Bool {
@@ -151,7 +155,11 @@ final class PlayerStore: ObservableObject {
         }
     }
 
-    private func startPlayback(_ track: Track, streamURLOverride: String? = nil) {
+    private func startPlayback(
+        _ track: Track,
+        streamURLOverride: String? = nil,
+        autoplay: Bool = true
+    ) {
         if streamURLOverride == nil {
             fallbackTrackID = nil
         }
@@ -173,9 +181,15 @@ final class PlayerStore: ObservableObject {
         elapsed = 0
         duration = Double(track.durationMs) / 1_000
         listenedSeconds = 0
-        player.play()
-        isPlaying = true
+        lastSavedProgressBucket = -1
+        if autoplay {
+            player.play()
+        } else {
+            player.pause()
+        }
+        isPlaying = autoplay
         loadNowPlayingArtwork(for: track)
+        persistState()
     }
 
     func previous() {
@@ -240,10 +254,25 @@ final class PlayerStore: ObservableObject {
 
     func stop() {
         submitCurrentPlayback()
+        clearLocalPlayback()
+    }
+
+    func beginSession(userID: String) {
+        guard activeUserID != userID else { return }
+        if activeUserID != nil {
+            clearLocalPlayback()
+        }
+        activeUserID = userID
+        hasRestoredState = false
+        activeAPI = .shared
+    }
+
+    private func clearLocalPlayback() {
         player.pause()
         player.replaceCurrentItem(with: nil)
         artworkTask?.cancel()
         randomQueueTask?.cancel()
+        stateSaveTask?.cancel()
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
         playbackQueue = []
@@ -251,11 +280,16 @@ final class PlayerStore: ObservableObject {
         isLoadingQueue = false
         queueErrorMessage = nil
         currentTrack = nil
+        fallbackTrackID = nil
+        queueType = "RANDOM"
+        queueContextID = nil
+        offlineURLProvider = nil
         listenedSeconds = 0
         elapsed = 0
         duration = 0
         isPlaying = false
         nowPlayingArtwork = nil
+        lastSavedProgressBucket = -1
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
@@ -271,18 +305,21 @@ final class PlayerStore: ObservableObject {
         player.play()
         isPlaying = true
         updateNowPlaying()
+        persistState()
     }
 
     private func pause() {
         player.pause()
         isPlaying = false
         updateNowPlaying()
+        persistState()
     }
 
     func seek(to seconds: Double) {
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
         elapsed = seconds
         updateNowPlaying()
+        persistState()
     }
 
     private func configureAudioSession() {
@@ -304,6 +341,7 @@ final class PlayerStore: ObservableObject {
                 if self?.isPlaying == true {
                     self?.listenedSeconds += 0.5
                 }
+                self?.persistProgressIfNeeded()
             }
         }
     }
@@ -369,6 +407,7 @@ final class PlayerStore: ObservableObject {
         }
 
         if offset > 0 {
+            guard PlaybackQueueTransition.canLeaveQueue(automatic: automatic) else { return }
             if queueType != "RANDOM" {
                 let api = activeAPI
                 let completedType = queueType
@@ -415,6 +454,7 @@ final class PlayerStore: ObservableObject {
             playbackQueue = [currentTrack] + playbackQueue
                 .filter { $0.id != currentTrack.id }
                 .shuffled()
+            persistState()
         }
     }
 
@@ -438,6 +478,7 @@ final class PlayerStore: ObservableObject {
                 self.playbackQueue = Array(([track] + remaining).prefix(50))
                 self.isLoadingQueue = false
                 self.updateNowPlaying()
+                self.persistState()
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.isLoadingQueue = false
@@ -498,58 +539,140 @@ final class PlayerStore: ObservableObject {
     }
 
     func saveState() {
-        guard let currentTrack else { return }
         submitCurrentPlayback()
-        let api = activeAPI
-        let type = queueType
-        let context = queueContextID
-        let progress = Int64(max(0, elapsed) * 1_000)
-        Task {
-            try? await api.savePlaybackState(
-                queueType: type,
-                queueContextID: context,
-                trackID: currentTrack.id,
-                queueTrackIDs: playbackQueue.map(\.id),
-                progressMs: progress
+        persistState()
+    }
+
+    func flushState() async {
+        guard let snapshot = playbackStateSnapshot() else { return }
+        submitCurrentPlayback()
+        stateSaveTask?.cancel()
+        try? await snapshot.api.savePlaybackState(
+            queueType: snapshot.queueType,
+            queueContextID: snapshot.queueContextID,
+            trackID: snapshot.trackID,
+            queueTrackIDs: snapshot.queueTrackIDs,
+            progressMs: snapshot.progressMs
+        )
+    }
+
+    private func persistProgressIfNeeded() {
+        guard currentTrack != nil else { return }
+        let bucket = Int64(max(0, elapsed)) / 5
+        guard bucket != lastSavedProgressBucket else { return }
+        lastSavedProgressBucket = bucket
+        persistState()
+    }
+
+    private func persistState() {
+        guard let snapshot = playbackStateSnapshot() else { return }
+        stateSaveTask?.cancel()
+        stateSaveTask = Task {
+            try? await snapshot.api.savePlaybackState(
+                queueType: snapshot.queueType,
+                queueContextID: snapshot.queueContextID,
+                trackID: snapshot.trackID,
+                queueTrackIDs: snapshot.queueTrackIDs,
+                progressMs: snapshot.progressMs
             )
         }
     }
 
+    private func playbackStateSnapshot() -> PlaybackStateSnapshot? {
+        guard let currentTrack else { return nil }
+        let api = activeAPI
+        return PlaybackStateSnapshot(
+            api: api,
+            queueType: queueType,
+            queueContextID: queueContextID,
+            trackID: currentTrack.id,
+            queueTrackIDs: PlaybackRestoration.orderedTrackIDs(
+                currentTrackID: currentTrack.id,
+                queueTrackIDs: playbackQueue.map(\.id)
+            ),
+            progressMs: Int64(max(0, elapsed) * 1_000)
+        )
+    }
+
     func restoreStateIfNeeded(offlineURLProvider: @escaping (Track) -> URL?) async {
         guard !hasRestoredState, currentTrack == nil else { return }
-        hasRestoredState = true
         do {
-            guard let state = try await activeAPI.playbackState() else { return }
+            guard let state = try await activeAPI.playbackState() else {
+                hasRestoredState = true
+                return
+            }
             var restoredQueue: [Track] = []
-            let trackIDs = state.queueTrackIds.isEmpty ? [state.trackId] : state.queueTrackIds
+            let trackIDs = PlaybackRestoration.orderedTrackIDs(
+                currentTrackID: state.trackId,
+                queueTrackIDs: state.queueTrackIds
+            )
             for id in trackIDs {
                 if let track = try? await activeAPI.track(id: id) { restoredQueue.append(track) }
             }
-            guard let track = restoredQueue.first(where: { $0.id == state.trackId }) else { return }
+            guard let restoredTrackID = PlaybackRestoration.currentTrackID(
+                preferredID: state.trackId,
+                availableIDs: restoredQueue.map(\.id)
+            ), let track = restoredQueue.first(where: { $0.id == restoredTrackID }) else {
+                hasRestoredState = true
+                return
+            }
             self.offlineURLProvider = offlineURLProvider
             queueType = state.queueType
             queueContextID = state.queueContextId
             queueTitle = state.queueType == "DISCOVERY" ? "发现" : (state.queueContextId ?? "随机播放")
             playbackQueue = restoredQueue
-            startPlayback(track)
-            seek(to: Double(state.progressMs) / 1_000)
-            pause()
-            if state.queueType == "RANDOM" { loadRandomQueue(keeping: track) }
+            startPlayback(track, autoplay: false)
+            if track.id == state.trackId {
+                seek(to: Double(state.progressMs) / 1_000)
+            }
+            if hasConnectedHeadphones {
+                resume()
+            }
+            hasRestoredState = true
         } catch {
+            hasRestoredState = false
             queueErrorMessage = error.localizedDescription
         }
     }
 
-    func prepareRandomQueueIfNeeded() async {
+    func prepareRandomQueueIfNeeded(
+        offlineURLProvider: @escaping (Track) -> URL?
+    ) async {
         guard currentTrack == nil, playbackQueue.isEmpty else { return }
         do {
             playbackQueue = try await activeAPI.randomTracks(limit: 50)
             queueTitle = "随机播放"
             queueType = "RANDOM"
             queueContextID = nil
+            guard let first = playbackQueue.first else {
+                queueErrorMessage = "曲库中没有可播放的歌曲"
+                return
+            }
+            self.offlineURLProvider = offlineURLProvider
+            startPlayback(first, autoplay: hasConnectedHeadphones)
         } catch {
             queueErrorMessage = error.localizedDescription
         }
+    }
+
+    private var hasConnectedHeadphones: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
+            switch output.portType {
+            case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE:
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    private struct PlaybackStateSnapshot {
+        let api: APIClient
+        let queueType: String
+        let queueContextID: String?
+        let trackID: String
+        let queueTrackIDs: [String]
+        let progressMs: Int64
     }
 
     private func configureRemoteCommands() {

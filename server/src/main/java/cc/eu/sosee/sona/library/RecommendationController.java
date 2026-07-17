@@ -25,7 +25,7 @@ import static org.springframework.http.HttpStatus.BAD_REQUEST;
 class RecommendationController {
 
     private static final Set<String> CHART_REGIONS = Set.of("ALL", "CN", "KR", "US", "JP");
-    private static final int DAILY_LIMIT = 60;
+    private static final int DAILY_LIMIT = 180;
 
     private final TrackStore trackStore;
     private final Clock clock;

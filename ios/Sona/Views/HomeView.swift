@@ -42,7 +42,9 @@ struct HomeView: View {
             return SonaCollection(
                 id: "playlist-\(playlist.id)",
                 title: playlist.name,
-                subtitle: playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
+                subtitle: playlist.isDirectoryPlaylist
+                    ? "\(playlist.poolType == "DISCOVERY" ? "发现歌曲池" : "正常歌曲池") · Sona"
+                    : playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
                 artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
                 tracks: tracks,
                 shape: .square
@@ -90,7 +92,7 @@ struct HomeView: View {
 
     private var dailyCollections: [SonaCollection] {
         var groups = Array(repeating: [Track](), count: min(6, dailyTracks.count))
-        for (index, track) in dailyTracks.prefix(60).enumerated() {
+        for (index, track) in dailyTracks.prefix(180).enumerated() {
             groups[index % groups.count].append(track)
         }
         return groups.enumerated().map { index, tracks in

@@ -7,6 +7,10 @@ CHOICE="${1:-}"
 OUTPUT_PATH="${2:-}"
 
 if [[ -z "$CHOICE" ]]; then
+    if [[ ! -t 0 ]]; then
+        echo "非交互终端请显式指定格式：./ios/build_package.sh dmg [输出路径]" >&2
+        exit 2
+    fi
     echo "请选择打包格式："
     echo "  1. IPA（默认）"
     echo "  2. DMG（Apple Silicon arm64）"

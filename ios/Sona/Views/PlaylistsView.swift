@@ -36,6 +36,7 @@ struct PlaylistsView: View {
                                     }
                                 }
                             }
+                            .deleteDisabled(playlist.isDirectoryPlaylist)
                         }
                         .onDelete { indexes in
                             for index in indexes {
