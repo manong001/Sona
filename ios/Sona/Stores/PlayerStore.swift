@@ -46,6 +46,8 @@ final class PlayerStore: ObservableObject {
     private var timeObserver: Any?
     private var itemEndObserver: NSObjectProtocol?
     private var itemFailureObserver: NSObjectProtocol?
+    private var audioInterruptionObserver: NSObjectProtocol?
+    private var resumeAfterInterruption = false
     private var fallbackTrackID: String?
     private var artworkTask: Task<Void, Never>?
     private var randomQueueTask: Task<Void, Never>?
@@ -65,6 +67,7 @@ final class PlayerStore: ObservableObject {
         observeTime()
         observeItemEnd()
         observeItemFailure()
+        observeAudioInterruptions()
         configureRemoteCommands()
     }
 
@@ -77,6 +80,9 @@ final class PlayerStore: ObservableObject {
         }
         if let itemFailureObserver {
             NotificationCenter.default.removeObserver(itemFailureObserver)
+        }
+        if let audioInterruptionObserver {
+            NotificationCenter.default.removeObserver(audioInterruptionObserver)
         }
         artworkTask?.cancel()
         randomQueueTask?.cancel()
@@ -302,6 +308,7 @@ final class PlayerStore: ObservableObject {
         elapsed = 0
         duration = 0
         isPlaying = false
+        resumeAfterInterruption = false
         nowPlayingArtwork = nil
         lastSavedProgressBucket = -1
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -327,6 +334,7 @@ final class PlayerStore: ObservableObject {
     private func pause() {
         player.pause()
         isPlaying = false
+        resumeAfterInterruption = false
         updateNowPlaying()
         persistState()
     }
@@ -401,6 +409,49 @@ final class PlayerStore: ObservableObject {
                 self.fallbackTrackID = track.id
                 self.startPlayback(track, streamURLOverride: "/api/v1/tracks/\(track.id)/fallback-stream")
             }
+        }
+    }
+
+    private func observeAudioInterruptions() {
+        audioInterruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                self?.handleAudioInterruption(notification)
+            }
+        }
+    }
+
+    private func handleAudioInterruption(_ notification: Notification) {
+        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+
+        switch type {
+        case .began:
+            resumeAfterInterruption = isPlaying
+            player.pause()
+            isPlaying = false
+            updateNowPlaying()
+        case .ended:
+            let shouldResumePlayback = resumeAfterInterruption
+            resumeAfterInterruption = false
+            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+            guard shouldResumePlayback,
+                  options.contains(.shouldResume),
+                  currentTrack != nil else { return }
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+                player.play()
+                isPlaying = true
+            } catch {
+                isPlaying = false
+            }
+            updateNowPlaying()
+        @unknown default:
+            break
         }
     }
 

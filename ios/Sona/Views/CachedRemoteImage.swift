@@ -55,6 +55,31 @@ final class RemoteImageCache: @unchecked Sendable {
         return bytes
     }
 
+    func prefetch(urls: [URL], maxConcurrentDownloads: Int = 4) async {
+        var iterator = Array(Set(urls)).makeIterator()
+        let concurrency = max(1, maxConcurrentDownloads)
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<concurrency {
+                guard let url = iterator.next() else { break }
+                group.addTask { [self] in
+                    _ = try? await data(for: url)
+                }
+            }
+
+            while await group.next() != nil {
+                guard !Task.isCancelled else {
+                    group.cancelAll()
+                    return
+                }
+                guard let url = iterator.next() else { continue }
+                group.addTask { [self] in
+                    _ = try? await data(for: url)
+                }
+            }
+        }
+    }
+
     func removeAll() {
         images.removeAllObjects()
         data.removeAllObjects()

@@ -4,7 +4,7 @@ import UIKit
 struct ArtworkView: View {
     let path: String?
     var cornerRadius: CGFloat = 8
-    var thumbnailSize: Int? = nil
+    var thumbnailSize: Int? = 768
 
     var body: some View {
         CachedRemoteImage(url: artworkURL) { image in
@@ -33,16 +33,20 @@ struct ArtworkView: View {
     }
 
     private var artworkURL: URL? {
-        guard let path else { return nil }
-        let url = APIClient.shared.url(for: path)
-        guard let thumbnailSize,
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return url
-        }
-        var queryItems = components.queryItems ?? []
-        queryItems.removeAll { $0.name == "size" }
-        queryItems.append(URLQueryItem(name: "size", value: String(thumbnailSize)))
-        components.queryItems = queryItems
-        return components.url
+        sonaArtworkURL(path: path, thumbnailSize: thumbnailSize)
     }
+}
+
+func sonaArtworkURL(path: String?, thumbnailSize: Int?) -> URL? {
+    guard let path else { return nil }
+    let url = APIClient.shared.url(for: path)
+    guard let thumbnailSize,
+          var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+        return url
+    }
+    var queryItems = components.queryItems ?? []
+    queryItems.removeAll { $0.name == "size" }
+    queryItems.append(URLQueryItem(name: "size", value: String(thumbnailSize)))
+    components.queryItems = queryItems
+    return components.url
 }

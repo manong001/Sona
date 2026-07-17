@@ -287,7 +287,7 @@ private struct SonaMosaicArtwork: View {
 
 struct SonaMediaCard: View {
     let collection: SonaCollection
-    var width: CGFloat = 158
+    var width: CGFloat = 168
 
     private let dailyColors: [Color] = [
         Color(red: 0.13, green: 0.91, blue: 0.91),
@@ -324,6 +324,8 @@ struct SonaMediaCard: View {
 
     private func dailyArtwork(color: Color) -> some View {
         SonaCollectionArtwork(collection: collection, size: width)
+            .frame(width: width, height: width * 0.75)
+            .clipped()
             .overlay(alignment: .topLeading) {
                 Image(systemName: "music.note")
                     .font(.caption.bold())
@@ -339,7 +341,7 @@ struct SonaMediaCard: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 9)
-                    .frame(height: 34)
+                    .frame(height: 26)
                     .background(color.opacity(0.94))
                     .padding(6)
             }

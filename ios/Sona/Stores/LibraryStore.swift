@@ -24,6 +24,7 @@ final class LibraryStore: ObservableObject {
     private var searchQuery = ""
     private var searchCursor: String?
     private var searchGeneration = 0
+    private var artworkPrefetchTask: Task<Void, Never>?
 
     init(api: APIClient = .shared) {
         self.api = api
@@ -42,6 +43,7 @@ final class LibraryStore: ObservableObject {
             tracks = page.items
             nextCursor = page.nextCursor
             loadedQuery = query
+            prefetchArtwork(for: tracks)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -67,6 +69,7 @@ final class LibraryStore: ObservableObject {
             let loadedIDs = Set(tracks.map(\.id))
             tracks.append(contentsOf: page.items.filter { !loadedIDs.contains($0.id) })
             nextCursor = page.nextCursor
+            prefetchArtwork(for: tracks)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -196,6 +199,19 @@ final class LibraryStore: ObservableObject {
         }
         if let index = searchResults.firstIndex(where: { $0.id == track.id }) {
             searchResults[index] = track
+        }
+        prefetchArtwork(for: [track])
+    }
+
+    private func prefetchArtwork(for tracks: [Track]) {
+        let urls = tracks.compactMap {
+            sonaArtworkURL(path: $0.artworkURL, thumbnailSize: 768)
+        }
+        guard !urls.isEmpty else { return }
+
+        artworkPrefetchTask?.cancel()
+        artworkPrefetchTask = Task(priority: .utility) {
+            await RemoteImageCache.shared.prefetch(urls: urls)
         }
     }
 }

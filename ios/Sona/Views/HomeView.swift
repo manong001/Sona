@@ -648,40 +648,42 @@ private struct HomeRadioCard: View {
     let collection: SonaCollection
     let color: Color
 
+    private let cardWidth: CGFloat = 168
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Image(systemName: "waveform.circle.fill")
-                        .font(.system(size: 24, weight: .bold))
+                        .font(.system(size: 18, weight: .bold))
                     Spacer()
                     Text("电台")
-                        .font(.subheadline.weight(.black))
+                        .font(.caption.weight(.black))
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 13)
+                .padding(.horizontal, 10)
+                .padding(.top, 9)
 
-                Spacer(minLength: 6)
+                Spacer(minLength: 4)
                 RadioArtworkCluster(paths: collection.artworkURLs)
-                    .frame(height: 112)
-                Spacer(minLength: 6)
+                    .frame(height: 76)
+                Spacer(minLength: 4)
 
                 Text(collection.title)
-                    .font(.system(size: 30, weight: .black))
+                    .font(.system(size: 22, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 13)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 9)
             }
             .foregroundStyle(.black)
-            .frame(width: 250, height: 250)
+            .frame(width: cardWidth, height: cardWidth)
             .background(color, in: RoundedRectangle(cornerRadius: 8))
 
             Text(collection.subtitle)
                 .font(.subheadline)
                 .foregroundStyle(Color.sonaSecondaryText)
                 .lineLimit(2)
-                .frame(width: 250, alignment: .leading)
+                .frame(width: cardWidth, alignment: .leading)
         }
     }
 }
@@ -690,12 +692,12 @@ private struct RadioArtworkCluster: View {
     let paths: [String]
 
     var body: some View {
-        HStack(spacing: -18) {
-            radioArtwork(index: 1, size: 78)
+        HStack(spacing: -12) {
+            radioArtwork(index: 1, size: 52)
                 .zIndex(0)
-            radioArtwork(index: 0, size: 124)
+            radioArtwork(index: 0, size: 84)
                 .zIndex(1)
-            radioArtwork(index: 2, size: 78)
+            radioArtwork(index: 2, size: 52)
                 .zIndex(0)
         }
         .frame(maxWidth: .infinity)
@@ -721,8 +723,8 @@ private struct MadeForYouCard: View {
     let colors: [Color]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 14) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 12) {
                 artwork
                 VStack(alignment: .leading, spacing: 5) {
                     Text(collection.title)
@@ -739,24 +741,24 @@ private struct MadeForYouCard: View {
                     Button("加入播放队列", systemImage: "text.badge.plus") { addToQueue() }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.title3.bold())
+                        .font(.body.bold())
                         .foregroundStyle(.white)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 32, height: 32)
                 }
             }
 
             Text("\(collection.tracks.count) 首歌曲 · \(collection.subtitle)")
                 .font(.body)
                 .foregroundStyle(.white.opacity(0.76))
-                .lineLimit(2)
+                .lineLimit(1)
 
             HStack(spacing: 14) {
                 Button { play(shuffled: true) } label: {
                     Label("试听歌单", systemImage: "speaker.wave.2.fill")
-                        .font(.subheadline.weight(.medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .frame(height: 44)
+                        .padding(.horizontal, 13)
+                        .frame(height: 36)
                         .background(.black.opacity(0.38), in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -765,7 +767,7 @@ private struct MadeForYouCard: View {
 
                 Button { addToQueue() } label: {
                     Image(systemName: isQueued ? "checkmark.circle.fill" : "plus.circle")
-                        .font(.system(size: 31, weight: .medium))
+                        .font(.system(size: 27, weight: .medium))
                         .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
@@ -773,17 +775,18 @@ private struct MadeForYouCard: View {
 
                 Button { play(shuffled: false) } label: {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.black)
-                        .frame(width: 58, height: 58)
+                        .frame(width: 36, height: 36)
                         .background(.white, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("播放歌单")
             }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 246, alignment: .leading)
+        .padding(12)
+        .frame(height: 184)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: 14)
@@ -792,7 +795,7 @@ private struct MadeForYouCard: View {
 
     private var artwork: some View {
         ArtworkView(path: collection.artworkURL, cornerRadius: 5, thumbnailSize: 512)
-            .frame(width: 108, height: 108)
+            .frame(width: 88, height: 88)
             .overlay(alignment: .topLeading) {
                 Image(systemName: "waveform.circle.fill")
                     .font(.caption.bold())
