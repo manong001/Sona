@@ -4,13 +4,19 @@ import UniformTypeIdentifiers
 import PhotosUI
 
 struct SettingsView: View {
+    let availableRelease: AppReleaseInfo?
+
+    init(availableRelease: AppReleaseInfo? = nil) {
+        self.availableRelease = availableRelease
+    }
+
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var offline: OfflineStore
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
-    @AppStorage("appIconPreference") private var appIconPreference = "girl"
+    @State private var appIconPreference: String?
     @State private var showsImporter = false
     @State private var importMessage: String?
     @State private var appIconError: String?
@@ -208,8 +214,15 @@ struct SettingsView: View {
             .navigationTitle("设置")
             .toolbarBackground(Color.sonaBackground, for: .navigationBar)
             .onAppear {
-                appIconPreference = UIApplication.shared.alternateIconName == "SpotifyIcon"
-                    ? "spotify" : "girl"
+                appIconPreference = UIApplication.shared.alternateIconName == nil
+                    ? "girl" : "spotify"
+                if let availableRelease,
+                   availableRelease.isNewer(
+                    thanVersion: currentVersion,
+                    build: currentBuild
+                   ) {
+                    releaseInfo = availableRelease
+                }
             }
             .fileImporter(
                 isPresented: $showsImporter,

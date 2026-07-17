@@ -5,6 +5,7 @@ struct MacMainView: View {
     @EnvironmentObject private var player: PlayerStore
     @Binding var selectedTab: SonaTab
     @Binding var showsNowPlaying: Bool
+    let availableRelease: AppReleaseInfo?
     @State private var showsQueue = true
     @State private var showsCompactQueue = false
 
@@ -80,7 +81,7 @@ struct MacMainView: View {
         case .library:
             MusicLibraryView(openDrawer: {})
         case .settings:
-            SettingsView()
+            SettingsView(availableRelease: availableRelease)
         }
     }
 }

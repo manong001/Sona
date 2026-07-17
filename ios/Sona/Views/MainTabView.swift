@@ -14,6 +14,9 @@ struct MainTabView: View {
     @State private var showsUserManagement = false
     @State private var showsAchievements = false
     @State private var showsSocial = false
+    @State private var hasCheckedForUpdate = false
+    @State private var availableRelease: AppReleaseInfo?
+    @State private var showsUpdateAlert = false
     @State private var selectedTab: SonaTab = .home
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
@@ -24,7 +27,8 @@ struct MainTabView: View {
 #if targetEnvironment(macCatalyst)
             MacMainView(
                 selectedTab: $selectedTab,
-                showsNowPlaying: $showsNowPlaying
+                showsNowPlaying: $showsNowPlaying,
+                availableRelease: availableRelease
             )
 #else
         ZStack(alignment: .leading) {
@@ -41,7 +45,7 @@ struct MainTabView: View {
                 tabContent(MusicLibraryView(openDrawer: openDrawer))
                     .tabItem { Label("音乐库", systemImage: "books.vertical.fill") }
                     .tag(SonaTab.library)
-                tabContent(SettingsView())
+                tabContent(SettingsView(availableRelease: availableRelease))
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
                     .tag(SonaTab.settings)
             }
@@ -121,6 +125,14 @@ struct MainTabView: View {
         .sheet(isPresented: $showsSocial) {
             SocialHubView()
         }
+        .alert("发现新版本", isPresented: $showsUpdateAlert) {
+            Button("稍后", role: .cancel) { }
+            Button("前往更新") {
+                selectedTab = .settings
+            }
+        } message: {
+            Text(updateAlertMessage)
+        }
         .task {
             guard let userID = session.currentUser?.id else { return }
             player.configureFavoriteCommand(
@@ -136,6 +148,9 @@ struct MainTabView: View {
             await personal.refresh()
             await player.restoreStateIfNeeded { offline.localURL(for: $0) }
             await player.prepareRandomQueueIfNeeded { offline.localURL(for: $0) }
+        }
+        .task {
+            await checkForUpdateOnLaunch()
         }
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }
@@ -170,6 +185,44 @@ struct MainTabView: View {
 
     private func closeDrawer() {
         showsDrawer = false
+    }
+
+    @MainActor
+    private func checkForUpdateOnLaunch() async {
+        guard !hasCheckedForUpdate else { return }
+        hasCheckedForUpdate = true
+        do {
+            let release = try await APIClient.shared.latestAppRelease()
+            guard release.isNewer(
+                thanVersion: currentVersion,
+                build: currentBuild
+            ) else { return }
+            availableRelease = release
+            showsUpdateAlert = true
+        } catch {
+            // 启动检查静默失败，用户仍可在设置页手动重试。
+        }
+    }
+
+    private var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+    }
+
+    private var currentBuild: Int {
+        Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") ?? 0
+    }
+
+    private var updateAlertMessage: String {
+        guard let release = availableRelease else { return "已有新版本可用。" }
+        var values = ["Sona \(release.version ?? "新版本") 已发布。"]
+        if let fileSize = release.fileSizeText {
+            values.append("安装包大小：\(fileSize)")
+        }
+        if let notes = release.notes,
+           !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            values.append(notes)
+        }
+        return values.joined(separator: "\n")
     }
 }
 
