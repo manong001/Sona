@@ -362,6 +362,8 @@ struct SonaTrackListView: View {
     @State private var removedTrackIDs = Set<String>()
     @State private var loadedPlaylistTracks: [String: Track] = [:]
     @State private var isLoadingPlaylistTracks = false
+    @State private var editedTracks: [String: Track] = [:]
+    @State private var editingTrack: Track?
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let dailyRecommendationQueues: [[Track]]?
@@ -386,19 +388,23 @@ struct SonaTrackListView: View {
     }
 
     private var tracks: [Track] {
+        let values: [Track]
         if collection.id == "liked-songs" {
             if !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty {
-                return personal.favoriteTracks
+                values = personal.favoriteTracks
+            } else {
+                values = library.tracks.filter { personal.favoriteIDs.contains($0.id) }
             }
-            return library.tracks.filter { personal.favoriteIDs.contains($0.id) }
-        }
-        if let playlist {
-            return playlist.trackIDs.compactMap {
+        } else if let playlist {
+            values = playlist.trackIDs.compactMap {
                 library.track(id: $0) ?? loadedPlaylistTracks[$0]
-            }.filter { !removedTrackIDs.contains($0.id) }
+            }
+        } else {
+            values = loadsMoreFromLibrary ? library.tracks : collection.tracks
         }
-        let values = loadsMoreFromLibrary ? library.tracks : collection.tracks
-        return values.filter { !removedTrackIDs.contains($0.id) }
+        return values
+            .map { editedTracks[$0.id] ?? $0 }
+            .filter { !removedTrackIDs.contains($0.id) }
     }
 
     private var trackCount: Int {
@@ -559,6 +565,11 @@ struct SonaTrackListView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 6)
                         .contextMenu {
+                            if session.currentUser?.isAdmin == true {
+                                Button("编辑歌曲名和歌手", systemImage: "pencil") {
+                                    editingTrack = track
+                                }
+                            }
                             Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
                                 player.playNext(track)
                             }
@@ -635,6 +646,16 @@ struct SonaTrackListView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .task(id: playlist?.trackIDs) {
             await loadMissingPlaylistTracks()
+        }
+        .sheet(item: $editingTrack) { track in
+            TrackIdentityEditorView(track: track) { updated in
+                editedTracks[updated.id] = updated
+                library.applyTrackUpdate(updated)
+                personal.applyTrackUpdate(updated)
+                if loadedPlaylistTracks[updated.id] != nil {
+                    loadedPlaylistTracks[updated.id] = updated
+                }
+            }
         }
         .fileImporter(
             isPresented: $showsImporter,

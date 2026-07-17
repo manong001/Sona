@@ -507,6 +507,21 @@ paths:
       responses:
         "204":
           description: 歌单已删除
+  /me/playlists/{playlistId}/rescrape:
+    post:
+      operationId: forceRescrapePlaylist
+      description: 管理员强制覆盖刮削歌单内歌曲，包括人工编辑信息；不处理歌单外歌曲
+      parameters:
+        - $ref: "#/components/parameters/PlaylistId"
+      responses:
+        "202":
+          description: 歌单覆盖刮削已启动
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScanStatus"}
+        "403": {description: 仅管理员可执行强制覆盖刮削}
+        "404": {description: 歌单不存在}
+        "409": {description: 已有扫描任务正在运行}
   /me/playlists/{playlistId}/tracks/{trackId}:
     put:
       operationId: addPlaylistTrack

@@ -2,6 +2,8 @@ package cc.eu.sosee.sona.personal;
 
 import cc.eu.sosee.sona.auth.AuthenticatedUser;
 import cc.eu.sosee.sona.auth.UserRole;
+import cc.eu.sosee.sona.library.ScanCoordinator;
+import cc.eu.sosee.sona.library.ScanStatus;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -45,15 +47,18 @@ class PersonalController {
     private final PersonalRepository repository;
     private final DirectoryImportService directoryImportService;
     private final AchievementService achievementService;
+    private final ScanCoordinator scanCoordinator;
 
     PersonalController(
         PersonalRepository repository,
         DirectoryImportService directoryImportService,
-        AchievementService achievementService
+        AchievementService achievementService,
+        ScanCoordinator scanCoordinator
     ) {
         this.repository = repository;
         this.directoryImportService = directoryImportService;
         this.achievementService = achievementService;
+        this.scanCoordinator = scanCoordinator;
     }
 
     @GetMapping("/favorites")
@@ -220,6 +225,21 @@ class PersonalController {
         return repository.updateDirectoryPlaylist(
             user.id(), playlistId, request.name().strip(), request.poolType()
         ).orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Directory playlist not found"));
+    }
+
+    @PostMapping("/playlists/{playlistId}/rescrape")
+    ResponseEntity<ScanStatus> forceRescrapePlaylist(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId
+    ) {
+        if (user.role() != UserRole.ADMIN) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        var playlist = repository.playlistForScan(user.id(), playlistId)
+            .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Playlist not found"));
+        return ResponseEntity.accepted().body(scanCoordinator.forceOverwriteTracks(
+            "歌单 · " + playlist.name(), playlist.trackIds()
+        ));
     }
 
     @PutMapping("/playlists/{playlistId}/tracks/{trackId}")

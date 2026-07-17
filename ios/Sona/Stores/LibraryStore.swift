@@ -155,6 +155,27 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func forceRescrapePlaylist(id: String) async -> Bool {
+        errorMessage = nil
+        do {
+            scanStatus = try await api.forceRescrapePlaylist(id: id)
+            repeat {
+                try await Task.sleep(for: .seconds(1))
+                scanStatus = try await api.scanStatus()
+            } while scanStatus?.state == "RUNNING"
+            if scanStatus?.state == "FAILED" {
+                errorMessage = scanStatus?.message ?? "歌单覆盖刮削失败"
+                return false
+            }
+            await refresh(query: loadedQuery)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func applyFilters(
         sort: String, genre: String?, codec: String?, metadataStatus: String?
     ) async {
@@ -167,6 +188,15 @@ final class LibraryStore: ObservableObject {
 
     func track(id: String) -> Track? {
         trackLookup.track(id: id)
+    }
+
+    func applyTrackUpdate(_ track: Track) {
+        if let index = tracks.firstIndex(where: { $0.id == track.id }) {
+            tracks[index] = track
+        }
+        if let index = searchResults.firstIndex(where: { $0.id == track.id }) {
+            searchResults[index] = track
+        }
     }
 }
 
@@ -201,6 +231,12 @@ final class PersonalStore: ObservableObject {
             history = try await api.history().items
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func applyTrackUpdate(_ track: Track) {
+        if let index = favoriteTracks.firstIndex(where: { $0.id == track.id }) {
+            favoriteTracks[index] = track
         }
     }
 

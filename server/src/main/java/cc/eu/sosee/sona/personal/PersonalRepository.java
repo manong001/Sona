@@ -256,6 +256,18 @@ class PersonalRepository {
             .list();
     }
 
+    Optional<PlaylistScanData> playlistForScan(String userId, String playlistId) {
+        return jdbcClient.sql("""
+                SELECT name FROM playlists
+                WHERE id = :playlistId AND (user_id = :userId OR featured = 1)
+                """)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .query(String.class)
+            .optional()
+            .map(name -> new PlaylistScanData(name, trackIds(userId, playlistId)));
+    }
+
     PlaylistData createPlaylist(String userId, String name) {
         var id = UUID.randomUUID().toString();
         var createdAt = clock.millis();
@@ -752,6 +764,9 @@ class PersonalRepository {
         long createdAt, boolean featured,
         String directoryPath, String poolType
     ) {
+    }
+
+    record PlaylistScanData(String name, List<String> trackIds) {
     }
 
     private record PlaylistArtwork(String trackId, Path path) {

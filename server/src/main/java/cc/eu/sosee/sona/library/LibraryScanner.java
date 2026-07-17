@@ -99,6 +99,29 @@ class LibraryScanner {
         return result(counts);
     }
 
+    ScanResult scanTrackIds(
+        List<String> trackIds, ScrapeMode mode, Consumer<ScanResult> progress
+    ) {
+        var counts = new int[5];
+        var errors = new ArrayList<String>();
+        trackIds.stream().distinct().forEach(trackId -> {
+            counts[0]++;
+            progress.accept(result(counts));
+            var track = trackStore.findById(trackId);
+            if (track.isPresent()) {
+                scanFile(track.get().path(), mode, counts, errors);
+            } else {
+                counts[4]++;
+                if (errors.size() < 50) {
+                    errors.add(trackId + "：歌曲已不存在，已跳过");
+                }
+            }
+            progress.accept(result(counts));
+        });
+        lastErrors.set(List.copyOf(errors));
+        return result(counts);
+    }
+
     List<String> lastErrors() {
         return lastErrors.get();
     }
@@ -140,9 +163,8 @@ class LibraryScanner {
                 track -> "NEEDS_REVIEW".equals(track.metadataStatus()) && track.updatedAt() == 0
             );
             var overwriteExisting = existing.filter(track -> shouldOverwrite(track, mode));
-            var refreshExisting = existing.filter(
-                track -> mode != ScrapeMode.STANDARD && !track.manualEdited()
-            );
+            var refreshExisting = existing.filter(track -> mode != ScrapeMode.STANDARD
+                && (!track.manualEdited() || mode == ScrapeMode.FORCE_OVERWRITE));
             var titleHint = refreshExisting.or(() -> retry).map(TrackRecord::title).orElse("");
             var artistHint = refreshExisting.or(() -> retry).map(TrackRecord::artist).orElse("");
             var albumHint = refreshExisting.or(() -> retry).map(TrackRecord::album).orElse("");
@@ -217,6 +239,10 @@ class LibraryScanner {
                 artworkPath = artworkStore.save(id, scraped.artwork(), scraped.artworkMimeType());
                 artworkSource = "SCRAPED";
             }
+            var forcedIdentity = mode == ScrapeMode.FORCE_OVERWRITE
+                && (hasText(scraped.title()) || hasText(scraped.artist()) || hasText(scraped.album()));
+            var manualEdited = existing.map(TrackRecord::manualEdited).orElse(false)
+                && !forcedIdentity;
             var now = clock.millis();
             var track = new TrackRecord(
                 id,
@@ -236,9 +262,10 @@ class LibraryScanner {
                 lyrics.plain(),
                 lyrics.synced(),
                 lyrics.source(),
-                scraped.hasValues() ? "SCRAPED" : refreshExisting.map(TrackRecord::metadataStatus)
-                    .orElse(titleFromTag && artistFromTag ? "LOCAL" : "NEEDS_REVIEW"),
-                existing.map(TrackRecord::manualEdited).orElse(false),
+                manualEdited ? "MANUAL"
+                    : scraped.hasValues() ? "SCRAPED" : refreshExisting.map(TrackRecord::metadataStatus)
+                        .orElse(titleFromTag && artistFromTag ? "LOCAL" : "NEEDS_REVIEW"),
+                manualEdited,
                 existing.map(TrackRecord::createdAt).orElse(now),
                 now,
                 existing.map(TrackRecord::poolType).orElse("NORMAL"),
@@ -248,7 +275,9 @@ class LibraryScanner {
                 existing.map(TrackRecord::relatedGenres).orElse(List.of()),
                 artworkSource
             );
-            trackStore.save(track, overwriteExisting.isPresent());
+            trackStore.save(
+                track, overwriteExisting.isPresent(), mode == ScrapeMode.FORCE_OVERWRITE
+            );
             if (existing.isPresent()) {
                 counts[2]++;
             } else {
@@ -313,7 +342,8 @@ class LibraryScanner {
     }
 
     private boolean shouldOverwrite(TrackRecord track, ScrapeMode mode) {
-        return mode == ScrapeMode.OVERWRITE && !track.manualEdited();
+        return mode == ScrapeMode.FORCE_OVERWRITE
+            || mode == ScrapeMode.OVERWRITE && !track.manualEdited();
     }
 
     private boolean shouldRefreshMissing(TrackRecord track, ScrapeMode mode) {

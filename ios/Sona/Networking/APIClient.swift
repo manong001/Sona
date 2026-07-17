@@ -217,6 +217,13 @@ final class APIClient {
         )
     }
 
+    func forceRescrapePlaylist(id: String) async throws -> ScanStatus {
+        try await request(
+            path: "/api/v1/me/playlists/\(id)/rescrape",
+            method: "POST"
+        )
+    }
+
     func setPlaylistTrack(playlistID: String, trackID: String, isIncluded: Bool) async throws {
         try await requestVoid(
             path: "/api/v1/me/playlists/\(playlistID)/tracks/\(trackID)",

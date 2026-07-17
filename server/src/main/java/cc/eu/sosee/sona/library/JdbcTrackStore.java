@@ -63,6 +63,13 @@ class JdbcTrackStore implements TrackStore {
 
     @Override
     public void save(TrackRecord track, boolean overwriteMetadata) {
+        save(track, overwriteMetadata, false);
+    }
+
+    @Override
+    public void save(
+        TrackRecord track, boolean overwriteMetadata, boolean overwriteManualMetadata
+    ) {
         jdbcClient.sql("""
                 INSERT INTO tracks(
                     id, path, file_size, modified_at, title, normalized_title, artist, album,
@@ -78,32 +85,46 @@ class JdbcTrackStore implements TrackStore {
                 ON CONFLICT(path) DO UPDATE SET
                     file_size = excluded.file_size,
                     modified_at = excluded.modified_at,
-                    title = CASE WHEN tracks.manual_edited = 1 THEN tracks.title ELSE excluded.title END,
-                    normalized_title = CASE WHEN tracks.manual_edited = 1 THEN tracks.normalized_title ELSE excluded.normalized_title END,
-                    artist = CASE WHEN tracks.manual_edited = 1 THEN tracks.artist ELSE excluded.artist END,
-                    album = CASE WHEN tracks.manual_edited = 1 THEN tracks.album ELSE excluded.album END,
-                    track_number = CASE WHEN tracks.manual_edited = 1 THEN tracks.track_number ELSE excluded.track_number END,
+                    title = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.title ELSE excluded.title END,
+                    normalized_title = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.normalized_title ELSE excluded.normalized_title END,
+                    artist = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.artist ELSE excluded.artist END,
+                    album = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.album ELSE excluded.album END,
+                    track_number = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.track_number ELSE excluded.track_number END,
                     duration_ms = excluded.duration_ms,
                     codec = excluded.codec,
                     sample_rate = excluded.sample_rate,
                     bit_depth = excluded.bit_depth,
-                    artwork_path = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                    artwork_path = CASE WHEN :overwriteMetadata = 1
+                        AND (tracks.manual_edited = 0 OR :overwriteManualMetadata = 1)
                         THEN COALESCE(excluded.artwork_path, tracks.artwork_path)
                         ELSE COALESCE(tracks.artwork_path, excluded.artwork_path) END,
-                    artwork_source = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                    artwork_source = CASE WHEN :overwriteMetadata = 1
+                        AND (tracks.manual_edited = 0 OR :overwriteManualMetadata = 1)
                         THEN COALESCE(excluded.artwork_source, tracks.artwork_source)
                         ELSE COALESCE(tracks.artwork_source, excluded.artwork_source) END,
-                    plain_lyrics = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                    plain_lyrics = CASE WHEN :overwriteMetadata = 1
+                        AND (tracks.manual_edited = 0 OR :overwriteManualMetadata = 1)
                         THEN COALESCE(excluded.plain_lyrics, tracks.plain_lyrics)
                         ELSE COALESCE(tracks.plain_lyrics, excluded.plain_lyrics) END,
-                    synced_lyrics = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                    synced_lyrics = CASE WHEN :overwriteMetadata = 1
+                        AND (tracks.manual_edited = 0 OR :overwriteManualMetadata = 1)
                         THEN COALESCE(excluded.synced_lyrics, tracks.synced_lyrics)
                         ELSE COALESCE(tracks.synced_lyrics, excluded.synced_lyrics) END,
-                    lyrics_source = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                    lyrics_source = CASE WHEN :overwriteMetadata = 1
+                        AND (tracks.manual_edited = 0 OR :overwriteManualMetadata = 1)
                         THEN COALESCE(excluded.lyrics_source, tracks.lyrics_source)
                         ELSE COALESCE(tracks.lyrics_source, excluded.lyrics_source) END,
-                    metadata_status = CASE WHEN tracks.manual_edited = 1 THEN tracks.metadata_status ELSE excluded.metadata_status END,
-                    genre = CASE WHEN tracks.manual_edited = 1 THEN tracks.genre ELSE excluded.genre END,
+                    metadata_status = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.metadata_status ELSE excluded.metadata_status END,
+                    manual_edited = CASE WHEN :overwriteManualMetadata = 1
+                        THEN excluded.manual_edited ELSE tracks.manual_edited END,
+                    genre = CASE WHEN tracks.manual_edited = 1 AND :overwriteManualMetadata = 0
+                        THEN tracks.genre ELSE excluded.genre END,
                     updated_at = excluded.updated_at
                 """)
             .param("id", track.id())
@@ -122,6 +143,7 @@ class JdbcTrackStore implements TrackStore {
             .param("artworkPath", string(track.artworkPath()))
             .param("artworkSource", track.artworkSource())
             .param("overwriteMetadata", overwriteMetadata ? 1 : 0)
+            .param("overwriteManualMetadata", overwriteManualMetadata ? 1 : 0)
             .param("plainLyrics", track.plainLyrics())
             .param("syncedLyrics", track.syncedLyrics())
             .param("lyricsSource", track.lyricsSource())

@@ -22,6 +22,10 @@ struct MusicLibraryView: View {
     @State private var selectedGenre: String?
     @State private var selectedCodec: String?
     @State private var selectedMetadata: String?
+    @State private var editingTrack: Track?
+    @State private var pendingForceScrapePlaylist: Playlist?
+    @State private var isForceScrapingPlaylist = false
+    @State private var forceScrapeMessage: String?
     let openDrawer: () -> Void
 
     private var username: String {
@@ -104,6 +108,62 @@ struct MusicLibraryView: View {
                     Task { await personal.createPlaylist(name: name) }
                 }
             }
+        }
+        .sheet(item: $editingTrack) { track in
+            TrackIdentityEditorView(track: track) { updated in
+                library.applyTrackUpdate(updated)
+                personal.applyTrackUpdate(updated)
+            }
+        }
+        .confirmationDialog(
+            "覆盖信息刮削",
+            isPresented: Binding(
+                get: { pendingForceScrapePlaylist != nil },
+                set: { if !$0 { pendingForceScrapePlaylist = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingForceScrapePlaylist
+        ) { playlist in
+            Button("覆盖刮削 \(playlist.trackIDs.count) 首歌曲", role: .destructive) {
+                Task { await forceRescrape(playlist) }
+            }
+            Button("取消", role: .cancel) { }
+        } message: { playlist in
+            Text("将强制覆盖“\(playlist.name)”内所有歌曲的信息，包括人工编辑内容。")
+        }
+        .alert("歌单刮削", isPresented: Binding(
+            get: { forceScrapeMessage != nil },
+            set: { if !$0 { forceScrapeMessage = nil } }
+        )) {
+            Button("好") { forceScrapeMessage = nil }
+        } message: {
+            Text(forceScrapeMessage ?? "")
+        }
+        .overlay(alignment: .bottom) {
+            if isForceScrapingPlaylist {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在覆盖刮削… \(library.scanStatus?.updated ?? 0)/\(library.scanStatus?.discovered ?? 0)")
+                }
+                .font(.subheadline)
+                .padding(.horizontal, 16)
+                .frame(height: 48)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(.bottom, 20)
+            }
+        }
+    }
+
+    private func forceRescrape(_ playlist: Playlist) async {
+        isForceScrapingPlaylist = true
+        defer { isForceScrapingPlaylist = false }
+        let succeeded = await library.forceRescrapePlaylist(id: playlist.id)
+        if succeeded {
+            await personal.refresh()
+            let status = library.scanStatus
+            forceScrapeMessage = "已处理 \(status?.discovered ?? 0) 首，更新 \(status?.updated ?? 0) 首，失败 \(status?.failed ?? 0) 首。"
+        } else {
+            forceScrapeMessage = library.errorMessage ?? "歌单覆盖刮削失败"
         }
     }
 
@@ -228,6 +288,11 @@ struct MusicLibraryView: View {
                     .buttonStyle(.plain)
                     .task { await library.loadNextPageIfNeeded(currentTrack: track) }
                     .contextMenu {
+                        if session.currentUser?.isAdmin == true {
+                            Button("编辑歌曲名和歌手", systemImage: "pencil") {
+                                editingTrack = track
+                            }
+                        }
                         Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
                             player.playNext(track)
                         }
@@ -287,9 +352,17 @@ struct MusicLibraryView: View {
                 }
                 .contextMenu {
                     if selectedFilter == .playlists,
-                       personal.playlists.first(where: { $0.id == collection.id })?.isDirectoryPlaylist != true {
-                        Button("删除歌单", systemImage: "trash", role: .destructive) {
-                            Task { await personal.deletePlaylist(id: collection.id) }
+                       let playlist = personal.playlists.first(where: { $0.id == collection.id }) {
+                        if session.currentUser?.isAdmin == true {
+                            Button("覆盖信息刮削", systemImage: "arrow.triangle.2.circlepath") {
+                                pendingForceScrapePlaylist = playlist
+                            }
+                            .disabled(isForceScrapingPlaylist || playlist.trackIDs.isEmpty)
+                        }
+                        if !playlist.isDirectoryPlaylist {
+                            Button("删除歌单", systemImage: "trash", role: .destructive) {
+                                Task { await personal.deletePlaylist(id: collection.id) }
+                            }
                         }
                     }
                 }
@@ -385,6 +458,81 @@ struct MusicLibraryView: View {
     }
 }
 
+struct TrackIdentityEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let track: Track
+    let saved: (Track) async -> Void
+    @State private var title: String
+    @State private var artist: String
+    @State private var errorMessage: String?
+    @State private var isSaving = false
+
+    init(track: Track, saved: @escaping (Track) async -> Void) {
+        self.track = track
+        self.saved = saved
+        _title = State(initialValue: track.title)
+        _artist = State(initialValue: track.artist)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("歌曲信息") {
+                    TextField("歌曲名", text: $title)
+                    TextField("歌手名", text: $artist)
+                }
+                Section {
+                    Text("只修改 Sona 中显示的信息，不会写入原始音频文件。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if let errorMessage {
+                    Section { Text(errorMessage).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("编辑歌曲")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { Task { await save() } }
+                        .disabled(isSaving || normalizedTitle.isEmpty || normalizedArtist.isEmpty)
+                }
+            }
+        }
+    }
+
+    private var normalizedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedArtist: String {
+        artist.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+        do {
+            let updated = try await APIClient.shared.editTrackMetadata(
+                id: track.id,
+                title: normalizedTitle,
+                artist: normalizedArtist,
+                album: track.album,
+                trackNumber: track.trackNumber,
+                genre: track.genre,
+                relatedGenres: track.relatedGenres
+            )
+            await saved(updated)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 private struct ManagedPlaylistDetailView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
@@ -401,6 +549,7 @@ private struct ManagedPlaylistDetailView: View {
     @State private var loadedTracks: [String: Track] = [:]
     @State private var editingDirectoryPlaylist: Playlist?
     @State private var editingTrack: Track?
+    @State private var editingMetadataTrack: Track?
     let playlistID: String
 
     private var playlist: Playlist? {
@@ -455,14 +604,18 @@ private struct ManagedPlaylistDetailView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 6)
                         .contextMenu {
-                            if playlist?.isDirectoryPlaylist == true {
-                                if session.currentUser?.isAdmin == true,
+                            if session.currentUser?.isAdmin == true {
+                                Button("编辑歌曲名和歌手", systemImage: "pencil") {
+                                    editingTrack = track
+                                }
+                                if playlist?.isDirectoryPlaylist == true,
                                    track.metadataStatus == "NEEDS_REVIEW" {
-                                    Button("编辑歌曲信息", systemImage: "pencil") {
-                                        editingTrack = track
+                                    Button("编辑完整元数据", systemImage: "slider.horizontal.3") {
+                                        editingMetadataTrack = track
                                     }
                                 }
-                            } else {
+                            }
+                            if playlist?.isDirectoryPlaylist != true {
                                 Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
                                     Task {
                                         await personal.setTrack(track.id, in: playlistID, isIncluded: false)
@@ -502,6 +655,13 @@ private struct ManagedPlaylistDetailView: View {
             }
         }
         .sheet(item: $editingTrack) { track in
+            TrackIdentityEditorView(track: track) { updated in
+                library.applyTrackUpdate(updated)
+                personal.applyTrackUpdate(updated)
+                loadedTracks[updated.id] = updated
+            }
+        }
+        .sheet(item: $editingMetadataTrack) { track in
             MetadataEditorView(track: track) {
                 await library.refresh()
                 loadedTracks[track.id] = nil

@@ -6,6 +6,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
 
 @RestController
 @RequestMapping("/api/v1/library/scan")
@@ -22,6 +25,9 @@ class ScanController {
         @RequestParam(defaultValue = "") String path,
         @RequestParam(defaultValue = "MISSING_ONLY") ScrapeMode mode
     ) {
+        if (mode == ScrapeMode.FORCE_OVERWRITE) {
+            throw new ResponseStatusException(BAD_REQUEST, "强制覆盖仅支持歌单刮削");
+        }
         return ResponseEntity.accepted().body(coordinator.start(path, mode));
     }
 

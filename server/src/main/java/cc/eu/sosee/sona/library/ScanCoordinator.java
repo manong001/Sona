@@ -3,6 +3,7 @@ package cc.eu.sosee.sona.library;
 import cc.eu.sosee.sona.personal.DirectoryPlaylistService;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -11,6 +12,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.CONFLICT;
 
 @Service
 public class ScanCoordinator {
@@ -119,6 +122,38 @@ public class ScanCoordinator {
                     directoryPlaylistService.sync(relativeDirectory);
                     status.set(ScanStatus.completed(result, errors, 1));
                 }
+            } catch (Exception exception) {
+                status.set(ScanStatus.failed(exception, status.get()));
+            } finally {
+                if (rerunRequested.getAndSet(false)) {
+                    start(rerunDirectory.getAndSet(null), rerunMode.getAndSet(null));
+                }
+            }
+        });
+        return status.get();
+    }
+
+    public synchronized ScanStatus forceOverwriteTracks(String label, List<String> trackIds) {
+        if (status.get().state() == ScanStatus.State.RUNNING) {
+            throw new ResponseStatusException(CONFLICT, "已有扫描任务正在运行");
+        }
+        var displayLabel = label == null || label.isBlank() ? "歌单" : label.strip();
+        status.set(ScanStatus.running(
+            new ScanResult(0, 0, 0, 0, 0), ScanStatus.Phase.SCANNING_FILES,
+            displayLabel, 0, 1
+        ));
+        taskExecutor.execute(() -> {
+            try {
+                var result = libraryScanner.scanTrackIds(
+                    trackIds, ScrapeMode.FORCE_OVERWRITE,
+                    progress -> status.set(ScanStatus.running(
+                        progress, ScanStatus.Phase.SCANNING_FILES, displayLabel, 0, 1
+                    ))
+                );
+                status.set(ScanStatus.running(
+                    result, ScanStatus.Phase.FINALIZING, displayLabel, 0, 1
+                ));
+                status.set(ScanStatus.completed(result, libraryScanner.lastErrors(), 1));
             } catch (Exception exception) {
                 status.set(ScanStatus.failed(exception, status.get()));
             } finally {
