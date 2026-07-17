@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ScanCoordinator {
@@ -46,10 +47,18 @@ public class ScanCoordinator {
                 var result = new ScanResult(0, 0, 0, 0, 0);
                 if (relativeDirectory == null || relativeDirectory.isBlank()) {
                     for (var directory : directoryPlaylistService.leafDirectoryPaths()) {
-                        directoryPlaylistService.sync(directory);
-                        result = add(result, libraryScanner.scan(directory));
-                        errors.addAll(libraryScanner.lastErrors());
-                        directoryPlaylistService.sync(directory);
+                        try {
+                            directoryPlaylistService.sync(directory);
+                            result = add(result, libraryScanner.scan(directory));
+                            errors.addAll(libraryScanner.lastErrors());
+                            directoryPlaylistService.sync(directory);
+                        } catch (ResponseStatusException exception) {
+                            if (exception.getStatusCode().value() != 404) {
+                                throw exception;
+                            }
+                            result = add(result, new ScanResult(0, 0, 0, 0, 1));
+                            errors.add(directory + "：目录已不存在，已跳过");
+                        }
                     }
                     result = add(result, new ScanResult(
                         0, 0, libraryScanner.removeMissingTracks(), 0, 0
