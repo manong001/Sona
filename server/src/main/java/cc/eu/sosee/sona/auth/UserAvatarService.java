@@ -21,7 +21,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE;
 
 @Service
-class UserAvatarService {
+public class UserAvatarService {
 
     static final Set<String> PRESETS = Set.of(
         "aurora", "cosmos", "forest", "ocean", "sunset", "candy", "ember", "midnight"
@@ -47,6 +47,10 @@ class UserAvatarService {
         deleteFile(userId);
         userRepository.setAvatar(userId, "preset:" + preset);
         return requireUser(userId);
+    }
+
+    public void selectPresetForUser(String userId, String preset) {
+        selectPreset(userId, preset);
     }
 
     UserAccount upload(String userId, MultipartFile file) {

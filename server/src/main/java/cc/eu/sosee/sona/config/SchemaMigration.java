@@ -31,6 +31,18 @@ class SchemaMigration implements ApplicationRunner {
             if (!columns.contains("avatar")) {
                 jdbcClient.sql("ALTER TABLE users ADD COLUMN avatar TEXT").update();
             }
+            if (!columns.contains("display_name")) {
+                jdbcClient.sql("ALTER TABLE users ADD COLUMN display_name TEXT").update();
+            }
+            if (!columns.contains("signature")) {
+                jdbcClient.sql("ALTER TABLE users ADD COLUMN signature TEXT NOT NULL DEFAULT ''").update();
+            }
+            if (!columns.contains("last_seen_at")) {
+                jdbcClient.sql("ALTER TABLE users ADD COLUMN last_seen_at INTEGER").update();
+            }
+            if (!columns.contains("last_login_at")) {
+                jdbcClient.sql("ALTER TABLE users ADD COLUMN last_login_at INTEGER").update();
+            }
         }
         if (tableExists("tracks")) {
             var trackColumns = columns("tracks");

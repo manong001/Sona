@@ -37,6 +37,9 @@
 		20000000000000000000001C /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C /* LyricsParser.swift */; };
 		20000000000000000000001D /* FloatingMiniPlayerDragState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001D /* FloatingMiniPlayerDragState.swift */; };
 		20000000000000000000001E /* MacMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001E /* MacMainView.swift */; };
+		20000000000000000000001F /* Social.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001F /* Social.swift */; };
+		200000000000000000000020 /* SocialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000020 /* SocialStore.swift */; };
+		200000000000000000000021 /* SocialViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* SocialViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,6 +73,9 @@
 		10000000000000000000001C /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/LyricsParser.swift; sourceTree = "<group>"; };
 		10000000000000000000001D /* FloatingMiniPlayerDragState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/FloatingMiniPlayerDragState.swift; sourceTree = "<group>"; };
 		10000000000000000000001E /* MacMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/MacMainView.swift; sourceTree = "<group>"; };
+		10000000000000000000001F /* Social.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/Social.swift; sourceTree = "<group>"; };
+		100000000000000000000020 /* SocialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/SocialStore.swift; sourceTree = "<group>"; };
+		100000000000000000000021 /* SocialViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/SocialViews.swift; sourceTree = "<group>"; };
 		900000000000000000000001 /* Sona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sona.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -117,6 +123,9 @@
 				10000000000000000000001C /* LyricsParser.swift */,
 				10000000000000000000001D /* FloatingMiniPlayerDragState.swift */,
 				10000000000000000000001E /* MacMainView.swift */,
+				10000000000000000000001F /* Social.swift */,
+				100000000000000000000020 /* SocialStore.swift */,
+				100000000000000000000021 /* SocialViews.swift */,
 				300000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -228,6 +237,9 @@
 				20000000000000000000001C /* LyricsParser.swift in Sources */,
 				20000000000000000000001D /* FloatingMiniPlayerDragState.swift in Sources */,
 				20000000000000000000001E /* MacMainView.swift in Sources */,
+				20000000000000000000001F /* Social.swift in Sources */,
+				200000000000000000000020 /* SocialStore.swift in Sources */,
+				200000000000000000000021 /* SocialViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,7 +286,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sona/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.5.19;
+				MARKETING_VERSION = 0.5.22;
 				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
@@ -298,7 +310,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sona/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.5.19;
+				MARKETING_VERSION = 0.5.22;
 				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;

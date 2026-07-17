@@ -5,6 +5,10 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'USER',
     enabled INTEGER NOT NULL DEFAULT 1,
     avatar TEXT,
+    display_name TEXT,
+    signature TEXT NOT NULL DEFAULT '',
+    last_seen_at INTEGER,
+    last_login_at INTEGER,
     created_at INTEGER NOT NULL
 );
 
@@ -17,6 +21,91 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS friendships (
+    user_low_id TEXT NOT NULL,
+    user_high_id TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_low_id, user_high_id),
+    CHECK (user_low_id < user_high_id),
+    FOREIGN KEY (user_low_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_high_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS social_media (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    group_id TEXT,
+    component TEXT,
+    storage_path TEXT NOT NULL UNIQUE,
+    size_bytes INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    sender_id TEXT NOT NULL,
+    recipient_id TEXT NOT NULL,
+    client_message_id TEXT,
+    kind TEXT NOT NULL,
+    text TEXT,
+    payload_json TEXT,
+    created_at INTEGER NOT NULL,
+    recalled_at INTEGER,
+    read_at INTEGER,
+    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (sender_id, client_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_pair
+    ON messages(sender_id, recipient_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_unread
+    ON messages(recipient_id, read_at, created_at);
+
+CREATE TABLE IF NOT EXISTS moments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS moment_media (
+    moment_id TEXT NOT NULL,
+    media_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (moment_id, media_id),
+    FOREIGN KEY (moment_id) REFERENCES moments(id) ON DELETE CASCADE,
+    FOREIGN KEY (media_id) REFERENCES social_media(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS moment_likes (
+    moment_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (moment_id, user_id),
+    FOREIGN KEY (moment_id) REFERENCES moments(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS moment_comments (
+    id TEXT PRIMARY KEY,
+    moment_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (moment_id) REFERENCES moments(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_moments_created_at ON moments(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS favorites (
     user_id TEXT NOT NULL,

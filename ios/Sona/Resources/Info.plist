@@ -26,6 +26,10 @@
     <true/>
     <key>NSAppTransportSecurity</key>
     <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
         <key>NSExceptionDomains</key>
         <dict>
             <key>sosee.eu.cc</key>
@@ -37,6 +41,10 @@
             </dict>
         </dict>
     </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>用于连接你配置的 Sona 曲库服务器。</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>用于发布图片、GIF、实况照片和视频动态。</string>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UIBackgroundModes</key>

@@ -156,6 +156,229 @@ paths:
       responses:
         "204":
           description: 密码已重置，用户所有会话已撤销
+  /social/profile:
+    get:
+      operationId: socialProfile
+      responses:
+        "200":
+          description: 当前用户的社交资料
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SocialUser"}
+    put:
+      operationId: updateSocialProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: {type: string, maxLength: 48}
+                signature: {type: string, maxLength: 160}
+                avatarPreset: {type: [string, "null"]}
+      responses:
+        "200":
+          description: 社交资料已更新
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SocialUser"}
+  /social/presence:
+    post:
+      operationId: updateSocialPresence
+      responses:
+        "204": {description: 在线时间已更新}
+  /social/users:
+    get:
+      operationId: searchSocialUsers
+      parameters:
+        - name: query
+          in: query
+          schema: {type: string, maxLength: 80}
+      responses:
+        "200":
+          description: 匹配的可用用户
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SocialUser"}}
+  /social/friends:
+    get:
+      operationId: listFriends
+      responses:
+        "200":
+          description: 当前用户好友
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SocialUser"}}
+    post:
+      operationId: addFriend
+      description: 按账号名立即建立双向好友关系
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username: {type: string, maxLength: 32}
+      responses:
+        "201": {description: 好友关系已建立}
+  /social/friends/{peerId}:
+    delete:
+      operationId: deleteFriend
+      parameters:
+        - $ref: "#/components/parameters/PeerId"
+      responses:
+        "204": {description: 好友关系已解除，历史消息保留}
+  /social/conversations:
+    get:
+      operationId: listConversations
+      responses:
+        "200":
+          description: 按最后消息排序的会话
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SocialUser"}}
+  /social/messages/{peerId}:
+    get:
+      operationId: listMessages
+      parameters:
+        - $ref: "#/components/parameters/PeerId"
+      responses:
+        "200":
+          description: 与指定用户的历史消息，并将其未读消息标为已读
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SocialMessage"}}
+  /social/messages:
+    post:
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SendSocialMessage"}
+      responses:
+        "201":
+          description: 消息已发送
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SocialMessage"}
+  /social/messages/{messageId}/recall:
+    put:
+      operationId: recallMessage
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200": {description: 两分钟内的本人消息已撤回}
+  /social/media:
+    post:
+      operationId: uploadSocialMedia
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema: {type: string, enum: [IMAGE, GIF, LIVE_PHOTO, VIDEO]}
+        - name: filename
+          in: query
+          schema: {type: string}
+        - name: groupId
+          in: query
+          schema: {type: string}
+        - name: component
+          in: query
+          schema: {type: string, enum: [photo, video]}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "201":
+          description: 媒体已保存
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SocialMedia"}
+  /social/media/{mediaId}:
+    get:
+      operationId: downloadSocialMedia
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200": {description: 本人或好友可访问的媒体文件}
+  /social/moments:
+    get:
+      operationId: listMoments
+      responses:
+        "200":
+          description: 本人与好友的最近 100 条动态
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SocialMoment"}}
+    post:
+      operationId: createMoment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: {type: string, maxLength: 2000}
+                mediaIds: {type: array, maxItems: 21, items: {type: string, format: uuid}}
+      responses:
+        "201":
+          description: 动态已发布
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SocialMoment"}
+  /social/moments/{momentId}:
+    delete:
+      operationId: deleteMoment
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+      responses:
+        "204": {description: 本人或管理员已删除动态}
+  /social/moments/{momentId}/like:
+    put:
+      operationId: likeMoment
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+      responses:
+        "204": {description: 已点赞}
+    delete:
+      operationId: unlikeMoment
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+      responses:
+        "204": {description: 已取消点赞}
+  /social/moments/{momentId}/comments:
+    post:
+      operationId: commentMoment
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: {type: string, minLength: 1, maxLength: 500}
+      responses:
+        "201": {description: 评论已发布}
   /me/favorites:
     get:
       operationId: listFavorites
@@ -1030,6 +1253,16 @@ components:
       schema:
         type: string
         format: uuid
+    PeerId:
+      name: peerId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    MomentId:
+      name: momentId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
     PlaylistId:
       name: playlistId
       in: path
@@ -1119,6 +1352,78 @@ components:
           type: string
           minLength: 8
           maxLength: 64
+    SocialUser:
+      type: object
+      required: [id, username, role, displayName, signature, online]
+      properties:
+        id: {type: string, format: uuid}
+        username: {type: string}
+        role: {type: string, enum: [ADMIN, USER]}
+        displayName: {type: string}
+        signature: {type: string}
+        avatarPreset: {type: [string, "null"]}
+        avatarURL: {type: [string, "null"]}
+        online: {type: boolean}
+        lastSeenAt: {type: [integer, "null"], format: int64}
+        lastLoginAt: {type: [integer, "null"], format: int64}
+        friend: {type: [boolean, "null"]}
+        unreadCount: {type: [integer, "null"]}
+        lastMessage: {anyOf: [{$ref: "#/components/schemas/SocialMessage"}, {type: "null"}]}
+    SocialMessage:
+      type: object
+      required: [id, senderId, recipientId, kind, text, createdAt, mine]
+      properties:
+        id: {type: string, format: uuid}
+        senderId: {type: string, format: uuid}
+        recipientId: {type: string, format: uuid}
+        kind: {type: string, enum: [TEXT, STICKER, TRACK]}
+        text: {type: string}
+        payload: {type: [object, "null"]}
+        createdAt: {type: integer, format: int64}
+        recalledAt: {type: [integer, "null"], format: int64}
+        readAt: {type: [integer, "null"], format: int64}
+        mine: {type: boolean}
+    SendSocialMessage:
+      type: object
+      required: [recipientId, kind]
+      properties:
+        recipientId: {type: string, format: uuid}
+        clientMessageId: {type: string, maxLength: 80}
+        kind: {type: string, enum: [TEXT, STICKER, TRACK]}
+        text: {type: string, maxLength: 2000}
+        payload: {type: object}
+    SocialMedia:
+      type: object
+      required: [id, kind, mimeType, originalName, sizeBytes, url]
+      properties:
+        id: {type: string, format: uuid}
+        kind: {type: string, enum: [IMAGE, GIF, LIVE_PHOTO, VIDEO]}
+        mimeType: {type: string}
+        originalName: {type: string}
+        sizeBytes: {type: integer, format: int64}
+        groupId: {type: [string, "null"]}
+        component: {type: [string, "null"]}
+        url: {type: string}
+    SocialComment:
+      type: object
+      required: [id, user, body, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        user: {$ref: "#/components/schemas/SocialUser"}
+        body: {type: string}
+        createdAt: {type: integer, format: int64}
+    SocialMoment:
+      type: object
+      required: [id, user, text, createdAt, media, likes, comments, liked]
+      properties:
+        id: {type: string, format: uuid}
+        user: {$ref: "#/components/schemas/SocialUser"}
+        text: {type: string}
+        createdAt: {type: integer, format: int64}
+        media: {type: array, items: {$ref: "#/components/schemas/SocialMedia"}}
+        likes: {type: array, items: {$ref: "#/components/schemas/SocialUser"}}
+        comments: {type: array, items: {$ref: "#/components/schemas/SocialComment"}}
+        liked: {type: boolean}
     Favorites:
       type: object
       required: [trackIds]

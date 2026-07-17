@@ -13,6 +13,7 @@ struct MainTabView: View {
     @State private var showsAvatarEditor = false
     @State private var showsUserManagement = false
     @State private var showsAchievements = false
+    @State private var showsSocial = false
     @State private var selectedTab: SonaTab = .home
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
@@ -66,6 +67,7 @@ struct MainTabView: View {
                         manageAccount: { showsAccountSecurity = true },
                         editAvatar: { showsAvatarEditor = true },
                         showAchievements: { showsAchievements = true },
+                        showSocial: { showsSocial = true },
                         manageUsers: { showsUserManagement = true },
                         close: closeDrawer
                     )
@@ -115,6 +117,9 @@ struct MainTabView: View {
         }
         .sheet(isPresented: $showsAchievements) {
             NavigationStack { AchievementsView() }
+        }
+        .sheet(isPresented: $showsSocial) {
+            SocialHubView()
         }
         .task {
             guard let userID = session.currentUser?.id else { return }

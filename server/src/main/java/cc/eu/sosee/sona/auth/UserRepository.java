@@ -115,6 +115,13 @@ class UserRepository {
             .update() == 1;
     }
 
+    void recordLogin(String id) {
+        jdbcClient.sql("UPDATE users SET last_login_at = :now, last_seen_at = :now WHERE id = :id")
+            .param("now", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
     @Transactional
     boolean delete(String id) {
         jdbcClient.sql("DELETE FROM random_track_exposures WHERE user_id = :id").param("id", id).update();

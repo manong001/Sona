@@ -183,6 +183,7 @@ final class PlayerStore: ObservableObject {
         listenedSeconds = 0
         lastSavedProgressBucket = -1
         if autoplay {
+            activateAudioSession()
             player.play()
         } else {
             player.pause()
@@ -257,6 +258,16 @@ final class PlayerStore: ObservableObject {
         clearLocalPlayback()
     }
 
+    func stopForLogout() {
+        clearLocalPlayback()
+        activeUserID = nil
+        hasRestoredState = false
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
+    }
+
     func beginSession(userID: String) {
         guard activeUserID != userID else { return }
         if activeUserID != nil {
@@ -302,6 +313,7 @@ final class PlayerStore: ObservableObject {
     }
 
     private func resume() {
+        activateAudioSession()
         player.play()
         isPlaying = true
         updateNowPlaying()
@@ -329,6 +341,10 @@ final class PlayerStore: ObservableObject {
         } catch {
             // 系统会在首次播放时再次尝试激活音频会话。
         }
+    }
+
+    private func activateAudioSession() {
+        try? AVAudioSession.sharedInstance().setActive(true)
     }
 
     private func observeTime() {

@@ -94,6 +94,7 @@ class AuthService {
         var rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
         var maxAge = Duration.ofDays(properties.getAuth().getSessionDays());
         sessionRepository.create(hash(rawToken), account.id(), clock.instant().plus(maxAge).toEpochMilli());
+        userRepository.recordLogin(account.id());
         return new AuthSession(
             new SessionToken(rawToken, maxAge.toSeconds()),
             account.authenticatedUser()

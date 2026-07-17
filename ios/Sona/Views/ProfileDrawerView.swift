@@ -15,6 +15,7 @@ struct ProfileDrawerView: View {
     let manageAccount: () -> Void
     let editAvatar: () -> Void
     let showAchievements: () -> Void
+    let showSocial: () -> Void
     let manageUsers: () -> Void
     let close: () -> Void
 
@@ -65,6 +66,10 @@ struct ProfileDrawerView: View {
                 close()
                 showAchievements()
             }
+            drawerButton("乐友圈", systemImage: "bubble.left.and.bubble.right.fill") {
+                close()
+                showSocial()
+            }
             drawerButton("设置和隐私", systemImage: "gearshape") {
                 selectTab(.settings)
                 close()
@@ -83,6 +88,7 @@ struct ProfileDrawerView: View {
                 close()
                 Task {
                     await player.flushState()
+                    player.stopForLogout()
                     await session.logout()
                 }
             } label: {
