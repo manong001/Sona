@@ -903,6 +903,10 @@ paths:
           in: query
           schema: {type: string, default: ""}
           description: 仅扫描该相对目录及其子目录；留空扫描整个挂载音乐目录
+        - name: mode
+          in: query
+          schema: {type: string, enum: [MISSING_ONLY, OVERWRITE], default: MISSING_ONLY}
+          description: 仅补全缺失元数据，或覆盖非人工编辑的本地及历史刮削元数据
       responses:
         "202":
           description: 扫描已开始
@@ -1691,11 +1695,20 @@ components:
           type: [string, "null"]
     ScanStatus:
       type: object
-      required: [state, discovered, imported, updated, skipped, failed, errors]
+      required: [state, phase, completedDirectories, totalDirectories, discovered, imported, updated, skipped, failed, errors]
       properties:
         state:
           type: string
           enum: [IDLE, RUNNING, COMPLETED, FAILED]
+        phase:
+          type: string
+          enum: [IDLE, DISCOVERING_DIRECTORIES, SCANNING_FILES, SYNCING_PLAYLIST, FINALIZING, COMPLETED, FAILED]
+        currentDirectory:
+          type: [string, "null"]
+        completedDirectories:
+          type: integer
+        totalDirectories:
+          type: integer
         discovered:
           type: integer
         imported:

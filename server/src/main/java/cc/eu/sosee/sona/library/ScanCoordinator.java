@@ -1,10 +1,12 @@
 package cc.eu.sosee.sona.library;
 
 import cc.eu.sosee.sona.personal.DirectoryPlaylistService;
+import java.io.IOException;
 import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
@@ -19,6 +21,7 @@ public class ScanCoordinator {
     private final AtomicReference<ScanStatus> status = new AtomicReference<>(ScanStatus.idle());
     private final AtomicBoolean rerunRequested = new AtomicBoolean();
     private final AtomicReference<String> rerunDirectory = new AtomicReference<>();
+    private final AtomicReference<ScrapeMode> rerunMode = new AtomicReference<>();
 
     ScanCoordinator(
         LibraryScanner libraryScanner,
@@ -31,12 +34,17 @@ public class ScanCoordinator {
     }
 
     synchronized ScanStatus start() {
-        return start("");
+        return start("", ScrapeMode.STANDARD);
     }
 
     synchronized ScanStatus start(String relativeDirectory) {
+        return start(relativeDirectory, ScrapeMode.STANDARD);
+    }
+
+    synchronized ScanStatus start(String relativeDirectory, ScrapeMode mode) {
         if (status.get().state() == ScanStatus.State.RUNNING) {
             rerunDirectory.set(relativeDirectory);
+            rerunMode.set(mode);
             rerunRequested.set(true);
             return status.get();
         }
@@ -47,17 +55,30 @@ public class ScanCoordinator {
                 var result = new ScanResult(0, 0, 0, 0, 0);
                 if (relativeDirectory == null || relativeDirectory.isBlank()) {
                     var directories = directoryPlaylistService.leafDirectoryPaths();
-                    for (var directory : directories) {
+                    var totalDirectories = directories.size();
+                    for (var index = 0; index < totalDirectories; index++) {
+                        var directory = directories.get(index);
+                        var completedDirectoryCount = index;
+                        status.set(ScanStatus.running(
+                            result, ScanStatus.Phase.SCANNING_FILES, directory,
+                            completedDirectoryCount, totalDirectories
+                        ));
                         try {
-                            directoryPlaylistService.sync(directory);
-                            var completedDirectories = result;
-                            result = add(result, libraryScanner.scan(
+                            var completedResult = result;
+                            result = add(result, scan(
                                 directory,
+                                mode,
                                 progress -> status.set(ScanStatus.running(
-                                    add(completedDirectories, progress)
+                                    add(completedResult, progress),
+                                    ScanStatus.Phase.SCANNING_FILES, directory,
+                                    completedDirectoryCount, totalDirectories
                                 ))
                             ));
                             errors.addAll(libraryScanner.lastErrors());
+                            status.set(ScanStatus.running(
+                                result, ScanStatus.Phase.SYNCING_PLAYLIST, directory,
+                                completedDirectoryCount, totalDirectories
+                            ));
                             directoryPlaylistService.sync(directory);
                         } catch (ResponseStatusException exception) {
                             if (exception.getStatusCode().value() != 404) {
@@ -66,26 +87,43 @@ public class ScanCoordinator {
                             result = add(result, new ScanResult(0, 0, 0, 0, 1));
                             errors.add(directory + "：目录已不存在，已跳过");
                         }
+                        status.set(ScanStatus.running(
+                            result, ScanStatus.Phase.SCANNING_FILES, null,
+                            completedDirectoryCount + 1, totalDirectories
+                        ));
                     }
+                    status.set(ScanStatus.running(
+                        result, ScanStatus.Phase.FINALIZING, null,
+                        totalDirectories, totalDirectories
+                    ));
                     result = add(result, new ScanResult(
                         0, 0, libraryScanner.removeMissingTracks(), 0, 0
                     ));
                     directoryPlaylistService.pruneStalePlaylists(directories);
+                    status.set(ScanStatus.completed(result, errors, totalDirectories));
                 } else {
-                    directoryPlaylistService.sync(relativeDirectory);
-                    result = libraryScanner.scan(
+                    status.set(ScanStatus.running(
+                        result, ScanStatus.Phase.SCANNING_FILES, relativeDirectory, 0, 1
+                    ));
+                    result = scan(
                         relativeDirectory,
-                        progress -> status.set(ScanStatus.running(progress))
+                        mode,
+                        progress -> status.set(ScanStatus.running(
+                            progress, ScanStatus.Phase.SCANNING_FILES, relativeDirectory, 0, 1
+                        ))
                     );
                     errors.addAll(libraryScanner.lastErrors());
+                    status.set(ScanStatus.running(
+                        result, ScanStatus.Phase.SYNCING_PLAYLIST, relativeDirectory, 0, 1
+                    ));
                     directoryPlaylistService.sync(relativeDirectory);
+                    status.set(ScanStatus.completed(result, errors, 1));
                 }
-                status.set(ScanStatus.completed(result, errors));
             } catch (Exception exception) {
-                status.set(ScanStatus.failed(exception));
+                status.set(ScanStatus.failed(exception, status.get()));
             } finally {
                 if (rerunRequested.getAndSet(false)) {
-                    start(rerunDirectory.getAndSet(null));
+                    start(rerunDirectory.getAndSet(null), rerunMode.getAndSet(null));
                 }
             }
         });
@@ -116,6 +154,14 @@ public class ScanCoordinator {
 
     public void trigger() {
         start();
+    }
+
+    private ScanResult scan(
+        String relativeDirectory, ScrapeMode mode, Consumer<ScanResult> progress
+    ) throws IOException {
+        return mode == ScrapeMode.STANDARD
+            ? libraryScanner.scan(relativeDirectory, progress)
+            : libraryScanner.scan(relativeDirectory, mode, progress);
     }
 
     private ScanResult add(ScanResult first, ScanResult second) {

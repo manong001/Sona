@@ -23,6 +23,7 @@ struct SettingsView: View {
     @State private var importRecords: [ImportRecord] = []
     @State private var downloadTasks: [MusicDownloadTask] = []
     @State private var isLoadingImportRecords = false
+    @State private var showsScrapeModePicker = false
 
     var body: some View {
         NavigationStack {
@@ -55,7 +56,7 @@ struct SettingsView: View {
                         }
 
                         Button {
-                            Task { await library.scan() }
+                            showsScrapeModePicker = true
                         } label: {
                             Label(
                                 library.scanStatus?.state == "RUNNING" ? "正在扫描…" : "扫描并刮削曲库",
@@ -63,9 +64,40 @@ struct SettingsView: View {
                             )
                         }
                         .disabled(library.scanStatus?.state == "RUNNING")
+                        .confirmationDialog(
+                            "选择刮削方式",
+                            isPresented: $showsScrapeModePicker,
+                            titleVisibility: .visible
+                        ) {
+                            Button("仅更新缺失信息") {
+                                Task { await library.scan(mode: .missingOnly) }
+                            }
+                            Button("覆盖更新非人工信息") {
+                                Task { await library.scan(mode: .overwrite) }
+                            }
+                            Button("取消", role: .cancel) { }
+                        } message: {
+                            Text("人工编辑过的信息始终不会被覆盖。")
+                        }
 
                         if let status = library.scanStatus {
                             LabeledContent("状态", value: stateText(status.state))
+                            if status.state == "RUNNING", let phase = phaseText(status.phase) {
+                                LabeledContent("阶段", value: phase)
+                            }
+                            if status.state == "RUNNING", let directory = status.currentDirectory {
+                                LabeledContent("当前目录") {
+                                    Text(directory)
+                                        .multilineTextAlignment(.trailing)
+                                }
+                            }
+                            if status.state == "RUNNING", let total = status.totalDirectories,
+                               total > 0 {
+                                LabeledContent(
+                                    "目录进度",
+                                    value: "\(status.completedDirectories ?? 0) / \(total)"
+                                )
+                            }
                             LabeledContent("发现", value: "\(status.discovered)")
                             LabeledContent("新增 / 更新", value: "\(status.imported) / \(status.updated)")
                             LabeledContent("跳过 / 失败", value: "\(status.skipped) / \(status.failed)")
@@ -503,6 +535,16 @@ struct SettingsView: View {
         case "COMPLETED": "已完成"
         case "FAILED": "失败"
         default: "空闲"
+        }
+    }
+
+    private func phaseText(_ phase: String?) -> String? {
+        switch phase {
+        case "DISCOVERING_DIRECTORIES": "正在统计目录"
+        case "SCANNING_FILES": "正在扫描文件"
+        case "SYNCING_PLAYLIST": "正在同步歌单"
+        case "FINALIZING": "正在完成扫描"
+        default: nil
         }
     }
 }

@@ -1,5 +1,10 @@
 import Foundation
 
+enum ScrapeMode: String {
+    case missingOnly = "MISSING_ONLY"
+    case overwrite = "OVERWRITE"
+}
+
 struct Playlist: Codable, Identifiable, Equatable {
     let id: String
     let name: String

@@ -58,15 +58,20 @@ class JdbcTrackStore implements TrackStore {
 
     @Override
     public void save(TrackRecord track) {
+        save(track, false);
+    }
+
+    @Override
+    public void save(TrackRecord track, boolean overwriteMetadata) {
         jdbcClient.sql("""
                 INSERT INTO tracks(
                     id, path, file_size, modified_at, title, normalized_title, artist, album,
-                    track_number, duration_ms, codec, sample_rate, bit_depth, artwork_path,
+                    track_number, duration_ms, codec, sample_rate, bit_depth, artwork_path, artwork_source,
                     plain_lyrics, synced_lyrics, lyrics_source, metadata_status, manual_edited,
                     created_at, updated_at, pool_type, audience_type, genre, related_genres, region
                 ) VALUES (
                     :id, :path, :fileSize, :modifiedAt, :title, :normalizedTitle, :artist, :album,
-                    :trackNumber, :durationMs, :codec, :sampleRate, :bitDepth, :artworkPath,
+                    :trackNumber, :durationMs, :codec, :sampleRate, :bitDepth, :artworkPath, :artworkSource,
                     :plainLyrics, :syncedLyrics, :lyricsSource, :metadataStatus, :manualEdited,
                     :createdAt, :updatedAt, :poolType, :audienceType, :genre, :relatedGenres, :region
                 )
@@ -82,10 +87,21 @@ class JdbcTrackStore implements TrackStore {
                     codec = excluded.codec,
                     sample_rate = excluded.sample_rate,
                     bit_depth = excluded.bit_depth,
-                    artwork_path = COALESCE(tracks.artwork_path, excluded.artwork_path),
-                    plain_lyrics = COALESCE(tracks.plain_lyrics, excluded.plain_lyrics),
-                    synced_lyrics = COALESCE(tracks.synced_lyrics, excluded.synced_lyrics),
-                    lyrics_source = COALESCE(tracks.lyrics_source, excluded.lyrics_source),
+                    artwork_path = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                        THEN COALESCE(excluded.artwork_path, tracks.artwork_path)
+                        ELSE COALESCE(tracks.artwork_path, excluded.artwork_path) END,
+                    artwork_source = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                        THEN COALESCE(excluded.artwork_source, tracks.artwork_source)
+                        ELSE COALESCE(tracks.artwork_source, excluded.artwork_source) END,
+                    plain_lyrics = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                        THEN COALESCE(excluded.plain_lyrics, tracks.plain_lyrics)
+                        ELSE COALESCE(tracks.plain_lyrics, excluded.plain_lyrics) END,
+                    synced_lyrics = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                        THEN COALESCE(excluded.synced_lyrics, tracks.synced_lyrics)
+                        ELSE COALESCE(tracks.synced_lyrics, excluded.synced_lyrics) END,
+                    lyrics_source = CASE WHEN :overwriteMetadata = 1 AND tracks.manual_edited = 0
+                        THEN COALESCE(excluded.lyrics_source, tracks.lyrics_source)
+                        ELSE COALESCE(tracks.lyrics_source, excluded.lyrics_source) END,
                     metadata_status = CASE WHEN tracks.manual_edited = 1 THEN tracks.metadata_status ELSE excluded.metadata_status END,
                     genre = CASE WHEN tracks.manual_edited = 1 THEN tracks.genre ELSE excluded.genre END,
                     updated_at = excluded.updated_at
@@ -104,6 +120,8 @@ class JdbcTrackStore implements TrackStore {
             .param("sampleRate", track.sampleRate())
             .param("bitDepth", track.bitDepth())
             .param("artworkPath", string(track.artworkPath()))
+            .param("artworkSource", track.artworkSource())
+            .param("overwriteMetadata", overwriteMetadata ? 1 : 0)
             .param("plainLyrics", track.plainLyrics())
             .param("syncedLyrics", track.syncedLyrics())
             .param("lyricsSource", track.lyricsSource())
@@ -603,7 +621,8 @@ class JdbcTrackStore implements TrackStore {
             resultSet.getString("audience_type"),
             resultSet.getString("genre"),
             resultSet.getString("region"),
-            decodeGenres(resultSet.getString("related_genres"))
+            decodeGenres(resultSet.getString("related_genres")),
+            resultSet.getString("artwork_source")
         );
     }
 

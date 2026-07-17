@@ -78,6 +78,15 @@ class SchemaMigration implements ApplicationRunner {
             if (!trackColumns.contains("region")) {
                 jdbcClient.sql("ALTER TABLE tracks ADD COLUMN region TEXT NOT NULL DEFAULT 'OTHER'").update();
             }
+            if (!trackColumns.contains("artwork_source")) {
+                jdbcClient.sql("ALTER TABLE tracks ADD COLUMN artwork_source TEXT").update();
+                if (trackColumns.contains("artwork_path") && trackColumns.contains("metadata_status")) {
+                    jdbcClient.sql("""
+                            UPDATE tracks SET artwork_source = 'SCRAPED'
+                            WHERE artwork_path IS NOT NULL AND metadata_status = 'SCRAPED'
+                            """).update();
+                }
+            }
         }
         if (tableExists("track_play_stats")) {
             var statColumns = columns("track_play_stats");

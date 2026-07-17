@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     sample_rate INTEGER,
     bit_depth INTEGER,
     artwork_path TEXT,
+    artwork_source TEXT,
     plain_lyrics TEXT,
     synced_lyrics TEXT,
     lyrics_source TEXT,

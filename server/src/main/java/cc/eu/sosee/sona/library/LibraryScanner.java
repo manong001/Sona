@@ -56,14 +56,24 @@ class LibraryScanner {
     }
 
     ScanResult scan() throws IOException {
-        return scan("");
+        return scan("", ScrapeMode.STANDARD);
     }
 
     ScanResult scan(String relativeDirectory) throws IOException {
-        return scan(relativeDirectory, result -> { });
+        return scan(relativeDirectory, ScrapeMode.STANDARD);
+    }
+
+    ScanResult scan(String relativeDirectory, ScrapeMode mode) throws IOException {
+        return scan(relativeDirectory, mode, result -> { });
     }
 
     ScanResult scan(String relativeDirectory, Consumer<ScanResult> progress) throws IOException {
+        return scan(relativeDirectory, ScrapeMode.STANDARD, progress);
+    }
+
+    ScanResult scan(
+        String relativeDirectory, ScrapeMode mode, Consumer<ScanResult> progress
+    ) throws IOException {
         var scanDirectory = directoryService.resolve(relativeDirectory);
         var counts = new int[5];
         var errors = new ArrayList<String>();
@@ -72,7 +82,9 @@ class LibraryScanner {
                 .filter(this::isSupported)
                 .sorted()
                 .forEach(path -> {
-                    scanFile(path, counts, errors);
+                    counts[0]++;
+                    progress.accept(result(counts));
+                    scanFile(path, mode, counts, errors);
                     progress.accept(result(counts));
                 });
         }
@@ -106,8 +118,7 @@ class LibraryScanner {
         return removed;
     }
 
-    private void scanFile(Path path, int[] counts, List<String> errors) {
-        counts[0]++;
+    private void scanFile(Path path, ScrapeMode mode, int[] counts, List<String> errors) {
         try {
             var attributes = Files.readAttributes(path, BasicFileAttributes.class);
             var normalizedPath = path.toAbsolutePath().normalize();
@@ -116,7 +127,9 @@ class LibraryScanner {
                 && existing.get().fileSize() == attributes.size()
                 && existing.get().modifiedAt() == attributes.lastModifiedTime().toMillis()
                 && !needsScrapeRetry(existing.get())
-                && !needsTitleNormalization(existing.get())) {
+                && !needsTitleNormalization(existing.get())
+                && !shouldRefreshMissing(existing.get(), mode)
+                && !shouldOverwrite(existing.get(), mode)) {
                 counts[3]++;
                 return;
             }
@@ -126,9 +139,13 @@ class LibraryScanner {
             var retry = existing.filter(
                 track -> "NEEDS_REVIEW".equals(track.metadataStatus()) && track.updatedAt() == 0
             );
-            var titleHint = retry.map(TrackRecord::title).orElse("");
-            var artistHint = retry.map(TrackRecord::artist).orElse("");
-            var albumHint = retry.map(TrackRecord::album).orElse("");
+            var overwriteExisting = existing.filter(track -> shouldOverwrite(track, mode));
+            var refreshExisting = existing.filter(
+                track -> mode != ScrapeMode.STANDARD && !track.manualEdited()
+            );
+            var titleHint = refreshExisting.or(() -> retry).map(TrackRecord::title).orElse("");
+            var artistHint = refreshExisting.or(() -> retry).map(TrackRecord::artist).orElse("");
+            var albumHint = refreshExisting.or(() -> retry).map(TrackRecord::album).orElse("");
             var titleFromTag = hasText(titleHint) || hasText(metadata.title());
             var artistFromTag = hasText(artistHint) || hasText(metadata.artist());
             var title = fileNameParser.stripTrackNumberPrefix(
@@ -136,48 +153,69 @@ class LibraryScanner {
             );
             var artist = firstText(artistHint, metadata.artist(), parsed.artist(), "Unknown Artist");
             var album = firstText(albumHint, metadata.album(), "Unknown Album");
-            var trackNumber = retry.map(TrackRecord::trackNumber).orElseGet(
+            var trackNumber = refreshExisting.or(() -> retry).map(TrackRecord::trackNumber).orElseGet(
                 () -> metadata.trackNumber() != null ? metadata.trackNumber() : parsed.trackNumber()
             );
             var id = existing.map(TrackRecord::id).orElseGet(() -> UUID.randomUUID().toString());
             var artworkPath = existing.map(TrackRecord::artworkPath).orElse(null);
+            var artworkSource = existing.map(TrackRecord::artworkSource).orElse(null);
             if (artworkPath == null && metadata.artwork() != null) {
                 artworkPath = artworkStore.save(id, metadata.artwork(), metadata.artworkMimeType());
+                artworkSource = "LOCAL";
             }
 
             var lyrics = LyricsValue.embedded(metadata.lyrics())
                 .withSidecar(readSidecarLyrics(normalizedPath));
+            var refreshMissing = mode == ScrapeMode.MISSING_ONLY && refreshExisting.isPresent();
+            var needsTitle = overwriteExisting.isPresent()
+                || (refreshMissing ? missing(title, "Unknown Title") : !titleFromTag);
+            var needsArtist = overwriteExisting.isPresent()
+                || (refreshMissing ? missing(artist, "Unknown Artist") : !artistFromTag);
+            var needsAlbum = overwriteExisting.isPresent()
+                || (refreshMissing ? missing(album, "Unknown Album") : "Unknown Album".equals(album));
+            var needsArtwork = overwriteExisting.isPresent() || artworkPath == null;
+            var needsLyrics = overwriteExisting.isPresent()
+                || (refreshMissing
+                    ? refreshExisting.get().plainLyrics() == null
+                        && refreshExisting.get().syncedLyrics() == null
+                    : lyrics.plain() == null && lyrics.synced() == null);
             var scraped = metadataScraper.scrape(new ScrapeRequest(
                 title,
                 artist,
                 album,
                 metadata.durationMs(),
-                !titleFromTag,
-                !artistFromTag,
-                "Unknown Album".equals(album),
-                artworkPath == null,
-                lyrics.plain() == null && lyrics.synced() == null
+                needsTitle,
+                needsArtist,
+                needsAlbum,
+                needsArtwork,
+                needsLyrics
             ));
-            if (!titleFromTag && hasText(scraped.title())) {
+            if (needsTitle && hasText(scraped.title())) {
                 title = fileNameParser.stripTrackNumberPrefix(scraped.title());
             }
-            if (!artistFromTag && hasText(scraped.artist())) {
+            if (needsArtist && hasText(scraped.artist())) {
                 artist = scraped.artist().strip();
             }
-            if ("Unknown Album".equals(album) && hasText(scraped.album())) {
+            if (needsAlbum && hasText(scraped.album())) {
                 album = scraped.album().strip();
             }
-            if (lyrics.plain() == null && lyrics.synced() == null) {
+            if (needsLyrics) {
+                var existingTrack = refreshExisting.orElse(null);
+                var scrapedPlain = blankToNull(scraped.plainLyrics());
+                var scrapedSynced = blankToNull(scraped.syncedLyrics());
                 lyrics = new LyricsValue(
-                    blankToNull(scraped.plainLyrics()),
-                    blankToNull(scraped.syncedLyrics()),
-                    hasText(scraped.plainLyrics()) || hasText(scraped.syncedLyrics())
+                    scrapedPlain != null ? scrapedPlain
+                        : existingTrack == null ? null : existingTrack.plainLyrics(),
+                    scrapedSynced != null ? scrapedSynced
+                        : existingTrack == null ? null : existingTrack.syncedLyrics(),
+                    scrapedPlain != null || scrapedSynced != null
                         ? firstText(scraped.lyricsSource(), "remote")
-                        : null
+                        : existingTrack == null ? null : existingTrack.lyricsSource()
                 );
             }
-            if (artworkPath == null && scraped.artwork() != null) {
+            if (scraped.artwork() != null) {
                 artworkPath = artworkStore.save(id, scraped.artwork(), scraped.artworkMimeType());
+                artworkSource = "SCRAPED";
             }
             var now = clock.millis();
             var track = new TrackRecord(
@@ -198,16 +236,19 @@ class LibraryScanner {
                 lyrics.plain(),
                 lyrics.synced(),
                 lyrics.source(),
-                scraped.hasValues() ? "SCRAPED" : titleFromTag && artistFromTag ? "LOCAL" : "NEEDS_REVIEW",
+                scraped.hasValues() ? "SCRAPED" : refreshExisting.map(TrackRecord::metadataStatus)
+                    .orElse(titleFromTag && artistFromTag ? "LOCAL" : "NEEDS_REVIEW"),
                 existing.map(TrackRecord::manualEdited).orElse(false),
                 existing.map(TrackRecord::createdAt).orElse(now),
                 now,
                 existing.map(TrackRecord::poolType).orElse("NORMAL"),
                 existing.map(TrackRecord::audienceType).orElse("GENERAL"),
                 firstText(existing.map(TrackRecord::genre).orElse(""), metadata.genre(), "未分类"),
-                existing.map(TrackRecord::region).orElse("OTHER")
+                existing.map(TrackRecord::region).orElse("OTHER"),
+                existing.map(TrackRecord::relatedGenres).orElse(List.of()),
+                artworkSource
             );
-            trackStore.save(track);
+            trackStore.save(track, overwriteExisting.isPresent());
             if (existing.isPresent()) {
                 counts[2]++;
             } else {
@@ -269,6 +310,24 @@ class LibraryScanner {
     private boolean needsTitleNormalization(TrackRecord track) {
         return !track.manualEdited()
             && !fileNameParser.stripTrackNumberPrefix(track.title()).equals(track.title());
+    }
+
+    private boolean shouldOverwrite(TrackRecord track, ScrapeMode mode) {
+        return mode == ScrapeMode.OVERWRITE && !track.manualEdited();
+    }
+
+    private boolean shouldRefreshMissing(TrackRecord track, ScrapeMode mode) {
+        return mode == ScrapeMode.MISSING_ONLY
+            && !track.manualEdited()
+            && (missing(track.title(), "Unknown Title")
+                || missing(track.artist(), "Unknown Artist")
+                || missing(track.album(), "Unknown Album")
+                || track.artworkPath() == null
+                || track.plainLyrics() == null && track.syncedLyrics() == null);
+    }
+
+    private boolean missing(String value, String placeholder) {
+        return !hasText(value) || placeholder.equals(value);
     }
 
     private String blankToNull(String value) {

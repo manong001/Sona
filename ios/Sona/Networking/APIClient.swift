@@ -567,16 +567,17 @@ final class APIClient {
     }
 
     func startScan() async throws -> ScanStatus {
-        try await startScan(directory: "")
+        try await startScan(directory: "", mode: .missingOnly)
     }
 
-    func startScan(directory: String) async throws -> ScanStatus {
+    func startScan(directory: String, mode: ScrapeMode = .missingOnly) async throws -> ScanStatus {
         var components = URLComponents(
             url: url(for: "/api/v1/library/scan"),
             resolvingAgainstBaseURL: false
         )!
+        components.queryItems = [URLQueryItem(name: "mode", value: mode.rawValue)]
         if !directory.isEmpty {
-            components.queryItems = [URLQueryItem(name: "path", value: directory)]
+            components.queryItems?.append(URLQueryItem(name: "path", value: directory))
         }
         return try await request(url: components.url!, method: "POST")
     }

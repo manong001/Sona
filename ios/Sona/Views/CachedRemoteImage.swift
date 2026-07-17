@@ -6,13 +6,14 @@ final class RemoteImageCache: @unchecked Sendable {
 
     private let images = NSCache<NSURL, UIImage>()
     private let data = NSCache<NSURL, NSData>()
+    private let urlCache: URLCache
     private let loader: RemoteImageLoader
 
     private init() {
         images.totalCostLimit = 128 * 1_024 * 1_024
         data.totalCostLimit = 64 * 1_024 * 1_024
 
-        let urlCache = URLCache(
+        urlCache = URLCache(
             memoryCapacity: 64 * 1_024 * 1_024,
             diskCapacity: 512 * 1_024 * 1_024,
             diskPath: "sona.remote-images"
@@ -29,7 +30,10 @@ final class RemoteImageCache: @unchecked Sendable {
     }
 
     func cachedImage(for url: URL) -> UIImage? {
-        images.object(forKey: url as NSURL)
+        if let image = images.object(forKey: url as NSURL) { return image }
+        guard let bytes = cachedData(for: url), let image = UIImage(data: bytes) else { return nil }
+        storeImage(image, for: url)
+        return image
     }
 
     func storeImage(_ image: UIImage, for url: URL) {
@@ -45,10 +49,19 @@ final class RemoteImageCache: @unchecked Sendable {
     }
 
     func data(for url: URL) async throws -> Data {
-        if let cached = data.object(forKey: url as NSURL) { return cached as Data }
+        if let cached = cachedData(for: url) { return cached }
         let bytes = try await loader.data(for: url)
         data.setObject(bytes as NSData, forKey: url as NSURL, cost: bytes.count)
         return bytes
+    }
+
+    private func cachedData(for url: URL) -> Data? {
+        if let cached = data.object(forKey: url as NSURL) { return cached as Data }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        guard let cached = urlCache.cachedResponse(for: request) else { return nil }
+        data.setObject(cached.data as NSData, forKey: url as NSURL, cost: cached.data.count)
+        return cached.data
     }
 }
 

@@ -14,6 +14,10 @@ interface TrackStore {
 
     void save(TrackRecord track);
 
+    default void save(TrackRecord track, boolean overwriteMetadata) {
+        save(track);
+    }
+
     TrackPageData findPage(
         String query, String cursor, int limit, String userId, boolean childOnly,
         String sort, String genre, String codec, String metadataStatus

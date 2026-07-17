@@ -137,10 +137,10 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func scan(directory: String = "") async {
+    func scan(directory: String = "", mode: ScrapeMode = .missingOnly) async {
         errorMessage = nil
         do {
-            scanStatus = try await api.startScan(directory: directory)
+            scanStatus = try await api.startScan(directory: directory, mode: mode)
             repeat {
                 try await Task.sleep(for: .seconds(1))
                 scanStatus = try await api.scanStatus()

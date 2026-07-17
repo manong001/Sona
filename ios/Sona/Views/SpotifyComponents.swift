@@ -11,6 +11,7 @@ struct SonaCollection: Identifiable {
     let subtitle: String
     let artworkURL: String?
     let artworkURLs: [String]
+    let rotatesArtworkHourly: Bool
     let tracks: [Track]
     let shape: Shape
 
@@ -20,6 +21,7 @@ struct SonaCollection: Identifiable {
         subtitle: String,
         artworkURL: String?,
         artworkURLs: [String] = [],
+        rotatesArtworkHourly: Bool = false,
         tracks: [Track],
         shape: Shape
     ) {
@@ -28,6 +30,7 @@ struct SonaCollection: Identifiable {
         self.subtitle = subtitle
         self.artworkURL = artworkURL
         self.artworkURLs = artworkURLs
+        self.rotatesArtworkHourly = rotatesArtworkHourly
         self.tracks = tracks
         self.shape = shape
     }
@@ -219,7 +222,14 @@ struct SonaCollectionArtwork: View {
 
     var body: some View {
         Group {
-            if collection.artworkURLs.count < 2 {
+            if collection.rotatesArtworkHourly {
+                TimelineView(.periodic(from: .now, by: 60 * 60)) { context in
+                    ArtworkView(
+                        path: rotatingArtwork(at: context.date),
+                        cornerRadius: collection.shape == .circle ? size / 2 : 6
+                    )
+                }
+            } else if collection.artworkURLs.count < 2 {
                 ArtworkView(
                     path: collection.artworkURLs.first ?? collection.artworkURL,
                     cornerRadius: collection.shape == .circle ? size / 2 : 6
@@ -230,6 +240,14 @@ struct SonaCollectionArtwork: View {
         }
             .frame(width: size, height: size)
             .clipShape(collection.shape == .circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 6)))
+    }
+
+    private func rotatingArtwork(at date: Date) -> String? {
+        guard !collection.artworkURLs.isEmpty else { return nil }
+        let hour = UInt64(date.timeIntervalSince1970 / (60 * 60))
+        let offset = collection.id.utf8.reduce(UInt64(0)) { $0 &* 31 &+ UInt64($1) }
+        let index = Int((hour &+ offset) % UInt64(collection.artworkURLs.count))
+        return collection.artworkURLs[index]
     }
 }
 
@@ -260,19 +278,60 @@ struct SonaMediaCard: View {
     let collection: SonaCollection
     var width: CGFloat = 158
 
+    private let dailyColors: [Color] = [
+        Color(red: 0.13, green: 0.91, blue: 0.91),
+        Color(red: 0.91, green: 0.95, blue: 0.18),
+        Color(red: 1.00, green: 0.27, blue: 0.16),
+        Color(red: 0.96, green: 0.48, blue: 0.74),
+        Color(red: 0.35, green: 0.78, blue: 0.58),
+        Color(red: 0.62, green: 0.49, blue: 0.95)
+    ]
+
+    private var dailyIndex: Int? {
+        guard collection.id.hasPrefix("daily-") else { return nil }
+        return Int(collection.id.dropFirst("daily-".count))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SonaCollectionArtwork(collection: collection, size: width)
-            Text(collection.title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
+            if let dailyIndex {
+                dailyArtwork(color: dailyColors[dailyIndex % dailyColors.count])
+            } else {
+                SonaCollectionArtwork(collection: collection, size: width)
+                Text(collection.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
             Text(collection.subtitle)
                 .font(.caption)
                 .foregroundStyle(Color.sonaSecondaryText)
                 .lineLimit(2)
         }
         .frame(width: width, alignment: .leading)
+    }
+
+    private func dailyArtwork(color: Color) -> some View {
+        SonaCollectionArtwork(collection: collection, size: width)
+            .overlay(alignment: .topLeading) {
+                Image(systemName: "music.note")
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.sonaBackground)
+                    .frame(width: 26, height: 26)
+                    .background(color, in: Circle())
+                    .padding(8)
+            }
+            .overlay(alignment: .bottom) {
+                Text(collection.title)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.sonaBackground)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 9)
+                    .frame(height: 34)
+                    .background(color.opacity(0.94))
+                    .padding(6)
+            }
     }
 }
 

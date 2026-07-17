@@ -44,9 +44,9 @@ struct MusicLibraryView: View {
                 subtitle: playlist.isDirectoryPlaylist
                     ? "\(playlist.poolType == "DISCOVERY" ? "发现歌曲池" : "正常歌曲池") · Sona"
                     : "歌单 · \(username)",
-                artworkURL: playlist.artworkURLs.first
-                    ?? tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURL: playlist.artworkURLs.first,
                 artworkURLs: playlist.artworkURLs,
+                rotatesArtworkHourly: true,
                 tracks: tracks,
                 shape: .square
             )

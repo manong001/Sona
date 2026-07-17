@@ -678,6 +678,7 @@ class PersonalRepository {
                 JOIN tracks ON tracks.id = playlist_tracks.track_id
                 WHERE playlist_tracks.playlist_id = :playlistId
                   AND tracks.artwork_path IS NOT NULL
+                  AND tracks.artwork_source = 'SCRAPED'
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId
@@ -692,20 +693,15 @@ class PersonalRepository {
                 Path.of(resultSet.getString("artwork_path"))
             ))
             .list();
-        var selected = allArtworkFilesMatch(artworks)
-            ? artworks.stream().limit(1)
-            : artworks.stream().limit(4);
-        return selected
+        var distinct = new ArrayList<PlaylistArtwork>();
+        for (var artwork : artworks) {
+            if (distinct.stream().noneMatch(existing -> sameFileContent(existing.path(), artwork.path()))) {
+                distinct.add(artwork);
+            }
+        }
+        return distinct.stream()
             .map(artwork -> "/api/v1/tracks/" + artwork.trackId() + "/artwork")
             .toList();
-    }
-
-    private static boolean allArtworkFilesMatch(List<PlaylistArtwork> artworks) {
-        if (artworks.size() < 2) {
-            return true;
-        }
-        var first = artworks.get(0).path();
-        return artworks.stream().skip(1).allMatch(artwork -> sameFileContent(first, artwork.path()));
     }
 
     private static boolean sameFileContent(Path first, Path other) {

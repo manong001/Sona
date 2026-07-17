@@ -18,8 +18,11 @@ class ScanController {
     }
 
     @PostMapping
-    ResponseEntity<ScanStatus> start(@RequestParam(defaultValue = "") String path) {
-        return ResponseEntity.accepted().body(coordinator.start(path));
+    ResponseEntity<ScanStatus> start(
+        @RequestParam(defaultValue = "") String path,
+        @RequestParam(defaultValue = "MISSING_ONLY") ScrapeMode mode
+    ) {
+        return ResponseEntity.accepted().body(coordinator.start(path, mode));
     }
 
     @GetMapping("/status")

@@ -119,6 +119,10 @@ struct Lyrics: Decodable {
 
 struct ScanStatus: Decodable {
     let state: String
+    let phase: String?
+    let currentDirectory: String?
+    let completedDirectories: Int?
+    let totalDirectories: Int?
     let discovered: Int
     let imported: Int
     let updated: Int

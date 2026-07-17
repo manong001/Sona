@@ -89,9 +89,9 @@ struct HomeView: View {
                 subtitle: playlist.isDirectoryPlaylist
                     ? "\(playlist.poolType == "DISCOVERY" ? "发现歌曲池" : "正常歌曲池") · Sona"
                     : playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
-                artworkURL: playlist.artworkURLs.first
-                    ?? tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURL: playlist.artworkURLs.first,
                 artworkURLs: playlist.artworkURLs,
+                rotatesArtworkHourly: true,
                 tracks: tracks,
                 shape: .square
             )
@@ -157,13 +157,22 @@ struct HomeView: View {
             SonaCollection(
                 id: "daily-\(index)",
                 title: "每日推荐 \(index + 1)",
-                subtitle: "每日凌晨更新 · \(tracks.count) 首",
+                subtitle: dailyArtists(from: tracks),
                 artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
                 artworkURLs: Array(tracks.compactMap(\.artworkURL).prefix(4)),
                 tracks: tracks,
                 shape: .square
             )
         }
+    }
+
+    private func dailyArtists(from tracks: [Track]) -> String {
+        let artists = tracks.reduce(into: [String]()) { values, track in
+            guard !values.contains(track.artist) else { return }
+            values.append(track.artist)
+        }
+        let names = artists.prefix(3).joined(separator: "、")
+        return artists.count > 3 ? "\(names) 等更多曲风" : names
     }
 
     private var albums: [SonaCollection] {
