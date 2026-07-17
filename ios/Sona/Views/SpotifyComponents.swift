@@ -128,8 +128,9 @@ struct SonaAvatarView: View {
                     .fill(avatarGradient)
                     .overlay {
                         if let preset = AvatarPreset(rawValue: avatarPreset ?? "") {
-                            Text(preset.symbol)
-                                .font(.system(size: size * 0.48))
+                            Image(preset.assetName)
+                                .resizable()
+                                .scaledToFill()
                         } else {
                             Text(String(
                                 username.trimmingCharacters(in: .whitespaces).first ?? "S"
@@ -347,7 +348,8 @@ struct SonaTrackListView: View {
         let isPlaylist = collection.id == "liked-songs" ||
             collection.id.hasPrefix("playlist-") ||
             collection.subtitle.hasPrefix("歌单")
-        guard isPlaylist || collection.id.hasPrefix("album-") else { return nil }
+        guard collection.id == "daily-recommendations" ||
+            isPlaylist || collection.id.hasPrefix("album-") else { return nil }
         return collection.title
     }
 
@@ -356,7 +358,8 @@ struct SonaTrackListView: View {
     }
 
     private var showsShuffleButton: Bool {
-        collection.id == "liked-songs" ||
+        collection.id == "daily-recommendations" ||
+            collection.id == "liked-songs" ||
             collection.id.hasPrefix("playlist-") ||
             collection.subtitle.hasPrefix("歌单")
     }

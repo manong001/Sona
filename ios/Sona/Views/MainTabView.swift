@@ -208,8 +208,12 @@ struct DiscoveryView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: openDrawer) { Image(systemName: "person.crop.circle") }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("试听十首", systemImage: "play.fill") {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("刷新", systemImage: "arrow.clockwise") {
+                        Task { await load() }
+                    }
+                    .disabled(isLoading)
+                    Button("播放全部", systemImage: "play.fill") {
                         guard let first = tracks.first else { return }
                         player.play(
                             track: first,
@@ -230,7 +234,7 @@ struct DiscoveryView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            tracks = try await APIClient.shared.discoveryTracks(limit: 10)
+            tracks = try await APIClient.shared.discoveryTracks(limit: 50)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

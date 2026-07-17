@@ -50,7 +50,13 @@ public class ScanCoordinator {
                     for (var directory : directories) {
                         try {
                             directoryPlaylistService.sync(directory);
-                            result = add(result, libraryScanner.scan(directory));
+                            var completedDirectories = result;
+                            result = add(result, libraryScanner.scan(
+                                directory,
+                                progress -> status.set(ScanStatus.running(
+                                    add(completedDirectories, progress)
+                                ))
+                            ));
                             errors.addAll(libraryScanner.lastErrors());
                             directoryPlaylistService.sync(directory);
                         } catch (ResponseStatusException exception) {
@@ -67,7 +73,10 @@ public class ScanCoordinator {
                     directoryPlaylistService.pruneStalePlaylists(directories);
                 } else {
                     directoryPlaylistService.sync(relativeDirectory);
-                    result = libraryScanner.scan(relativeDirectory);
+                    result = libraryScanner.scan(
+                        relativeDirectory,
+                        progress -> status.set(ScanStatus.running(progress))
+                    );
                     errors.addAll(libraryScanner.lastErrors());
                     directoryPlaylistService.sync(relativeDirectory);
                 }

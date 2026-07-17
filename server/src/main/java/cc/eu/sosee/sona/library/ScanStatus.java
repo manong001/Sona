@@ -26,6 +26,19 @@ public record ScanStatus(
         return new ScanStatus(State.RUNNING, 0, 0, 0, 0, 0, null, java.util.List.of());
     }
 
+    static ScanStatus running(ScanResult result) {
+        return new ScanStatus(
+            State.RUNNING,
+            result.discovered(),
+            result.imported(),
+            result.updated(),
+            result.skipped(),
+            result.failed(),
+            null,
+            java.util.List.of()
+        );
+    }
+
     static ScanStatus completed(ScanResult result, java.util.List<String> errors) {
         return new ScanStatus(
             State.COMPLETED,

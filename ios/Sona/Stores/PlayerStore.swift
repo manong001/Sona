@@ -253,6 +253,27 @@ final class PlayerStore: ObservableObject {
         saveState()
     }
 
+#if DEBUG
+    func configureQueueRepro() {
+        let json = "[" + (1...20).map { index in
+            """
+            {"id":"debug-\(index)","title":"测试歌曲 \(index)","artist":"测试歌手",\
+            "album":"测试专辑","durationMs":180000,"codec":"AAC",\
+            "fileExtension":"m4a","streamURL":"/debug","hasLyrics":false,\
+            "metadataStatus":"CONFIRMED"}
+            """
+        }.joined(separator: ",") + "]"
+        guard let tracks = try? JSONDecoder().decode([Track].self, from: Data(json.utf8)) else { return }
+        playbackQueue = tracks
+        currentTrack = tracks[1]
+        queueTitle = "随机播放"
+    }
+
+    func tickQueueRepro() {
+        elapsed += 0.25
+    }
+#endif
+
     func stop() {
         submitCurrentPlayback()
         clearLocalPlayback()

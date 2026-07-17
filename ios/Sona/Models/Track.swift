@@ -245,27 +245,40 @@ enum AvatarPreset: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .aurora: "极光"
-        case .cosmos: "宇宙"
-        case .forest: "森林"
-        case .ocean: "海洋"
-        case .sunset: "落日"
-        case .candy: "糖果"
-        case .ember: "余烬"
-        case .midnight: "午夜"
+        case .aurora: "晨光小鹿"
+        case .cosmos: "蓝天柯基"
+        case .forest: "叶芽熊猫"
+        case .ocean: "海风水獭"
+        case .sunset: "向日葵兔"
+        case .candy: "花园猫咪"
+        case .ember: "果园小狐"
+        case .midnight: "蒲公英浣熊"
         }
     }
 
     var symbol: String {
         switch self {
-        case .aurora: "🌌"
-        case .cosmos: "🚀"
-        case .forest: "🌲"
-        case .ocean: "🐳"
-        case .sunset: "🌅"
-        case .candy: "🍬"
-        case .ember: "🔥"
-        case .midnight: "🌙"
+        case .aurora: "🦌"
+        case .cosmos: "🐶"
+        case .forest: "🐼"
+        case .ocean: "🦦"
+        case .sunset: "🐰"
+        case .candy: "🐱"
+        case .ember: "🦊"
+        case .midnight: "🦝"
+        }
+    }
+
+    var assetName: String {
+        switch self {
+        case .aurora: "AvatarMorningDeer"
+        case .cosmos: "AvatarBlueSkyCorgi"
+        case .forest: "AvatarNewLeafPanda"
+        case .ocean: "AvatarSeaBreezeOtter"
+        case .sunset: "AvatarSunflowerBunny"
+        case .candy: "AvatarGardenCat"
+        case .ember: "AvatarOrchardFox"
+        case .midnight: "AvatarDandelionRaccoon"
         }
     }
 }

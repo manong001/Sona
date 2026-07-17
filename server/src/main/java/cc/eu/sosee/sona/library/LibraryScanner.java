@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,6 +60,10 @@ class LibraryScanner {
     }
 
     ScanResult scan(String relativeDirectory) throws IOException {
+        return scan(relativeDirectory, result -> { });
+    }
+
+    ScanResult scan(String relativeDirectory, Consumer<ScanResult> progress) throws IOException {
         var scanDirectory = directoryService.resolve(relativeDirectory);
         var counts = new int[5];
         var errors = new ArrayList<String>();
@@ -66,13 +71,20 @@ class LibraryScanner {
             paths.filter(Files::isRegularFile)
                 .filter(this::isSupported)
                 .sorted()
-                .forEach(path -> scanFile(path, counts, errors));
+                .forEach(path -> {
+                    scanFile(path, counts, errors);
+                    progress.accept(result(counts));
+                });
         }
         if (relativeDirectory == null || relativeDirectory.isBlank()) {
-            counts[2] += removeMissingTracks(scanDirectory);
+            var removed = removeMissingTracks(scanDirectory);
+            counts[2] += removed;
+            if (removed > 0) {
+                progress.accept(result(counts));
+            }
         }
         lastErrors.set(List.copyOf(errors));
-        return new ScanResult(counts[0], counts[1], counts[2], counts[3], counts[4]);
+        return result(counts);
     }
 
     List<String> lastErrors() {
@@ -210,6 +222,10 @@ class LibraryScanner {
             }
             LOGGER.warn("Failed to scan {}: {}", path, exception.getMessage());
         }
+    }
+
+    private ScanResult result(int[] counts) {
+        return new ScanResult(counts[0], counts[1], counts[2], counts[3], counts[4]);
     }
 
     private String readSidecarLyrics(Path audioPath) throws IOException {
