@@ -641,15 +641,13 @@ private struct RemoteArtwork: View {
     let size: CGFloat
 
     var body: some View {
-        AsyncImage(url: url.flatMap { URL(string: $0) }) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFill()
-            } else {
-                ZStack {
-                    Color.sonaSurface
-                    Image(systemName: "music.note")
-                        .foregroundStyle(Color.sonaSecondaryText)
-                }
+        CachedRemoteImage(url: url.flatMap(URL.init(string:))) { image in
+            Image(uiImage: image).resizable().scaledToFill()
+        } placeholder: {
+            ZStack {
+                Color.sonaSurface
+                Image(systemName: "music.note")
+                    .foregroundStyle(Color.sonaSecondaryText)
             }
         }
         .frame(width: size, height: size)

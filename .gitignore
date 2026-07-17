@@ -31,6 +31,7 @@ replay_pid*
 # Local Xcode build artifacts
 ios/build/
 ios/Tests/
+ios/RegressionTests/
 
 # Local server tests
 server/src/test/

@@ -4,17 +4,18 @@ import UIKit
 struct ArtworkView: View {
     let path: String?
     var cornerRadius: CGFloat = 8
-    @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(Color.sonaSurface)
-            if let image {
+        CachedRemoteImage(url: path.map(APIClient.shared.url(for:))) { image in
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.sonaSurface)
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-            } else {
+            }
+        } placeholder: {
+            ZStack {
                 LinearGradient(
                     colors: [Color.sonaGreen.opacity(0.78), Color(red: 0.04, green: 0.20, blue: 0.14)],
                     startPoint: .topLeading,
@@ -28,14 +29,5 @@ struct ArtworkView: View {
         }
         .aspectRatio(1, contentMode: .fill)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .task(id: path) {
-            guard let path else {
-                image = nil
-                return
-            }
-            if let data = try? await APIClient.shared.data(at: path) {
-                image = UIImage(data: data)
-            }
-        }
     }
 }

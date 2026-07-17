@@ -727,9 +727,8 @@ final class PlayerStore: ObservableObject {
         let trackID = track.id
         let api = activeAPI
         artworkTask = Task { [weak self] in
-            guard let data = try? await api.data(at: path),
+            guard let image = try? await RemoteImageCache.shared.image(for: api.url(for: path)),
                   !Task.isCancelled,
-                  let image = UIImage(data: data),
                   let self,
                   self.currentTrack?.id == trackID else { return }
             self.nowPlayingArtwork = self.makeArtwork(image)

@@ -32,10 +32,11 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func login(username: String, password: String) async {
+    @discardableResult
+    func login(username: String, password: String) async -> Bool {
         guard !username.isEmpty, !password.isEmpty else {
             errorMessage = "请输入账号和密码"
-            return
+            return false
         }
         isSubmitting = true
         errorMessage = nil
@@ -43,12 +44,15 @@ final class SessionStore: ObservableObject {
         do {
             let user = try await api.login(username: username, password: password)
             state = .signedIn(user)
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
     func logout() async {
+        LoginCredentialStore.disableAutoLogin()
         try? await api.logout()
         state = .signedOut
     }
@@ -66,6 +70,8 @@ final class SessionStore: ObservableObject {
                 currentPassword: currentPassword,
                 newPassword: newPassword
             )
+            LoginCredentialStore.disableAutoLogin()
+            LoginCredentialStore.delete()
             state = .signedOut
             return true
         } catch {
@@ -75,6 +81,7 @@ final class SessionStore: ObservableObject {
     }
 
     func logoutAll() async {
+        LoginCredentialStore.disableAutoLogin()
         try? await api.logoutAll()
         state = .signedOut
     }

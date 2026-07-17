@@ -2,9 +2,12 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject private var session: SessionStore
-    @State private var username = "admin"
+    @State private var username = ""
     @State private var password = ""
+    @State private var hasPreparedLogin = false
     @AppStorage("serverURL") private var serverURL = APIClient.defaultServerURL
+    @AppStorage(LoginCredentialStore.rememberPasswordKey) private var rememberPassword = false
+    @AppStorage(LoginCredentialStore.autoLoginKey) private var autoLogin = false
 
     var body: some View {
         ZStack {
@@ -40,8 +43,14 @@ struct LoginView: View {
                     SecureField("密码", text: $password)
                         .textContentType(.password)
                         .sonaField()
+                    HStack(spacing: 20) {
+                        Toggle("记住密码", isOn: $rememberPassword)
+                        Toggle("自动登录", isOn: $autoLogin)
+                    }
+                    .font(.subheadline)
+                    .toggleStyle(.switch)
                     Button {
-                        Task { await session.login(username: username, password: password) }
+                        Task { await performLogin() }
                     } label: {
                         Group {
                             if session.isSubmitting {
@@ -73,6 +82,51 @@ struct LoginView: View {
             }
             .padding(.horizontal, 30)
             .frame(maxWidth: 480)
+        }
+        .task {
+            await prepareLogin()
+        }
+        .onChange(of: rememberPassword) { _, isEnabled in
+            if !isEnabled {
+                autoLogin = false
+                LoginCredentialStore.delete()
+            }
+        }
+        .onChange(of: autoLogin) { _, isEnabled in
+            if isEnabled {
+                rememberPassword = true
+            }
+        }
+    }
+
+    private func prepareLogin() async {
+        guard !hasPreparedLogin else { return }
+        hasPreparedLogin = true
+
+        guard rememberPassword, let credentials = LoginCredentialStore.load() else {
+            username = "admin"
+            autoLogin = false
+            return
+        }
+        serverURL = credentials.serverURL
+        username = credentials.username
+        password = credentials.password
+
+        if autoLogin {
+            await performLogin()
+        }
+    }
+
+    private func performLogin() async {
+        let succeeded = await session.login(username: username, password: password)
+        guard succeeded else { return }
+
+        if rememberPassword {
+            LoginCredentialStore.save(
+                LoginCredentials(serverURL: serverURL, username: username, password: password)
+            )
+        } else {
+            LoginCredentialStore.delete()
         }
     }
 }

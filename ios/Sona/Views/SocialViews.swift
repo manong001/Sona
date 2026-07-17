@@ -642,14 +642,25 @@ private struct SocialRemoteAnimatedImage: View {
     let url: URL
     @State private var image: UIImage?
 
+    init(url: URL) {
+        self.url = url
+        _image = State(initialValue: RemoteImageCache.shared.cachedImage(for: url))
+    }
+
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable() }
             else { Color.sonaBackground.overlay { ProgressView() } }
         }
         .task(id: url) {
-            guard let data = try? await APIClient.shared.data(at: url.absoluteString) else { return }
-            image = animatedImage(data: data)
+            if let cached = RemoteImageCache.shared.cachedImage(for: url) {
+                image = cached
+                return
+            }
+            guard let data = try? await RemoteImageCache.shared.data(for: url),
+                  let decoded = animatedImage(data: data) else { return }
+            RemoteImageCache.shared.storeImage(decoded, for: url)
+            image = decoded
         }
     }
 
