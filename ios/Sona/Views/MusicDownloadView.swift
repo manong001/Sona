@@ -63,7 +63,12 @@ struct MusicDownloadView: View {
                 return
             }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
                 await loadTasks(showLoading: false)
                 if !tasks.contains(where: { $0.state == .queued || $0.state == .running }) {
                     break
@@ -121,7 +126,6 @@ struct MusicDownloadView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.sonaGreen)
                 .foregroundStyle(.black)
-                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(.horizontal, 14)
             .frame(height: 50)
