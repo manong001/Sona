@@ -87,8 +87,11 @@ class DownloadController {
     }
 
     @PostMapping("/{id}/retry")
-    ResponseEntity<DownloadTask> retry(@PathVariable String id) {
-        return ResponseEntity.accepted().body(service.retry(id));
+    ResponseEntity<DownloadTask> retry(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return ResponseEntity.accepted().body(service.retry(id, user.username()));
     }
 
     record SearchResponse(List<DownloadCandidate> items) {

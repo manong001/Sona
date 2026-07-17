@@ -95,6 +95,17 @@ class DownloadTaskRepository {
             .optional();
     }
 
+    Optional<DownloadTask> findById(String id, String requestedBy) {
+        return jdbcClient.sql("""
+                SELECT * FROM download_tasks
+                WHERE id = :id AND requested_by = :requestedBy
+                """)
+            .param("id", id)
+            .param("requestedBy", requestedBy)
+            .query(this::map)
+            .optional();
+    }
+
     boolean delete(String id, String requestedBy) {
         return jdbcClient.sql("DELETE FROM download_tasks WHERE id = :id AND requested_by = :requestedBy")
             .param("id", id)

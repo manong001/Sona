@@ -20,14 +20,51 @@ struct SettingsView: View {
     @State private var isDownloadingUpdate = false
     @State private var downloadProgress = 0.0
     @State private var downloadedPackage: SharedPackage?
-    @State private var importRecords: [ImportRecord] = []
-    @State private var downloadTasks: [MusicDownloadTask] = []
-    @State private var isLoadingImportRecords = false
     @State private var showsScrapeModePicker = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("关于与更新") {
+                    LabeledContent {
+                        Text(updateVersionSummary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    } label: {
+                        Text("版本")
+                    }
+
+                    Button {
+                        Task { await checkForUpdate() }
+                    } label: {
+                        HStack {
+                            Label(updateCheckButtonTitle, systemImage: "arrow.clockwise")
+                            Spacer()
+                            if isCheckingUpdate {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isCheckingUpdate || isDownloadingUpdate)
+
+                    if let release = releaseInfo,
+                       release.isNewer(thanVersion: currentVersion, build: currentBuild) {
+                        Button {
+                            Task { await downloadUpdate(release) }
+                        } label: {
+                            HStack {
+                                Label(updateDownloadButtonTitle, systemImage: "square.and.arrow.down")
+                                Spacer()
+                                if isDownloadingUpdate {
+                                    ProgressView(value: downloadProgress)
+                                        .frame(width: 64)
+                                }
+                            }
+                        }
+                        .disabled(isDownloadingUpdate)
+                    }
+                }
+
                 if session.currentUser?.isAdmin == true {
                     Section("曲库维护") {
                         NavigationLink {
@@ -128,6 +165,11 @@ struct SettingsView: View {
                     } label: {
                         Label("个人垃圾桶", systemImage: "trash")
                     }
+                    NavigationLink {
+                        ImportHistoryView()
+                    } label: {
+                        Label("导入记录", systemImage: "clock.arrow.circlepath")
+                    }
                 }
 
                 Section("播放体验") {
@@ -140,25 +182,6 @@ struct SettingsView: View {
                         Picker("儿童主题", selection: $childTheme) {
                             Text("🚀 星空小勇士").tag("boy")
                             Text("🦄 糖果小公主").tag("girl")
-                        }
-                    }
-                }
-
-                Section("导入记录") {
-                    if isLoadingImportRecords && importHistoryItems.isEmpty {
-                        HStack {
-                            ProgressView()
-                            Text("正在加载导入记录…")
-                                .foregroundStyle(.secondary)
-                        }
-                    } else if importHistoryItems.isEmpty {
-                        Text("还没有导入记录")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(importHistoryItems) { item in
-                            ImportHistoryRow(item: item) {
-                                Task { await deleteImportHistoryItem(item) }
-                            }
                         }
                     }
                 }
@@ -178,45 +201,6 @@ struct SettingsView: View {
                     )
                 }
 
-                Section("关于与更新") {
-                    LabeledContent {
-                        Text(updateVersionSummary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    } label: {
-                        Text("版本")
-                    }
-
-                    Button {
-                        Task { await checkForUpdate() }
-                    } label: {
-                        HStack {
-                            Label(updateCheckButtonTitle, systemImage: "arrow.clockwise")
-                            Spacer()
-                            if isCheckingUpdate {
-                                ProgressView()
-                            }
-                        }
-                    }
-                    .disabled(isCheckingUpdate || isDownloadingUpdate)
-
-                    if let release = releaseInfo,
-                       release.isNewer(thanVersion: currentVersion, build: currentBuild) {
-                        Button {
-                            Task { await downloadUpdate(release) }
-                        } label: {
-                            HStack {
-                                Label(updateDownloadButtonTitle, systemImage: "square.and.arrow.down")
-                                Spacer()
-                                if isDownloadingUpdate {
-                                    ProgressView(value: downloadProgress)
-                                        .frame(width: 64)
-                                }
-                            }
-                        }
-                        .disabled(isDownloadingUpdate)
-                    }
-                }
             }
             .scrollContentBackground(.hidden)
             .background(Color.sonaBackground)
@@ -226,20 +210,6 @@ struct SettingsView: View {
             .onAppear {
                 appIconPreference = UIApplication.shared.alternateIconName == "SpotifyIcon"
                     ? "spotify" : "girl"
-                Task { await loadImportRecords() }
-            }
-            .task(id: activeImportRecordKey) {
-                guard importHistoryItems.contains(where: { $0.isRunning }) else { return }
-                while !Task.isCancelled {
-                    do {
-                        try await Task.sleep(for: .seconds(2))
-                    } catch {
-                        return
-                    }
-                    guard !Task.isCancelled else { return }
-                    await loadImportRecords()
-                    if !importHistoryItems.contains(where: { $0.isRunning }) { break }
-                }
             }
             .fileImporter(
                 isPresented: $showsImporter,
@@ -268,51 +238,6 @@ struct SettingsView: View {
         Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") ?? 0
     }
 
-    private var importHistoryItems: [ImportHistoryItem] {
-        (importRecords.map(ImportHistoryItem.record) + downloadTasks.map(ImportHistoryItem.download))
-            .sorted { $0.createdAt > $1.createdAt }
-    }
-
-    private var activeImportRecordKey: String {
-        importHistoryItems
-            .filter(\.isRunning)
-            .map(\.id)
-            .joined(separator: "|")
-    }
-
-    @MainActor
-    private func loadImportRecords() async {
-        guard !isLoadingImportRecords else { return }
-        isLoadingImportRecords = true
-        defer { isLoadingImportRecords = false }
-        async let recordsRequest = APIClient.shared.importRecords()
-        async let tasksRequest = APIClient.shared.musicDownloadTasks()
-        do {
-            let (records, tasks) = try await (recordsRequest, tasksRequest)
-            importRecords = records
-            downloadTasks = tasks
-        } catch {
-            if isCancellation(error) { return }
-            importMessage = "加载导入记录失败：\(error.localizedDescription)"
-        }
-    }
-
-    private func isCancellation(_ error: Error) -> Bool {
-        if Task.isCancelled || error is CancellationError { return true }
-        let value = error as NSError
-        if value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled {
-            return true
-        }
-        if value.domain == NSPOSIXErrorDomain && value.code == POSIXErrorCode.ECANCELED.rawValue {
-            return true
-        }
-        if value.domain == NSCocoaErrorDomain && value.code == NSUserCancelledError {
-            return true
-        }
-        let message = error.localizedDescription.lowercased()
-        return message == "cancelled" || message == "canceled" || message.contains("cancellationerror")
-    }
-
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
         do {
             let urls = try result.get()
@@ -335,7 +260,6 @@ struct SettingsView: View {
                         )
                     )
                 }
-                await loadImportRecords()
                 importMessage = upload.message ?? "文件上传失败"
                 return
             }
@@ -364,7 +288,6 @@ struct SettingsView: View {
                         )
                     )
                 }
-                await loadImportRecords()
                 importMessage = errorMessage
                 return
             }
@@ -380,28 +303,11 @@ struct SettingsView: View {
                     )
                 )
             }
-            await loadImportRecords()
             importMessage = upload.failed == 0
                 ? "已导入 \(upload.succeeded) 首到正常歌曲池"
                 : "已导入 \(upload.succeeded) 首，失败 \(upload.failed) 首"
         } catch {
             importMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func deleteImportHistoryItem(_ item: ImportHistoryItem) async {
-        do {
-            switch item {
-            case let .record(record):
-                try await APIClient.shared.deleteImportRecord(id: record.id)
-                importRecords.removeAll { $0.id == record.id }
-            case let .download(task):
-                try await APIClient.shared.deleteMusicDownloadTask(taskID: task.id)
-                downloadTasks.removeAll { $0.id == task.id }
-            }
-        } catch {
-            importMessage = "删除导入记录失败：\(error.localizedDescription)"
         }
     }
 
@@ -687,6 +593,97 @@ private struct OnlinePlaybackSourceSettingsView: View {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ImportHistoryView: View {
+    @State private var importRecords: [ImportRecord] = []
+    @State private var downloadTasks: [MusicDownloadTask] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                if isLoading && items.isEmpty {
+                    HStack {
+                        ProgressView()
+                        Text("正在加载导入记录…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if items.isEmpty {
+                    ContentUnavailableView(
+                        "还没有导入记录",
+                        systemImage: "clock.arrow.circlepath"
+                    )
+                } else {
+                    ForEach(items) { item in
+                        ImportHistoryRow(item: item) {
+                            Task { await delete(item) }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("导入记录")
+        .refreshable { await load() }
+        .task {
+            await load()
+            while !Task.isCancelled && items.contains(where: { $0.isRunning }) {
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    return
+                }
+                await load()
+            }
+        }
+        .alert("导入记录", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("好") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private var items: [ImportHistoryItem] {
+        (importRecords.map(ImportHistoryItem.record) + downloadTasks.map(ImportHistoryItem.download))
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    @MainActor
+    private func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        async let recordsRequest = APIClient.shared.importRecords()
+        async let tasksRequest = APIClient.shared.musicDownloadTasks()
+        do {
+            let (records, tasks) = try await (recordsRequest, tasksRequest)
+            importRecords = records
+            downloadTasks = tasks
+        } catch {
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            errorMessage = "加载失败：\(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func delete(_ item: ImportHistoryItem) async {
+        do {
+            switch item {
+            case let .record(record):
+                try await APIClient.shared.deleteImportRecord(id: record.id)
+                importRecords.removeAll { $0.id == record.id }
+            case let .download(task):
+                try await APIClient.shared.deleteMusicDownloadTask(taskID: task.id)
+                downloadTasks.removeAll { $0.id == task.id }
+            }
+        } catch {
+            errorMessage = "删除失败：\(error.localizedDescription)"
         }
     }
 }

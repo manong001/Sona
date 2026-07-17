@@ -13,8 +13,6 @@ import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import static org.springframework.http.HttpStatus.CONFLICT;
-
 @Service
 public class ScanCoordinator {
 
@@ -25,6 +23,8 @@ public class ScanCoordinator {
     private final AtomicBoolean rerunRequested = new AtomicBoolean();
     private final AtomicReference<String> rerunDirectory = new AtomicReference<>();
     private final AtomicReference<ScrapeMode> rerunMode = new AtomicReference<>();
+    private final AtomicReference<String> rerunTrackLabel = new AtomicReference<>();
+    private final AtomicReference<List<String>> rerunTrackIds = new AtomicReference<>();
 
     ScanCoordinator(
         LibraryScanner libraryScanner,
@@ -48,6 +48,8 @@ public class ScanCoordinator {
         if (status.get().state() == ScanStatus.State.RUNNING) {
             rerunDirectory.set(relativeDirectory);
             rerunMode.set(mode);
+            rerunTrackLabel.set(null);
+            rerunTrackIds.set(null);
             rerunRequested.set(true);
             return status.get();
         }
@@ -125,9 +127,7 @@ public class ScanCoordinator {
             } catch (Exception exception) {
                 status.set(ScanStatus.failed(exception, status.get()));
             } finally {
-                if (rerunRequested.getAndSet(false)) {
-                    start(rerunDirectory.getAndSet(null), rerunMode.getAndSet(null));
-                }
+                runRequestedRerun();
             }
         });
         return status.get();
@@ -135,7 +135,12 @@ public class ScanCoordinator {
 
     public synchronized ScanStatus forceOverwriteTracks(String label, List<String> trackIds) {
         if (status.get().state() == ScanStatus.State.RUNNING) {
-            throw new ResponseStatusException(CONFLICT, "已有扫描任务正在运行");
+            rerunDirectory.set(null);
+            rerunMode.set(null);
+            rerunTrackLabel.set(label);
+            rerunTrackIds.set(List.copyOf(trackIds));
+            rerunRequested.set(true);
+            return status.get();
         }
         var displayLabel = label == null || label.isBlank() ? "歌单" : label.strip();
         status.set(ScanStatus.running(
@@ -157,9 +162,7 @@ public class ScanCoordinator {
             } catch (Exception exception) {
                 status.set(ScanStatus.failed(exception, status.get()));
             } finally {
-                if (rerunRequested.getAndSet(false)) {
-                    start(rerunDirectory.getAndSet(null), rerunMode.getAndSet(null));
-                }
+                runRequestedRerun();
             }
         });
         return status.get();
@@ -189,6 +192,18 @@ public class ScanCoordinator {
 
     public void trigger() {
         start();
+    }
+
+    private void runRequestedRerun() {
+        if (!rerunRequested.getAndSet(false)) {
+            return;
+        }
+        var trackIds = rerunTrackIds.getAndSet(null);
+        if (trackIds != null) {
+            forceOverwriteTracks(rerunTrackLabel.getAndSet(null), trackIds);
+            return;
+        }
+        start(rerunDirectory.getAndSet(null), rerunMode.getAndSet(null));
     }
 
     private ScanResult scan(

@@ -80,9 +80,9 @@ class DownloadService {
         return task;
     }
 
-    DownloadTask retry(String id) {
+    DownloadTask retry(String id, String requestedBy) {
         requireEnabled();
-        var task = repository.findById(id)
+        var task = repository.findById(id, requestedBy)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "下载任务不存在"));
         if (task.state() != DownloadTaskState.FAILED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "只有失败任务可以重试");
