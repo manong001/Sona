@@ -242,6 +242,21 @@ class PersonalController {
         ));
     }
 
+    @PutMapping("/playlists/{playlistId}/artwork/{trackId}")
+    PersonalRepository.PlaylistData setPlaylistArtwork(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId,
+        @PathVariable String trackId
+    ) {
+        if (user.role() != UserRole.ADMIN) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return repository.setPlaylistArtwork(user.id(), playlistId, trackId)
+            .orElseThrow(() -> new ResponseStatusException(
+                NOT_FOUND, "Playlist track artwork not found"
+            ));
+    }
+
     @PutMapping("/playlists/{playlistId}/tracks/{trackId}")
     ResponseEntity<Void> addPlaylistTrack(
         @AuthenticationPrincipal AuthenticatedUser user,

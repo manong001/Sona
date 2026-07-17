@@ -112,6 +112,9 @@ class SchemaMigration implements ApplicationRunner {
             if (!playlistColumns.contains("pool_type")) {
                 jdbcClient.sql("ALTER TABLE playlists ADD COLUMN pool_type TEXT NOT NULL DEFAULT 'NORMAL'").update();
             }
+            if (!playlistColumns.contains("artwork_track_id")) {
+                jdbcClient.sql("ALTER TABLE playlists ADD COLUMN artwork_track_id TEXT").update();
+            }
             jdbcClient.sql(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_directory ON playlists(directory_path)"
             ).update();

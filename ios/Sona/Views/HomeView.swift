@@ -91,7 +91,7 @@ struct HomeView: View {
                     : playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
                 artworkURL: playlist.artworkURLs.first,
                 artworkURLs: playlist.artworkURLs,
-                rotatesArtworkHourly: true,
+                rotatesArtworkHourly: playlist.artworkTrackID == nil,
                 tracks: tracks,
                 shape: .square
             )
@@ -141,8 +141,7 @@ struct HomeView: View {
             id: "daily-recommendations",
             title: "今日推荐",
             subtitle: "每天为你更新",
-            artworkURL: dailyTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
-            artworkURLs: Array(dailyTracks.compactMap(\.artworkURL).prefix(4)),
+            artworkURL: dailyTracks.first?.artworkURL,
             tracks: dailyTracks,
             shape: .square
         )
@@ -158,8 +157,7 @@ struct HomeView: View {
                 id: "daily-\(index)",
                 title: "每日推荐 \(index + 1)",
                 subtitle: dailyArtists(from: tracks),
-                artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
-                artworkURLs: Array(tracks.compactMap(\.artworkURL).prefix(4)),
+                artworkURL: tracks.first?.artworkURL,
                 tracks: tracks,
                 shape: .square
             )
@@ -252,8 +250,8 @@ struct HomeView: View {
             values.append(likedSongsCollection)
         }
         values.append(contentsOf: playlistCollections.prefix(3))
-        values.append(contentsOf: recentCollections.prefix(max(0, 6 - values.count)))
-        return Array(values.prefix(6))
+        values.append(contentsOf: recentCollections.prefix(max(0, 8 - values.count)))
+        return Array(values.prefix(8))
     }
 
     var body: some View {
@@ -268,7 +266,12 @@ struct HomeView: View {
 
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 30) {
-                        header
+                        VStack(spacing: 16) {
+                            header
+                            if selectedFilter != "音乐" {
+                                shortcutGrid
+                            }
+                        }
                         if library.tracks.isEmpty && library.isLoading {
                             ProgressView("载入你的音乐…")
                                 .frame(maxWidth: .infinity)
@@ -292,7 +295,7 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             SonaAvatarButton(username: username, action: openDrawer)
             SonaFilterPill(title: "全部", isSelected: selectedFilter == "全部") {
                 withAnimation(.easeInOut(duration: 0.2)) { selectedFilter = "全部" }
@@ -311,10 +314,6 @@ struct HomeView: View {
 
     @ViewBuilder
     private var homeContent: some View {
-        if selectedFilter != "音乐" {
-            shortcutGrid
-        }
-
         if selectedFilter != "歌单" {
             mediaSection(
                 title: "今日推荐",
@@ -380,13 +379,13 @@ struct HomeView: View {
                             playbackQueue: playbackQueue(for: collection)
                         )
                     } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             if collection.id == "liked-songs" {
                                 SonaLikedCover()
-                                    .frame(width: 62, height: 62)
+                                    .frame(width: 48, height: 48)
                             } else {
                                 ArtworkView(path: collection.artworkURL, cornerRadius: 5)
-                                    .frame(width: 62, height: 62)
+                                    .frame(width: 48, height: 48)
                             }
                             Text(collection.title)
                                 .font(.subheadline.weight(.bold))
@@ -394,7 +393,7 @@ struct HomeView: View {
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(height: 62)
+                        .frame(height: 48)
                         .background(Color.sonaSurface.opacity(0.95), in: RoundedRectangle(cornerRadius: 6))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }

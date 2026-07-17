@@ -231,6 +231,13 @@ final class APIClient {
         )
     }
 
+    func setPlaylistArtwork(playlistID: String, trackID: String) async throws -> Playlist {
+        try await request(
+            path: "/api/v1/me/playlists/\(playlistID)/artwork/\(trackID)",
+            method: "PUT"
+        )
+    }
+
     func removePlaylistTracks(playlistID: String, trackIDs: [String]) async throws {
         struct Body: Encodable { let trackIds: [String] }
         try await requestVoid(

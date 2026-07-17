@@ -10,6 +10,7 @@ struct Playlist: Codable, Identifiable, Equatable {
     let name: String
     let trackIDs: [String]
     let artworkURLs: [String]
+    let artworkTrackID: String?
     let createdAt: Int64
     let featured: Bool
     let directoryPath: String?
@@ -19,16 +20,19 @@ struct Playlist: Codable, Identifiable, Equatable {
         case id, name, createdAt, featured, directoryPath, poolType
         case trackIDs = "trackIds"
         case artworkURLs = "artworkUrls"
+        case artworkTrackID = "artworkTrackId"
     }
 
     init(
-        id: String, name: String, trackIDs: [String], artworkURLs: [String] = [], createdAt: Int64,
+        id: String, name: String, trackIDs: [String], artworkURLs: [String] = [],
+        artworkTrackID: String? = nil, createdAt: Int64,
         featured: Bool = false, directoryPath: String? = nil, poolType: String = "NORMAL"
     ) {
         self.id = id
         self.name = name
         self.trackIDs = trackIDs
         self.artworkURLs = artworkURLs
+        self.artworkTrackID = artworkTrackID
         self.createdAt = createdAt
         self.featured = featured
         self.directoryPath = directoryPath
@@ -41,6 +45,7 @@ struct Playlist: Codable, Identifiable, Equatable {
         name = try values.decode(String.self, forKey: .name)
         trackIDs = try values.decode([String].self, forKey: .trackIDs)
         artworkURLs = try values.decodeIfPresent([String].self, forKey: .artworkURLs) ?? []
+        artworkTrackID = try values.decodeIfPresent(String.self, forKey: .artworkTrackID)
         createdAt = try values.decode(Int64.self, forKey: .createdAt)
         featured = try values.decodeIfPresent(Bool.self, forKey: .featured) ?? false
         directoryPath = try values.decodeIfPresent(String.self, forKey: .directoryPath)

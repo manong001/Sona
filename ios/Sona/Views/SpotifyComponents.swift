@@ -108,7 +108,7 @@ struct SonaAvatarButton: View {
                 username: username,
                 avatarPreset: session.currentUser?.avatarPreset,
                 avatarURL: session.currentUser?.avatarURL,
-                size: 38
+                size: 32
             )
         }
         .buttonStyle(.plain)
@@ -174,8 +174,8 @@ struct SonaFilterPill: View {
         Button(title, action: action)
             .font(.subheadline.weight(.medium))
             .foregroundStyle(isSelected ? Color.black.opacity(0.86) : .white)
-            .padding(.horizontal, 16)
-            .frame(height: 34)
+            .padding(.horizontal, 13)
+            .frame(height: 30)
             .background(isSelected ? Color.sonaGreen : Color.sonaChip, in: Capsule())
             .buttonStyle(.plain)
     }
@@ -324,8 +324,6 @@ struct SonaMediaCard: View {
 
     private func dailyArtwork(color: Color) -> some View {
         SonaCollectionArtwork(collection: collection, size: width)
-            .frame(width: width, height: width * 0.75)
-            .clipped()
             .overlay(alignment: .topLeading) {
                 Image(systemName: "music.note")
                     .font(.caption.bold())
@@ -387,6 +385,20 @@ struct SonaTrackListView: View {
         guard collection.id.hasPrefix("playlist-") else { return nil }
         let id = String(collection.id.dropFirst("playlist-".count))
         return personal.playlists.first { $0.id == id }
+    }
+
+    private var displayedCollection: SonaCollection {
+        guard let playlist else { return collection }
+        return SonaCollection(
+            id: collection.id,
+            title: collection.title,
+            subtitle: collection.subtitle,
+            artworkURL: playlist.artworkURLs.first,
+            artworkURLs: playlist.artworkURLs,
+            rotatesArtworkHourly: playlist.artworkTrackID == nil,
+            tracks: tracks,
+            shape: collection.shape
+        )
     }
 
     private var tracks: [Track] {
@@ -454,7 +466,7 @@ struct SonaTrackListView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     VStack(spacing: 18) {
-                        SonaCollectionArtwork(collection: collection, size: 230)
+                        SonaCollectionArtwork(collection: displayedCollection, size: 230)
                             .shadow(color: .black.opacity(0.45), radius: 20, y: 10)
                         VStack(spacing: 5) {
                             Text(collection.title)
@@ -549,6 +561,11 @@ struct SonaTrackListView: View {
                                 track: track,
                                 showsOfflineBadge: offline.downloadedIDs.contains(track.id),
                                 isFavorite: personal.favoriteIDs.contains(track.id),
+                                moreActionTitle: playlistArtworkActionTitle(for: track),
+                                moreActionSystemImage: playlist?.artworkTrackID == track.id
+                                    ? "checkmark.circle.fill" : "photo",
+                                moreActionDisabled: playlist?.artworkTrackID == track.id,
+                                moreAction: playlistArtworkAction(for: track),
                                 deleteTitle: collection.id.hasPrefix("artist-") ? "删除歌曲" : nil,
                                 deleteAction: collection.id.hasPrefix("artist-") ? {
                                     Task { await deleteArtistTrack(track) }
@@ -690,6 +707,28 @@ struct SonaTrackListView: View {
             guard !Task.isCancelled else { return }
             if let track = try? await APIClient.shared.track(id: id) {
                 loadedPlaylistTracks[id] = track
+            }
+        }
+    }
+
+    private func playlistArtworkActionTitle(for track: Track) -> String? {
+        guard session.currentUser?.isAdmin == true,
+              playlist != nil,
+              track.artworkURL != nil else { return nil }
+        return playlist?.artworkTrackID == track.id ? "当前歌单封面" : "设为歌单封面"
+    }
+
+    private func playlistArtworkAction(for track: Track) -> (() -> Void)? {
+        guard session.currentUser?.isAdmin == true,
+              let playlist,
+              track.artworkURL != nil else { return nil }
+        return {
+            guard playlist.artworkTrackID != track.id else { return }
+            Task {
+                await personal.setPlaylistArtwork(
+                    playlistID: playlist.id,
+                    trackID: track.id
+                )
             }
         }
     }

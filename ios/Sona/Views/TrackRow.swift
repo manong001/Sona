@@ -4,6 +4,10 @@ struct TrackRow: View {
     let track: Track
     var showsOfflineBadge = false
     var isFavorite = false
+    var moreActionTitle: String?
+    var moreActionSystemImage = "ellipsis.circle"
+    var moreActionDisabled = false
+    var moreAction: (() -> Void)?
     var deleteTitle: String?
     var deleteAction: (() -> Void)?
     var tapAction: (() -> Void)?
@@ -18,10 +22,18 @@ struct TrackRow: View {
                 trackContent
             }
 
-            if let deleteTitle, let deleteAction {
+            if moreAction != nil || deleteTitle != nil {
                 Menu {
-                    Button(deleteTitle, systemImage: "trash", role: .destructive) {
-                        deleteAction()
+                    if let moreActionTitle, let moreAction {
+                        Button(moreActionTitle, systemImage: moreActionSystemImage) {
+                            moreAction()
+                        }
+                        .disabled(moreActionDisabled)
+                    }
+                    if let deleteTitle, let deleteAction {
+                        Button(deleteTitle, systemImage: "trash", role: .destructive) {
+                            deleteAction()
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis")

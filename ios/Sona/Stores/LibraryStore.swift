@@ -366,6 +366,7 @@ final class PersonalStore: ObservableObject {
                 name: playlist.name,
                 trackIDs: trackIDs,
                 artworkURLs: playlist.artworkURLs,
+                artworkTrackID: playlist.artworkTrackID,
                 createdAt: playlist.createdAt,
                 featured: playlist.featured,
                 directoryPath: playlist.directoryPath,
@@ -373,6 +374,24 @@ final class PersonalStore: ObservableObject {
             )
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func setPlaylistArtwork(playlistID: String, trackID: String) async -> Bool {
+        do {
+            let updated = try await api.setPlaylistArtwork(
+                playlistID: playlistID,
+                trackID: trackID
+            )
+            guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else {
+                return false
+            }
+            playlists[index] = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -390,6 +409,7 @@ final class PersonalStore: ObservableObject {
                 name: playlist.name,
                 trackIDs: playlist.trackIDs.filter { !trackIDs.contains($0) },
                 artworkURLs: playlist.artworkURLs,
+                artworkTrackID: playlist.artworkTrackID,
                 createdAt: playlist.createdAt,
                 featured: playlist.featured,
                 directoryPath: playlist.directoryPath,

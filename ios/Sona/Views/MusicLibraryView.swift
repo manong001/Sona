@@ -50,7 +50,7 @@ struct MusicLibraryView: View {
                     : "歌单 · \(username)",
                 artworkURL: playlist.artworkURLs.first,
                 artworkURLs: playlist.artworkURLs,
-                rotatesArtworkHourly: true,
+                rotatesArtworkHourly: playlist.artworkTrackID == nil,
                 tracks: tracks,
                 shape: .square
             )
@@ -576,6 +576,11 @@ private struct ManagedPlaylistDetailView: View {
                                 track: track,
                                 showsOfflineBadge: offline.downloadedIDs.contains(track.id),
                                 isFavorite: personal.favoriteIDs.contains(track.id),
+                                moreActionTitle: playlistArtworkActionTitle(for: track),
+                                moreActionSystemImage: playlist?.artworkTrackID == track.id
+                                    ? "checkmark.circle.fill" : "photo",
+                                moreActionDisabled: playlist?.artworkTrackID == track.id,
+                                moreAction: playlistArtworkAction(for: track),
                                 deleteTitle: playlist?.isDirectoryPlaylist == true ? nil : "从歌单中移除",
                                 deleteAction: playlist?.isDirectoryPlaylist == true ? nil : {
                                     Task {
@@ -764,6 +769,28 @@ private struct ManagedPlaylistDetailView: View {
             queueContextID: playlistID,
             offlineURLProvider: offline.localURL(for:)
         )
+    }
+
+    private func playlistArtworkActionTitle(for track: Track) -> String? {
+        guard session.currentUser?.isAdmin == true,
+              playlist != nil,
+              track.artworkURL != nil else { return nil }
+        return playlist?.artworkTrackID == track.id ? "当前歌单封面" : "设为歌单封面"
+    }
+
+    private func playlistArtworkAction(for track: Track) -> (() -> Void)? {
+        guard session.currentUser?.isAdmin == true,
+              let playlist,
+              track.artworkURL != nil else { return nil }
+        return {
+            guard playlist.artworkTrackID != track.id else { return }
+            Task {
+                await personal.setPlaylistArtwork(
+                    playlistID: playlist.id,
+                    trackID: track.id
+                )
+            }
+        }
     }
 
     private func loadMissingTracks() async {

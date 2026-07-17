@@ -237,7 +237,7 @@ class PersonalRepository {
 
     List<PlaylistData> playlists(String userId) {
         return jdbcClient.sql("""
-                SELECT id, name, featured, directory_path, pool_type, created_at
+                SELECT id, name, featured, directory_path, pool_type, artwork_track_id, created_at
                 FROM playlists
                 WHERE user_id = :userId OR featured = 1
                 ORDER BY created_at
@@ -247,7 +247,10 @@ class PersonalRepository {
                 resultSet.getString("id"),
                 resultSet.getString("name"),
                 trackIds(userId, resultSet.getString("id")),
-                playlistArtworkUrls(userId, resultSet.getString("id")),
+                playlistArtworkUrls(
+                    userId, resultSet.getString("id"), resultSet.getString("artwork_track_id")
+                ),
+                resultSet.getString("artwork_track_id"),
                 resultSet.getLong("created_at"),
                 resultSet.getBoolean("featured"),
                 resultSet.getString("directory_path"),
@@ -280,7 +283,9 @@ class PersonalRepository {
             .param("name", name)
             .param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), List.of(), createdAt, false, null, "NORMAL");
+        return new PlaylistData(
+            id, name, List.of(), List.of(), null, createdAt, false, null, "NORMAL"
+        );
     }
 
     PlaylistData createFeaturedPlaylist(String userId, String name) {
@@ -292,7 +297,9 @@ class PersonalRepository {
                 """)
             .param("id", id).param("userId", userId).param("name", name).param("createdAt", createdAt)
             .update();
-        return new PlaylistData(id, name, List.of(), List.of(), createdAt, true, null, "NORMAL");
+        return new PlaylistData(
+            id, name, List.of(), List.of(), null, createdAt, true, null, "NORMAL"
+        );
     }
 
     @Transactional
@@ -331,6 +338,33 @@ class PersonalRepository {
             .param("userId", userId)
             .query(Long.class)
             .single() == 1;
+    }
+
+    Optional<PlaylistData> setPlaylistArtwork(String userId, String playlistId, String trackId) {
+        var updated = jdbcClient.sql("""
+                UPDATE playlists
+                SET artwork_track_id = :trackId
+                WHERE id = :playlistId
+                  AND (user_id = :userId OR featured = 1)
+                  AND EXISTS (
+                    SELECT 1
+                    FROM playlist_tracks
+                    JOIN tracks ON tracks.id = playlist_tracks.track_id
+                    WHERE playlist_tracks.playlist_id = playlists.id
+                      AND playlist_tracks.track_id = :trackId
+                      AND tracks.artwork_path IS NOT NULL
+                  )
+                """)
+            .param("trackId", trackId)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update();
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        return playlists(userId).stream()
+            .filter(playlist -> playlist.id().equals(playlistId))
+            .findFirst();
     }
 
     void addPlaylistTrack(String playlistId, String trackId) {
@@ -683,7 +717,21 @@ class PersonalRepository {
             .list();
     }
 
-    private List<String> playlistArtworkUrls(String userId, String playlistId) {
+    private List<String> playlistArtworkUrls(
+        String userId, String playlistId, String artworkTrackId
+    ) {
+        if (artworkTrackId != null) {
+            var hasArtwork = jdbcClient.sql("""
+                    SELECT COUNT(*) FROM tracks
+                    WHERE id = :trackId AND artwork_path IS NOT NULL
+                    """)
+                .param("trackId", artworkTrackId)
+                .query(Integer.class)
+                .single();
+            return hasArtwork == 0
+                ? List.of()
+                : List.of("/api/v1/tracks/" + artworkTrackId + "/artwork");
+        }
         var artworks = jdbcClient.sql("""
                 SELECT playlist_tracks.track_id, tracks.artwork_path
                 FROM playlist_tracks
@@ -760,7 +808,7 @@ class PersonalRepository {
 
     record PlaylistData(
         String id, String name, List<String> trackIds, List<String> artworkUrls,
-        long createdAt, boolean featured,
+        String artworkTrackId, long createdAt, boolean featured,
         String directoryPath, String poolType
     ) {
     }

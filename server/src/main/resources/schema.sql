@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     featured INTEGER NOT NULL DEFAULT 0,
     directory_path TEXT,
     pool_type TEXT NOT NULL DEFAULT 'NORMAL',
+    artwork_track_id TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
