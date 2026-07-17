@@ -72,6 +72,9 @@ class SchemaMigration implements ApplicationRunner {
             if (!trackColumns.contains("genre")) {
                 jdbcClient.sql("ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '未分类'").update();
             }
+            if (!trackColumns.contains("related_genres")) {
+                jdbcClient.sql("ALTER TABLE tracks ADD COLUMN related_genres TEXT NOT NULL DEFAULT ''").update();
+            }
             if (!trackColumns.contains("region")) {
                 jdbcClient.sql("ALTER TABLE tracks ADD COLUMN region TEXT NOT NULL DEFAULT 'OTHER'").update();
             }

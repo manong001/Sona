@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -37,13 +38,16 @@ class LibraryTrackController {
 
     private final TrackStore trackStore;
     private final ScanCoordinator scanCoordinator;
+    private final TrackAiService trackAiService;
     private final Path uploadDirectory;
 
     LibraryTrackController(
-        TrackStore trackStore, ScanCoordinator scanCoordinator, SonaProperties properties
+        TrackStore trackStore, ScanCoordinator scanCoordinator, SonaProperties properties,
+        TrackAiService trackAiService
     ) {
         this.trackStore = trackStore;
         this.scanCoordinator = scanCoordinator;
+        this.trackAiService = trackAiService;
         this.uploadDirectory = properties.getMusicDir().toAbsolutePath().normalize().resolve("Uploads");
     }
 
@@ -80,10 +84,18 @@ class LibraryTrackController {
         var artist = request.artist().strip();
         var album = request.album().strip();
         var genre = request.genre().strip();
-        if (!trackStore.editMetadata(id, title, artist, album, request.trackNumber(), genre)) {
+        var relatedGenres = normalizedRelatedGenres(request.relatedGenres(), genre);
+        if (!trackStore.editMetadata(
+            id, title, artist, album, request.trackNumber(), genre, relatedGenres
+        )) {
             throw new ResponseStatusException(NOT_FOUND, "Track not found");
         }
         return TrackResponse.from(trackStore.findById(id).orElseThrow());
+    }
+
+    @PostMapping("/{id}/ai-analysis")
+    TrackAiService.AiTrackAnalysis analyzeMetadata(@PathVariable String id) {
+        return trackAiService.analyze(id);
     }
 
     @PostMapping("/{id}/rescrape")
@@ -140,6 +152,29 @@ class LibraryTrackController {
         return normalized;
     }
 
+    private List<String> normalizedRelatedGenres(List<String> genres, String primaryGenre) {
+        if (genres == null) {
+            return null;
+        }
+        var normalized = new LinkedHashSet<String>();
+        for (var value : genres) {
+            if (value == null) {
+                continue;
+            }
+            var genre = value.strip();
+            if (genre.isEmpty() || genre.length() > 40) {
+                throw new ResponseStatusException(BAD_REQUEST, "Invalid related genre");
+            }
+            if (!genre.equals(primaryGenre)) {
+                normalized.add(genre);
+            }
+            if (normalized.size() > 5) {
+                throw new ResponseStatusException(BAD_REQUEST, "Too many related genres");
+            }
+        }
+        return List.copyOf(normalized);
+    }
+
     record ClassificationRequest(
         @NotBlank String poolType,
         @NotBlank String audienceType,
@@ -152,7 +187,8 @@ class LibraryTrackController {
         @NotBlank @jakarta.validation.constraints.Size(max = 200) String artist,
         @NotBlank @jakarta.validation.constraints.Size(max = 200) String album,
         @jakarta.validation.constraints.PositiveOrZero Integer trackNumber,
-        @NotBlank @jakarta.validation.constraints.Size(max = 40) String genre
+        @NotBlank @jakarta.validation.constraints.Size(max = 40) String genre,
+        List<String> relatedGenres
     ) {
     }
 }

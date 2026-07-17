@@ -26,6 +26,12 @@ sona:
     enabled: ${SONA_DOWNLOADER_ENABLED:false}
     base-url: ${SONA_DOWNLOADER_URL:http://sona-downloader:6700}
     token: ${SONA_SIDECAR_TOKEN:}
+  ai:
+    enabled: ${SONA_AI_ENABLED:false}
+    base-url: ${SONA_AI_BASE_URL:https://api.openai.com/v1}
+    api-key: ${SONA_AI_API_KEY:}
+    model: ${SONA_AI_MODEL:}
+    timeout: ${SONA_AI_TIMEOUT:30s}
   auth:
     bootstrap-username: ${SONA_ADMIN_USERNAME:admin}
     bootstrap-password: ${SONA_ADMIN_PASSWORD:}

@@ -19,6 +19,7 @@ class DatabaseConfig {
         var sqliteConfig = new SQLiteConfig();
         sqliteConfig.enforceForeignKeys(true);
         sqliteConfig.setJournalMode(SQLiteConfig.JournalMode.WAL);
+        sqliteConfig.setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE);
         sqliteConfig.setSynchronous(SQLiteConfig.SynchronousMode.NORMAL);
         sqliteConfig.setBusyTimeout(30_000);
 

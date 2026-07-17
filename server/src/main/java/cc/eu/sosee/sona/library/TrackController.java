@@ -105,6 +105,20 @@ class TrackController {
         return TrackResponse.from(findTrack(id, user.id()));
     }
 
+    @GetMapping("/{id}/similar")
+    List<TrackResponse> similar(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @RequestParam(defaultValue = "10") int limit,
+        @RequestParam(defaultValue = "false") boolean childMode
+    ) {
+        var track = findTrack(id, user.id());
+        var candidates = trackStore.findSimilarCandidates(id, user.id(), childMode);
+        return SimilarTrackService.rank(
+            track, track.relatedGenres(), candidates, Math.max(1, Math.min(limit, 50))
+        ).stream().map(TrackResponse::from).toList();
+    }
+
     @GetMapping("/{id}/stream")
     ResponseEntity<Resource> stream(
         @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id

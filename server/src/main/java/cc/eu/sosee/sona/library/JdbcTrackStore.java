@@ -63,12 +63,12 @@ class JdbcTrackStore implements TrackStore {
                     id, path, file_size, modified_at, title, normalized_title, artist, album,
                     track_number, duration_ms, codec, sample_rate, bit_depth, artwork_path,
                     plain_lyrics, synced_lyrics, lyrics_source, metadata_status, manual_edited,
-                    created_at, updated_at, pool_type, audience_type, genre, region
+                    created_at, updated_at, pool_type, audience_type, genre, related_genres, region
                 ) VALUES (
                     :id, :path, :fileSize, :modifiedAt, :title, :normalizedTitle, :artist, :album,
                     :trackNumber, :durationMs, :codec, :sampleRate, :bitDepth, :artworkPath,
                     :plainLyrics, :syncedLyrics, :lyricsSource, :metadataStatus, :manualEdited,
-                    :createdAt, :updatedAt, :poolType, :audienceType, :genre, :region
+                    :createdAt, :updatedAt, :poolType, :audienceType, :genre, :relatedGenres, :region
                 )
                 ON CONFLICT(path) DO UPDATE SET
                     file_size = excluded.file_size,
@@ -114,6 +114,7 @@ class JdbcTrackStore implements TrackStore {
             .param("poolType", track.poolType())
             .param("audienceType", track.audienceType())
             .param("genre", track.genre())
+            .param("relatedGenres", encodeGenres(track.relatedGenres()))
             .param("region", track.region())
             .update();
     }
@@ -443,6 +444,28 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
+    public List<TrackRecord> findSimilarCandidates(String id, String userId, boolean childOnly) {
+        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        return jdbcClient.sql("""
+                SELECT tracks.*
+                FROM tracks
+                WHERE tracks.id <> :id
+                  AND tracks.pool_type = 'NORMAL'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """ + audienceFilter + """
+                ORDER BY tracks.updated_at DESC, tracks.id
+                LIMIT 1000
+                """)
+            .param("id", id)
+            .param("userId", userId)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
+    @Override
     public List<ChartTrackData> findChart(
         String region, String userId, boolean childOnly, int limit
     ) {
@@ -498,16 +521,27 @@ class JdbcTrackStore implements TrackStore {
     public boolean editMetadata(
         String id, String title, String artist, String album, Integer trackNumber, String genre
     ) {
+        return editMetadata(id, title, artist, album, trackNumber, genre, null);
+    }
+
+    @Override
+    public boolean editMetadata(
+        String id, String title, String artist, String album, Integer trackNumber, String genre,
+        List<String> relatedGenres
+    ) {
         return jdbcClient.sql("""
                 UPDATE tracks SET title = :title, normalized_title = :normalizedTitle,
                     artist = :artist, album = :album, track_number = :trackNumber,
-                    genre = :genre, metadata_status = 'MANUAL', manual_edited = 1,
+                    genre = :genre, related_genres = COALESCE(:relatedGenres, related_genres),
+                    metadata_status = 'MANUAL', manual_edited = 1,
                     updated_at = :updatedAt
                 WHERE id = :id
                 """)
             .param("id", id).param("title", title).param("normalizedTitle", TextNormalizer.sortKey(title))
             .param("artist", artist).param("album", album).param("trackNumber", trackNumber)
-            .param("genre", genre).param("updatedAt", System.currentTimeMillis())
+            .param("genre", genre)
+            .param("relatedGenres", relatedGenres == null ? null : encodeGenres(relatedGenres))
+            .param("updatedAt", System.currentTimeMillis())
             .update() == 1;
     }
 
@@ -568,7 +602,8 @@ class JdbcTrackStore implements TrackStore {
             resultSet.getString("pool_type"),
             resultSet.getString("audience_type"),
             resultSet.getString("genre"),
-            resultSet.getString("region")
+            resultSet.getString("region"),
+            decodeGenres(resultSet.getString("related_genres"))
         );
     }
 
@@ -583,6 +618,14 @@ class JdbcTrackStore implements TrackStore {
 
     private static String string(Path path) {
         return path == null ? null : path.toString();
+    }
+
+    private static String encodeGenres(List<String> genres) {
+        return String.join("\n", genres == null ? List.of() : genres);
+    }
+
+    private static List<String> decodeGenres(String value) {
+        return value == null || value.isBlank() ? List.of() : value.lines().toList();
     }
 
     private record RandomSelection(TrackRecord track, int cycle) {

@@ -421,19 +421,55 @@ final class APIClient {
 
     func editTrackMetadata(
         id: String, title: String, artist: String, album: String,
-        trackNumber: Int?, genre: String
+        trackNumber: Int?, genre: String, relatedGenres: [String]? = nil
     ) async throws -> Track {
         struct Body: Encodable {
             let title: String; let artist: String; let album: String
-            let trackNumber: Int?; let genre: String
+            let trackNumber: Int?; let genre: String; let relatedGenres: [String]?
         }
         return try await request(
             path: "/api/v1/library/tracks/\(id)/metadata", method: "PATCH",
             body: try encoder.encode(Body(
                 title: title, artist: artist, album: album,
-                trackNumber: trackNumber, genre: genre
+                trackNumber: trackNumber, genre: genre, relatedGenres: relatedGenres
             ))
         )
+    }
+
+    func analyzeTrackMetadata(id: String) async throws -> AiTrackAnalysis {
+        try await request(path: "/api/v1/library/tracks/\(id)/ai-analysis", method: "POST")
+    }
+
+    func aiSettings() async throws -> AiSettings {
+        try await request(path: "/api/v1/library/ai-settings")
+    }
+
+    func updateAiSettings(
+        enabled: Bool, baseUrl: String, model: String, apiKey: String?
+    ) async throws -> AiSettings {
+        struct Body: Encodable {
+            let enabled: Bool
+            let baseUrl: String
+            let model: String
+            let apiKey: String?
+        }
+        return try await request(
+            path: "/api/v1/library/ai-settings", method: "PUT",
+            body: try encoder.encode(Body(
+                enabled: enabled, baseUrl: baseUrl, model: model, apiKey: apiKey
+            ))
+        )
+    }
+
+    func similarTracks(id: String, limit: Int = 10) async throws -> [Track] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/tracks/\(id)/similar"), resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
     }
 
     func rescrapeTrack(id: String) async throws -> ScanStatus {

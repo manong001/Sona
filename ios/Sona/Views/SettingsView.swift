@@ -48,6 +48,11 @@ struct SettingsView: View {
                         } label: {
                             Label("在线播放兜底音源", systemImage: "dot.radiowaves.left.and.right")
                         }
+                        NavigationLink {
+                            AiConfigurationView()
+                        } label: {
+                            Label("AI 辅助配置", systemImage: "sparkles")
+                        }
 
                         Button {
                             Task { await library.scan() }
@@ -486,6 +491,97 @@ struct SettingsView: View {
     }
 }
 
+private struct AiConfigurationView: View {
+    @State private var enabled = false
+    @State private var baseUrl = "https://api.openai.com/v1"
+    @State private var model = ""
+    @State private var apiKey = ""
+    @State private var apiKeyConfigured = false
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var message: String?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("启用 AI 辅助", isOn: $enabled)
+                TextField("兼容接口 URL", text: $baseUrl)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("模型名称", text: $model)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField(
+                    apiKeyConfigured ? "API Key（留空则保持不变）" : "API Key",
+                    text: $apiKey
+                )
+                if apiKeyConfigured {
+                    Label("API Key 已配置", systemImage: "checkmark.shield")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                }
+            } header: {
+                Text("服务配置")
+            } footer: {
+                Text("配置保存在服务器，仅管理员可读取状态或修改；API Key 不会回传到 App。")
+            }
+
+            Section {
+                Button("保存配置") { Task { await save() } }
+                    .disabled(
+                        isLoading || isSaving || baseUrl.isBlank || model.isBlank
+                    )
+                if isSaving { ProgressView() }
+                if let message { Text(message).foregroundStyle(.green) }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+            }
+        }
+        .navigationTitle("AI 辅助配置")
+        .task { await load() }
+        .disabled(isLoading)
+        .overlay {
+            if isLoading { ProgressView("正在读取配置…") }
+        }
+    }
+
+    private func load() async {
+        defer { isLoading = false }
+        do {
+            apply(try await APIClient.shared.aiSettings())
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        message = nil
+        errorMessage = nil
+        defer { isSaving = false }
+        do {
+            let value = try await APIClient.shared.updateAiSettings(
+                enabled: enabled,
+                baseUrl: baseUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+                model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+                apiKey: apiKey.isBlank ? nil : apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            apply(value)
+            apiKey = ""
+            message = "配置已保存并立即生效"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func apply(_ value: AiSettings) {
+        enabled = value.enabled
+        baseUrl = value.baseUrl
+        model = value.model
+        apiKeyConfigured = value.apiKeyConfigured
+    }
+}
+
 private struct OnlinePlaybackSourceSettingsView: View {
     @State private var sources: [OnlinePlaybackSource] = []
     @State private var errorMessage: String?
@@ -830,8 +926,11 @@ struct MetadataEditorView: View {
     @State private var album: String
     @State private var trackNumber: String
     @State private var genre: String
+    @State private var relatedGenres: String
+    @State private var aiAnalysis: AiTrackAnalysis?
     @State private var errorMessage: String?
     @State private var isSaving = false
+    @State private var isAnalyzing = false
 
     init(track: Track, saved: @escaping () async -> Void) {
         self.track = track
@@ -841,6 +940,7 @@ struct MetadataEditorView: View {
         _album = State(initialValue: track.album)
         _trackNumber = State(initialValue: track.trackNumber.map(String.init) ?? "")
         _genre = State(initialValue: track.genre)
+        _relatedGenres = State(initialValue: track.relatedGenres.joined(separator: "、"))
     }
 
     var body: some View {
@@ -852,6 +952,42 @@ struct MetadataEditorView: View {
                     TextField("专辑", text: $album)
                     TextField("曲号", text: $trackNumber).keyboardType(.numberPad)
                     TextField("曲风", text: $genre)
+                    TextField("关联曲风（逗号分隔）", text: $relatedGenres)
+                }
+                Section("AI 辅助") {
+                    Button("分析歌曲信息", systemImage: "sparkles") {
+                        Task { await analyze() }
+                    }
+                    .disabled(isAnalyzing || isSaving)
+                    if isAnalyzing {
+                        HStack {
+                            ProgressView()
+                            Text("正在分析曲风和标题…")
+                        }
+                    }
+                    if let analysis = aiAnalysis {
+                        LabeledContent("建议标题", value: analysis.correctedTitle)
+                        LabeledContent("主曲风", value: analysis.primaryGenre)
+                        LabeledContent(
+                            "关联曲风",
+                            value: analysis.relatedGenres.isEmpty
+                                ? "无" : analysis.relatedGenres.joined(separator: "、")
+                        )
+                        if !analysis.reason.isEmpty {
+                            Text(analysis.reason).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Button("应用 AI 建议") { apply(analysis) }
+                        if !analysis.similarTracks.isEmpty {
+                            ForEach(analysis.similarTracks.prefix(5)) { similar in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(similar.title)
+                                    Text(similar.artist)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
                 }
                 Section {
                     Button("使用当前信息重新刮削") {
@@ -883,11 +1019,35 @@ struct MetadataEditorView: View {
                 id: track.id, title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                 artist: artist.trimmingCharacters(in: .whitespacesAndNewlines),
                 album: album.trimmingCharacters(in: .whitespacesAndNewlines),
-                trackNumber: Int(trackNumber), genre: genre.trimmingCharacters(in: .whitespacesAndNewlines)
+                trackNumber: Int(trackNumber), genre: genre.trimmingCharacters(in: .whitespacesAndNewlines),
+                relatedGenres: parsedRelatedGenres
             )
             await saved()
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func analyze() async {
+        isAnalyzing = true
+        errorMessage = nil
+        defer { isAnalyzing = false }
+        do { aiAnalysis = try await APIClient.shared.analyzeTrackMetadata(id: track.id) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func apply(_ analysis: AiTrackAnalysis) {
+        title = analysis.correctedTitle
+        genre = analysis.primaryGenre
+        relatedGenres = analysis.relatedGenres.joined(separator: "、")
+    }
+
+    private var parsedRelatedGenres: [String] {
+        relatedGenres
+            .replacingOccurrences(of: "，", with: ",")
+            .replacingOccurrences(of: "、", with: ",")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     private func rescrape() async {

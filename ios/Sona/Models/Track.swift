@@ -18,13 +18,14 @@ struct Track: Codable, Hashable, Identifiable {
     let poolType: String
     let audienceType: String
     let genre: String
+    let relatedGenres: [String]
     let region: String
     let artists: [String]
 
     private enum CodingKeys: String, CodingKey {
         case id, title, artist, album, trackNumber, durationMs, codec, fileExtension
         case sampleRate, bitDepth, artworkURL, streamURL, hasLyrics, metadataStatus
-        case poolType, audienceType, genre, region, artists
+        case poolType, audienceType, genre, relatedGenres, region, artists
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +47,7 @@ struct Track: Codable, Hashable, Identifiable {
         poolType = try values.decodeIfPresent(String.self, forKey: .poolType) ?? "NORMAL"
         audienceType = try values.decodeIfPresent(String.self, forKey: .audienceType) ?? "GENERAL"
         genre = try values.decodeIfPresent(String.self, forKey: .genre) ?? "未分类"
+        relatedGenres = try values.decodeIfPresent([String].self, forKey: .relatedGenres) ?? []
         region = try values.decodeIfPresent(String.self, forKey: .region) ?? "OTHER"
         artists = try values.decodeIfPresent([String].self, forKey: .artists) ?? [artist]
     }
@@ -65,6 +67,21 @@ struct Track: Codable, Hashable, Identifiable {
         }
         return parts.joined(separator: " · ")
     }
+}
+
+struct AiTrackAnalysis: Decodable {
+    let correctedTitle: String
+    let primaryGenre: String
+    let relatedGenres: [String]
+    let reason: String
+    let similarTracks: [Track]
+}
+
+struct AiSettings: Decodable {
+    let enabled: Bool
+    let baseUrl: String
+    let model: String
+    let apiKeyConfigured: Bool
 }
 
 struct LibraryTrackLookup {

@@ -20,6 +20,7 @@ record TrackResponse(
     String poolType,
     String audienceType,
     String genre,
+    List<String> relatedGenres,
     String region,
     List<String> artists
 ) {
@@ -45,6 +46,7 @@ record TrackResponse(
             track.poolType(),
             track.audienceType(),
             track.genre(),
+            track.relatedGenres(),
             track.region(),
             canonicalArtist.isEmpty() ? List.of() : List.of(canonicalArtist)
         );

@@ -31,6 +31,10 @@ interface TrackStore {
 
     List<TrackRecord> findByGenre(String genre, String userId, boolean childOnly, int limit);
 
+    default List<TrackRecord> findSimilarCandidates(String id, String userId, boolean childOnly) {
+        return List.of();
+    }
+
     List<ChartTrackData> findChart(String region, String userId, boolean childOnly, int limit);
 
     boolean classify(
@@ -40,6 +44,13 @@ interface TrackStore {
     boolean editMetadata(
         String id, String title, String artist, String album, Integer trackNumber, String genre
     );
+
+    default boolean editMetadata(
+        String id, String title, String artist, String album, Integer trackNumber, String genre,
+        List<String> relatedGenres
+    ) {
+        return editMetadata(id, title, artist, album, trackNumber, genre);
+    }
 
     boolean resetMetadata(String id);
 

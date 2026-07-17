@@ -50,6 +50,7 @@ struct NowPlayingView: View {
                             .font(.title3.weight(.semibold))
                             .frame(width: 44, height: 44)
                         }
+                        .padding(.top, 8)
 
                         Spacer(minLength: 8)
 

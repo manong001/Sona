@@ -201,9 +201,19 @@ CREATE TABLE IF NOT EXISTS tracks (
     pool_type TEXT NOT NULL DEFAULT 'NORMAL',
     audience_type TEXT NOT NULL DEFAULT 'GENERAL',
     genre TEXT NOT NULL DEFAULT '未分类',
+    related_genres TEXT NOT NULL DEFAULT '',
     region TEXT NOT NULL DEFAULT 'OTHER',
     manual_edited INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    base_url TEXT NOT NULL,
+    api_key_ciphertext TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
 
