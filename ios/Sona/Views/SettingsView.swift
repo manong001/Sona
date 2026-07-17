@@ -146,58 +146,44 @@ struct SettingsView: View {
                     )
                 }
 
-                Section("关于与 App 更新") {
-                    LabeledContent("应用", value: "Sona")
-                    LabeledContent("当前版本", value: "\(currentVersion) (\(currentBuild))")
+                Section("关于与更新") {
+                    LabeledContent {
+                        Text(updateVersionSummary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    } label: {
+                        Text("版本")
+                    }
 
-                    Button("检查更新", systemImage: "arrow.clockwise") {
+                    Button {
                         Task { await checkForUpdate() }
+                    } label: {
+                        HStack {
+                            Label(updateCheckButtonTitle, systemImage: "arrow.clockwise")
+                            Spacer()
+                            if isCheckingUpdate {
+                                ProgressView()
+                            }
+                        }
                     }
                     .disabled(isCheckingUpdate || isDownloadingUpdate)
 
-                    if isCheckingUpdate {
-                        HStack {
-                            ProgressView()
-                            Text("正在检查服务器版本…")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
                     if let release = releaseInfo,
                        release.isNewer(thanVersion: currentVersion, build: currentBuild) {
-                        if let version = release.version, let build = release.build {
-                            LabeledContent("发现新版本", value: "\(version) (\(build))")
-                        }
-                        if let fileSize = release.fileSizeText {
-                            LabeledContent("安装包大小", value: fileSize)
-                        }
-                        if let notes = release.notes, !notes.isEmpty {
-                            Text(notes)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        Button(updatePackageButtonTitle, systemImage: "square.and.arrow.down") {
+                        Button {
                             Task { await downloadUpdate(release) }
+                        } label: {
+                            HStack {
+                                Label(updateDownloadButtonTitle, systemImage: "square.and.arrow.down")
+                                Spacer()
+                                if isDownloadingUpdate {
+                                    ProgressView(value: downloadProgress)
+                                        .frame(width: 64)
+                                }
+                            }
                         }
                         .disabled(isDownloadingUpdate)
                     }
-
-                    if isDownloadingUpdate {
-                        ProgressView(value: downloadProgress)
-                        Text("下载进度 \(Int(downloadProgress * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let updateMessage {
-                        Text(updateMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Text("本地标签优先；MusicBrainz、LRCLIB、Cover Art Archive 与多源候选仅补全缺失信息。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -422,6 +408,36 @@ struct SettingsView: View {
             isDownloadingUpdate = false
             updateMessage = "下载安装包失败：\(error.localizedDescription)"
         }
+    }
+
+    private var updateVersionSummary: String {
+        guard let release = releaseInfo,
+              release.isNewer(thanVersion: currentVersion, build: currentBuild),
+              let version = release.version else {
+            return currentVersion
+        }
+        return ["\(currentVersion) → \(version)", release.fileSizeText]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    private var updateCheckButtonTitle: String {
+        if isCheckingUpdate { return "正在检查…" }
+        switch updateMessage {
+        case "服务器暂未发布安装包": return "暂无可用更新"
+        case "当前已是最新版本": return "已是最新版本"
+        case let message? where message.hasPrefix("检查更新失败："):
+            return "检查失败，点击重试"
+        default: return "检查更新"
+        }
+    }
+
+    private var updateDownloadButtonTitle: String {
+        if isDownloadingUpdate { return "下载中 \(Int(downloadProgress * 100))%" }
+        if updateMessage?.hasPrefix("下载安装包失败：") == true {
+            return "下载失败，点击重试"
+        }
+        return updatePackageButtonTitle
     }
 
     private var updatePackageButtonTitle: String {

@@ -10,6 +10,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +20,13 @@ public class DirectoryPlaylistService {
 
     private static final String UPLOAD_DIRECTORY = "Uploads";
     private static final String NEW_TRACKS_PLAYLIST = "新增歌曲";
+    private static final Pattern YEAR_PREFIX = Pattern.compile(
+        "^(\\d{4})(?:\\s*[-_.]\\s*|\\s+)(.+)$"
+    );
+    private static final Pattern AUDIO_FORMAT_SUFFIX = Pattern.compile(
+        "\\s*\\[(?:mp3|m4a|aac|flac|alac|wav|aiff|aif|ogg|oga|opus|ape|wv|tta)\\]\\s*$",
+        Pattern.CASE_INSENSITIVE
+    );
 
     private final JdbcClient jdbcClient;
     private final Clock clock;
@@ -132,7 +140,7 @@ public class DirectoryPlaylistService {
             ))
             .optional();
         if (existing.isPresent()) {
-            renameDefaultUploadPlaylist(existing.get(), relativePath);
+            renameGeneratedPlaylist(existing.get(), directory, relativePath);
             return existing.get();
         }
 
@@ -154,24 +162,40 @@ public class DirectoryPlaylistService {
         return playlist;
     }
 
-    private void renameDefaultUploadPlaylist(DirectoryPlaylist playlist, String relativePath) {
-        if (!UPLOAD_DIRECTORY.equals(relativePath)) {
+    private void renameGeneratedPlaylist(
+        DirectoryPlaylist playlist, Path directory, String relativePath
+    ) {
+        var oldName = directory.getFileName().toString();
+        var legacyName = formatYearPrefix(oldName);
+        var newName = playlistName(directory, relativePath);
+        if (oldName.equals(newName) && legacyName.equals(newName)) {
             return;
         }
         jdbcClient.sql("""
                 UPDATE playlists SET name = :newName
-                WHERE id = :id AND name = :defaultName
+                WHERE id = :id AND (name = :oldName OR name = :legacyName)
                 """)
-            .param("newName", NEW_TRACKS_PLAYLIST)
+            .param("newName", newName)
             .param("id", playlist.id())
-            .param("defaultName", UPLOAD_DIRECTORY)
+            .param("oldName", oldName)
+            .param("legacyName", legacyName)
             .update();
     }
 
     private String playlistName(Path directory, String relativePath) {
-        return UPLOAD_DIRECTORY.equals(relativePath)
-            ? NEW_TRACKS_PLAYLIST
-            : directory.getFileName().toString();
+        if (UPLOAD_DIRECTORY.equals(relativePath)) {
+            return NEW_TRACKS_PLAYLIST;
+        }
+        var directoryName = directory.getFileName().toString();
+        var withoutFormat = AUDIO_FORMAT_SUFFIX.matcher(directoryName).replaceFirst("").strip();
+        return formatYearPrefix(withoutFormat);
+    }
+
+    private String formatYearPrefix(String name) {
+        var matcher = YEAR_PREFIX.matcher(name);
+        return matcher.matches()
+            ? matcher.group(2).strip() + "（" + matcher.group(1) + "）"
+            : name;
     }
 
     private void syncTracks(String playlistId, String poolType, Path directory) {

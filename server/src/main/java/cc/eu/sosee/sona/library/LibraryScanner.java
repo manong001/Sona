@@ -1,6 +1,8 @@
 package cc.eu.sosee.sona.library;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -101,7 +103,8 @@ class LibraryScanner {
             if (existing.isPresent()
                 && existing.get().fileSize() == attributes.size()
                 && existing.get().modifiedAt() == attributes.lastModifiedTime().toMillis()
-                && !needsScrapeRetry(existing.get())) {
+                && !needsScrapeRetry(existing.get())
+                && !needsTitleNormalization(existing.get())) {
                 counts[3]++;
                 return;
             }
@@ -214,7 +217,19 @@ class LibraryScanner {
         var extensionIndex = filename.lastIndexOf('.');
         var stem = extensionIndex < 0 ? filename : filename.substring(0, extensionIndex);
         var sidecar = audioPath.resolveSibling(stem + ".lrc");
-        return Files.isRegularFile(sidecar) ? Files.readString(sidecar, StandardCharsets.UTF_8) : null;
+        if (!Files.isRegularFile(sidecar)) {
+            return null;
+        }
+        try {
+            return Files.readString(sidecar, StandardCharsets.UTF_8);
+        } catch (MalformedInputException exception) {
+            try {
+                return Files.readString(sidecar, Charset.forName("GB18030"));
+            } catch (MalformedInputException fallbackException) {
+                LOGGER.warn("Ignoring unreadable sidecar lyrics {}", sidecar);
+                return null;
+            }
+        }
     }
 
     private boolean isSupported(Path path) {
@@ -233,6 +248,11 @@ class LibraryScanner {
 
     private boolean needsScrapeRetry(TrackRecord track) {
         return "NEEDS_REVIEW".equals(track.metadataStatus()) && track.updatedAt() == 0;
+    }
+
+    private boolean needsTitleNormalization(TrackRecord track) {
+        return !track.manualEdited()
+            && !fileNameParser.stripTrackNumberPrefix(track.title()).equals(track.title());
     }
 
     private String blankToNull(String value) {

@@ -289,6 +289,8 @@ struct SonaTrackListView: View {
     @State private var isImportingServerDirectory = false
     @State private var importProgressMessage = ""
     @State private var removedTrackIDs = Set<String>()
+    @State private var loadedPlaylistTracks: [String: Track] = [:]
+    @State private var isLoadingPlaylistTracks = false
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let dailyRecommendationQueues: [[Track]]?
@@ -306,6 +308,12 @@ struct SonaTrackListView: View {
         self.loadsMoreFromLibrary = loadsMoreFromLibrary
     }
 
+    private var playlist: Playlist? {
+        guard collection.id.hasPrefix("playlist-") else { return nil }
+        let id = String(collection.id.dropFirst("playlist-".count))
+        return personal.playlists.first { $0.id == id }
+    }
+
     private var tracks: [Track] {
         if collection.id == "liked-songs" {
             if !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty {
@@ -313,8 +321,18 @@ struct SonaTrackListView: View {
             }
             return library.tracks.filter { personal.favoriteIDs.contains($0.id) }
         }
+        if let playlist {
+            return playlist.trackIDs.compactMap {
+                library.track(id: $0) ?? loadedPlaylistTracks[$0]
+            }.filter { !removedTrackIDs.contains($0.id) }
+        }
         let values = loadsMoreFromLibrary ? library.tracks : collection.tracks
         return values.filter { !removedTrackIDs.contains($0.id) }
+    }
+
+    private var trackCount: Int {
+        if collection.id == "liked-songs" { return personal.favoriteIDs.count }
+        return playlist?.trackIDs.count ?? tracks.count
     }
 
     private var queue: [Track] {
@@ -366,7 +384,7 @@ struct SonaTrackListView: View {
                                 .foregroundStyle(Color.sonaSecondaryText)
                         }
                         HStack {
-                            Text("\(collection.id == "liked-songs" ? personal.favoriteIDs.count : tracks.count) 首歌曲")
+                            Text("\(trackCount) 首歌曲")
                                 .font(.caption)
                                 .foregroundStyle(Color.sonaSecondaryText)
                             Spacer()
@@ -434,6 +452,11 @@ struct SonaTrackListView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 18)
+
+                    if isLoadingPlaylistTracks && tracks.isEmpty {
+                        ProgressView("正在载入歌单…")
+                            .padding(.vertical, 18)
+                    }
 
                     ForEach(tracks) { track in
                         HStack {
@@ -537,6 +560,9 @@ struct SonaTrackListView: View {
             }
         }
         .toolbarBackground(.hidden, for: .navigationBar)
+        .task(id: playlist?.trackIDs) {
+            await loadMissingPlaylistTracks()
+        }
         .fileImporter(
             isPresented: $showsImporter,
             allowedContentTypes: [.audio],
@@ -556,6 +582,19 @@ struct SonaTrackListView: View {
             Button("好") { importMessage = nil }
         } message: {
             Text(importMessage ?? "")
+        }
+    }
+
+    private func loadMissingPlaylistTracks() async {
+        guard let playlist else { return }
+        isLoadingPlaylistTracks = true
+        defer { isLoadingPlaylistTracks = false }
+        for id in playlist.trackIDs
+        where library.track(id: id) == nil && loadedPlaylistTracks[id] == nil {
+            guard !Task.isCancelled else { return }
+            if let track = try? await APIClient.shared.track(id: id) {
+                loadedPlaylistTracks[id] = track
+            }
         }
     }
 
