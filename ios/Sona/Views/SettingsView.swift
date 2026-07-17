@@ -1285,6 +1285,7 @@ struct AccountSecurityView: View {
 
 struct UserManagementView: View {
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var player: PlayerStore
     @State private var users: [ManagedUser] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -1372,6 +1373,18 @@ struct UserManagementView: View {
                         }
                     }
                 }
+            }
+
+            Section {
+                Button("切换用户", systemImage: "arrow.left.arrow.right") {
+                    Task {
+                        await player.flushState()
+                        player.stopForLogout()
+                        await session.logout()
+                    }
+                }
+            } footer: {
+                Text("退出当前账号并返回登录页。")
             }
         }
         .scrollContentBackground(.hidden)

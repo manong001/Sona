@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var personal: PersonalStore
 
     var body: some View {
         Group {
@@ -21,6 +22,9 @@ struct RootView: View {
             if case .checking = session.state {
                 await session.restore()
             }
+        }
+        .onChange(of: session.currentUser?.id) { _, _ in
+            personal.reset()
         }
     }
 }

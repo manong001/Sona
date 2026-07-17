@@ -166,6 +166,69 @@ struct HomeView: View {
         }
     }
 
+    private var personalizedSourceTracks: [Track] {
+        var seen = Set<String>()
+        return (dailyTracks + historyTracks + library.tracks).filter {
+            seen.insert($0.id).inserted
+        }
+    }
+
+    private var radioCollections: [SonaCollection] {
+        let source = Array(personalizedSourceTracks.prefix(180))
+        var seenArtists = Set<String>()
+        let anchors = source.filter {
+            let artist = $0.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !artist.isEmpty && seenArtists.insert(artist).inserted
+        }.prefix(4)
+
+        return anchors.map { anchor in
+            var seenTracks = Set<String>()
+            let related = ([anchor] + source.filter {
+                $0.artist == anchor.artist ||
+                    (anchor.genre != "未分类" && $0.genre == anchor.genre)
+            } + source).filter { seenTracks.insert($0.id).inserted }
+            let tracks = Array(related.prefix(30))
+            return SonaCollection(
+                id: "radio-\(anchor.id)",
+                title: anchor.artist,
+                subtitle: artistSummary(from: tracks, limit: 5),
+                artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURLs: Array(tracks.compactMap(\.artworkURL).prefix(3)),
+                tracks: tracks,
+                shape: .square
+            )
+        }
+    }
+
+    private var madeForYouCollections: [SonaCollection] {
+        let source = Array(personalizedSourceTracks.prefix(100))
+        let groupCount = min(2, source.count)
+        guard groupCount > 0 else { return [] }
+        var groups = Array(repeating: [Track](), count: groupCount)
+        for (index, track) in source.enumerated() {
+            groups[index % groupCount].append(track)
+        }
+        return groups.enumerated().compactMap { index, tracks in
+            guard let first = tracks.first else { return nil }
+            return SonaCollection(
+                id: "made-for-you-\(index)",
+                title: "\(first.artist) 合辑",
+                subtitle: artistSummary(from: tracks, limit: 3),
+                artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                tracks: Array(tracks.prefix(50)),
+                shape: .square
+            )
+        }
+    }
+
+    private func artistSummary(from tracks: [Track], limit: Int) -> String {
+        var values: [String] = []
+        for track in tracks where !values.contains(track.artist) {
+            values.append(track.artist)
+        }
+        return values.prefix(limit).joined(separator: "、")
+    }
+
     private func dailyArtists(from tracks: [Track]) -> String {
         let artists = tracks.reduce(into: [String]()) { values, track in
             guard !values.contains(track.artist) else { return }
@@ -258,6 +321,8 @@ struct HomeView: View {
                 collections: dailyCollections,
                 titleDestination: dailyCollection
             )
+            recommendedRadioSection
+            madeForYouSection
             recommendationNavigation
             mediaSection(title: "最近播放", collections: recentCollections)
         }
@@ -377,6 +442,70 @@ struct HomeView: View {
                 .padding(.horizontal, 16)
             }
         }
+    }
+
+    @ViewBuilder
+    private var recommendedRadioSection: some View {
+        if !radioCollections.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                SonaSectionHeader(title: "推荐电台")
+                    .padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 16) {
+                        ForEach(Array(radioCollections.enumerated()), id: \.element.id) { index, collection in
+                            NavigationLink {
+                                SonaTrackListView(
+                                    collection: collection,
+                                    playbackQueue: collection.tracks
+                                )
+                            } label: {
+                                HomeRadioCard(
+                                    collection: collection,
+                                    color: radioColors[index % radioColors.count]
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var madeForYouSection: some View {
+        if !madeForYouCollections.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                SonaSectionHeader(title: "为你打造")
+                    .padding(.horizontal, 16)
+                LazyVStack(spacing: 16) {
+                    ForEach(Array(madeForYouCollections.enumerated()), id: \.element.id) { index, collection in
+                        MadeForYouCard(
+                            collection: collection,
+                            colors: madeForYouColors[index % madeForYouColors.count]
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private var radioColors: [Color] {
+        [
+            Color(red: 1.00, green: 0.58, blue: 0.43),
+            Color(red: 0.49, green: 0.88, blue: 0.82),
+            Color(red: 0.50, green: 0.91, blue: 0.63),
+            Color(red: 0.72, green: 0.64, blue: 0.96)
+        ]
+    }
+
+    private var madeForYouColors: [[Color]] {
+        [
+            [Color(red: 0.29, green: 0.08, blue: 0.53), Color(red: 0.19, green: 0.05, blue: 0.39)],
+            [Color(red: 0.00, green: 0.33, blue: 0.32), Color(red: 0.00, green: 0.22, blue: 0.22)]
+        ]
     }
 
     private func recommendationTile(
@@ -512,6 +641,192 @@ struct HomeView: View {
                 return
             }
         }
+    }
+}
+
+private struct HomeRadioCard: View {
+    let collection: SonaCollection
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Image(systemName: "waveform.circle.fill")
+                        .font(.system(size: 24, weight: .bold))
+                    Spacer()
+                    Text("电台")
+                        .font(.subheadline.weight(.black))
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 13)
+
+                Spacer(minLength: 6)
+                RadioArtworkCluster(paths: collection.artworkURLs)
+                    .frame(height: 112)
+                Spacer(minLength: 6)
+
+                Text(collection.title)
+                    .font(.system(size: 30, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 13)
+            }
+            .foregroundStyle(.black)
+            .frame(width: 250, height: 250)
+            .background(color, in: RoundedRectangle(cornerRadius: 8))
+
+            Text(collection.subtitle)
+                .font(.subheadline)
+                .foregroundStyle(Color.sonaSecondaryText)
+                .lineLimit(2)
+                .frame(width: 250, alignment: .leading)
+        }
+    }
+}
+
+private struct RadioArtworkCluster: View {
+    let paths: [String]
+
+    var body: some View {
+        HStack(spacing: -18) {
+            radioArtwork(index: 1, size: 78)
+                .zIndex(0)
+            radioArtwork(index: 0, size: 124)
+                .zIndex(1)
+            radioArtwork(index: 2, size: 78)
+                .zIndex(0)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func radioArtwork(index: Int, size: CGFloat) -> some View {
+        ArtworkView(
+            path: index < paths.count ? paths[index] : paths.first,
+            cornerRadius: size / 2,
+            thumbnailSize: 384
+        )
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(.black.opacity(0.06), lineWidth: 1))
+    }
+}
+
+private struct MadeForYouCard: View {
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
+    @State private var isQueued = false
+    let collection: SonaCollection
+    let colors: [Color]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                artwork
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(collection.title)
+                        .font(.title3.weight(.bold))
+                        .lineLimit(2)
+                    Text("Sona")
+                        .font(.body)
+                        .foregroundStyle(.white.opacity(0.92))
+                }
+                .padding(.top, 4)
+                Spacer(minLength: 4)
+                Menu {
+                    Button("播放歌单", systemImage: "play.fill") { play(shuffled: false) }
+                    Button("加入播放队列", systemImage: "text.badge.plus") { addToQueue() }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.title3.bold())
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                }
+            }
+
+            Text("\(collection.tracks.count) 首歌曲 · \(collection.subtitle)")
+                .font(.body)
+                .foregroundStyle(.white.opacity(0.76))
+                .lineLimit(2)
+
+            HStack(spacing: 14) {
+                Button { play(shuffled: true) } label: {
+                    Label("试听歌单", systemImage: "speaker.wave.2.fill")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                        .background(.black.opacity(0.38), in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button { addToQueue() } label: {
+                    Image(systemName: isQueued ? "checkmark.circle.fill" : "plus.circle")
+                        .font(.system(size: 31, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("加入播放队列")
+
+                Button { play(shuffled: false) } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(width: 58, height: 58)
+                        .background(.white, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("播放歌单")
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 246, alignment: .leading)
+        .background(
+            LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 14)
+        )
+    }
+
+    private var artwork: some View {
+        ArtworkView(path: collection.artworkURL, cornerRadius: 5, thumbnailSize: 512)
+            .frame(width: 108, height: 108)
+            .overlay(alignment: .topLeading) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.sonaGreen)
+                    .padding(7)
+            }
+            .overlay(alignment: .bottom) {
+                Text(collection.title)
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .frame(height: 22)
+                    .background(Color.sonaGreen.opacity(0.94))
+            }
+            .clipped()
+    }
+
+    private func play(shuffled: Bool) {
+        let queue = shuffled ? collection.tracks.shuffled() : collection.tracks
+        guard let first = queue.first else { return }
+        player.play(
+            track: first,
+            queue: queue,
+            prioritizedQueueTitle: collection.title,
+            queueContextID: collection.id,
+            offlineURLProvider: offline.localURL(for:)
+        )
+    }
+
+    private func addToQueue() {
+        collection.tracks.forEach(player.addToQueue)
+        withAnimation(.easeInOut(duration: 0.2)) { isQueued = true }
     }
 }
 

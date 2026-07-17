@@ -151,6 +151,7 @@ class LibraryScanner {
                 && existing.get().modifiedAt() == attributes.lastModifiedTime().toMillis()
                 && !needsScrapeRetry(existing.get())
                 && !needsTitleNormalization(existing.get())
+                && !hasEncodingDamage(existing.get())
                 && !shouldRefreshMissing(existing.get(), mode)
                 && !shouldOverwrite(existing.get(), mode)) {
                 counts[3]++;
@@ -165,9 +166,13 @@ class LibraryScanner {
             var overwriteExisting = existing.filter(track -> shouldOverwrite(track, mode));
             var refreshExisting = existing.filter(track -> mode != ScrapeMode.STANDARD
                 && (!track.manualEdited() || mode == ScrapeMode.FORCE_OVERWRITE));
-            var titleHint = refreshExisting.or(() -> retry).map(TrackRecord::title).orElse("");
-            var artistHint = refreshExisting.or(() -> retry).map(TrackRecord::artist).orElse("");
-            var albumHint = refreshExisting.or(() -> retry).map(TrackRecord::album).orElse("");
+            var hintTrack = refreshExisting.or(() -> retry);
+            var titleHint = hintTrack.map(TrackRecord::title)
+                .filter(value -> !hasEncodingDamage(value)).orElse("");
+            var artistHint = hintTrack.map(TrackRecord::artist)
+                .filter(value -> !hasEncodingDamage(value)).orElse("");
+            var albumHint = hintTrack.map(TrackRecord::album)
+                .filter(value -> !hasEncodingDamage(value)).orElse("");
             var titleFromTag = hasText(titleHint) || hasText(metadata.title());
             var artistFromTag = hasText(artistHint) || hasText(metadata.artist());
             var title = fileNameParser.stripTrackNumberPrefix(
@@ -270,7 +275,12 @@ class LibraryScanner {
                 now,
                 existing.map(TrackRecord::poolType).orElse("NORMAL"),
                 existing.map(TrackRecord::audienceType).orElse("GENERAL"),
-                firstText(existing.map(TrackRecord::genre).orElse(""), metadata.genre(), "未分类"),
+                firstText(
+                    existing.map(TrackRecord::genre)
+                        .filter(value -> !hasEncodingDamage(value)).orElse(""),
+                    metadata.genre(),
+                    "未分类"
+                ),
                 existing.map(TrackRecord::region).orElse("OTHER"),
                 existing.map(TrackRecord::relatedGenres).orElse(List.of()),
                 artworkSource
@@ -339,6 +349,18 @@ class LibraryScanner {
     private boolean needsTitleNormalization(TrackRecord track) {
         return !track.manualEdited()
             && !fileNameParser.stripTrackNumberPrefix(track.title()).equals(track.title());
+    }
+
+    private boolean hasEncodingDamage(TrackRecord track) {
+        return !track.manualEdited()
+            && (hasEncodingDamage(track.title())
+                || hasEncodingDamage(track.artist())
+                || hasEncodingDamage(track.album())
+                || hasEncodingDamage(track.genre()));
+    }
+
+    private boolean hasEncodingDamage(String value) {
+        return value != null && value.indexOf('\ufffd') >= 0;
     }
 
     private boolean shouldOverwrite(TrackRecord track, ScrapeMode mode) {

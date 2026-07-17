@@ -20,11 +20,18 @@ class JAudioTaggerMetadataExtractor implements AudioMetadataExtractor {
         var header = audioFile.getAudioHeader();
         var tag = audioFile.getTag();
         var artwork = tag == null ? null : tag.getFirstArtwork();
+        var title = first(tag, FieldKey.TITLE);
+        var artist = first(tag, FieldKey.ARTIST);
+        var album = first(tag, FieldKey.ALBUM);
+        var genre = first(tag, FieldKey.GENRE);
+        var legacyText = needsRecovery(title, artist, album, genre)
+            ? LegacyId3TextDecoder.read(path)
+            : java.util.Map.<String, String>of();
 
         return new AudioMetadata(
-            first(tag, FieldKey.TITLE),
-            first(tag, FieldKey.ARTIST),
-            first(tag, FieldKey.ALBUM),
+            recovered(title, legacyText.get("title")),
+            recovered(artist, legacyText.get("artist")),
+            recovered(album, legacyText.get("album")),
             integer(first(tag, FieldKey.TRACK)),
             Math.round(header.getPreciseTrackLength() * 1_000),
             header.getEncodingType(),
@@ -33,7 +40,7 @@ class JAudioTaggerMetadataExtractor implements AudioMetadataExtractor {
             artwork == null ? null : artwork.getBinaryData(),
             artwork == null ? null : artwork.getMimeType(),
             first(tag, FieldKey.LYRICS),
-            first(tag, FieldKey.GENRE)
+            recovered(genre, legacyText.get("genre"))
         );
     }
 
@@ -94,5 +101,28 @@ class JAudioTaggerMetadataExtractor implements AudioMetadataExtractor {
         } catch (NumberFormatException exception) {
             return null;
         }
+    }
+
+    private String recovered(String value, String fallback) {
+        if (fallback == null || fallback.isBlank()) {
+            return value;
+        }
+        if (value == null || value.isBlank() || value.indexOf('\ufffd') >= 0) {
+            return fallback;
+        }
+        var hasSuspiciousLatin1 = value.codePoints().anyMatch(
+            codePoint -> codePoint >= 0x80 && codePoint <= 0xff
+        );
+        return hasSuspiciousLatin1 ? fallback : value;
+    }
+
+    private boolean needsRecovery(String... values) {
+        for (var value : values) {
+            if (value == null || value.isBlank() || value.indexOf('\ufffd') >= 0
+                || value.codePoints().anyMatch(codePoint -> codePoint >= 0x80 && codePoint <= 0xff)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

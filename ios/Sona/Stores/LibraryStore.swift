@@ -242,9 +242,14 @@ final class PersonalStore: ObservableObject {
 
     func toggleFavorite(trackID: String) async {
         let shouldAdd = !favoriteIDs.contains(trackID)
+        _ = await setFavorite(trackID: trackID, isFavorite: shouldAdd)
+    }
+
+    @discardableResult
+    func setFavorite(trackID: String, isFavorite: Bool) async -> Bool {
         do {
-            try await api.setFavorite(trackID: trackID, isFavorite: shouldAdd)
-            if shouldAdd {
+            try await api.setFavorite(trackID: trackID, isFavorite: isFavorite)
+            if isFavorite {
                 favoriteIDs.insert(trackID)
             } else {
                 favoriteIDs.remove(trackID)
@@ -254,8 +259,10 @@ final class PersonalStore: ObservableObject {
             let favoritePage = try await api.favoriteTracks(cursor: nil)
             favoriteTracks = favoritePage.items
             favoriteNextCursor = favoritePage.nextCursor
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

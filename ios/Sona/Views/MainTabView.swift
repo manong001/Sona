@@ -123,6 +123,12 @@ struct MainTabView: View {
         }
         .task {
             guard let userID = session.currentUser?.id else { return }
+            player.configureFavoriteCommand(
+                isFavorite: { personal.favoriteIDs.contains($0) },
+                updateFavorite: { trackID, isFavorite in
+                    await personal.setFavorite(trackID: trackID, isFavorite: isFavorite)
+                }
+            )
             player.beginSession(userID: userID)
             if library.tracks.isEmpty {
                 await library.refresh()
@@ -134,6 +140,9 @@ struct MainTabView: View {
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }
             personal.notePlayback(trackID: newValue)
+        }
+        .onChange(of: personal.favoriteIDs) { _, _ in
+            player.refreshRemoteFavoriteState()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {

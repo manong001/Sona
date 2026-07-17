@@ -57,6 +57,8 @@ final class PlayerStore: ObservableObject {
     private var hasRestoredState = false
     private var activeUserID: String?
     private var lastSavedProgressBucket: Int64 = -1
+    private var favoriteStateProvider: ((String) -> Bool)?
+    private var favoriteUpdateHandler: ((String, Bool) async -> Bool)?
 
     init() {
         configureAudioSession()
@@ -178,6 +180,7 @@ final class PlayerStore: ObservableObject {
         }
         player.replaceCurrentItem(with: item)
         currentTrack = track
+        refreshRemoteFavoriteState()
         elapsed = 0
         duration = Double(track.durationMs) / 1_000
         listenedSeconds = 0
@@ -302,6 +305,7 @@ final class PlayerStore: ObservableObject {
         nowPlayingArtwork = nil
         lastSavedProgressBucket = -1
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        refreshRemoteFavoriteState()
     }
 
     func togglePlayback() {
@@ -724,6 +728,45 @@ final class PlayerStore: ObservableObject {
             Task { @MainActor in self?.next() }
             return .success
         }
+        commands.likeCommand.localizedTitle = "收藏"
+        commands.likeCommand.localizedShortTitle = "收藏"
+        commands.likeCommand.isEnabled = false
+        commands.likeCommand.addTarget { [weak self] event in
+            guard let event = event as? MPFeedbackCommandEvent else {
+                return .commandFailed
+            }
+            let isFavorite = !event.isNegative
+            Task { @MainActor in
+                await self?.setCurrentTrackFavorite(isFavorite)
+            }
+            return .success
+        }
+    }
+
+    func configureFavoriteCommand(
+        isFavorite: @escaping (String) -> Bool,
+        updateFavorite: @escaping (String, Bool) async -> Bool
+    ) {
+        favoriteStateProvider = isFavorite
+        favoriteUpdateHandler = updateFavorite
+        refreshRemoteFavoriteState()
+    }
+
+    func refreshRemoteFavoriteState() {
+        let likeCommand = MPRemoteCommandCenter.shared().likeCommand
+        guard let currentTrack, let favoriteStateProvider else {
+            likeCommand.isEnabled = false
+            likeCommand.isActive = false
+            return
+        }
+        likeCommand.isEnabled = favoriteUpdateHandler != nil
+        likeCommand.isActive = favoriteStateProvider(currentTrack.id)
+    }
+
+    private func setCurrentTrackFavorite(_ isFavorite: Bool) async {
+        guard let currentTrack, let favoriteUpdateHandler else { return }
+        _ = await favoriteUpdateHandler(currentTrack.id, isFavorite)
+        refreshRemoteFavoriteState()
     }
 
     private func loadNowPlayingArtwork(for track: Track) {

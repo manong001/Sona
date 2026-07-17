@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MusicDownloadView: View {
     @EnvironmentObject private var library: LibraryStore
@@ -19,7 +20,6 @@ struct MusicDownloadView: View {
     @State private var errorMessage: String?
     @State private var showsPlaylistImport = false
     @State private var needsLibraryRefresh = false
-    @FocusState private var isSearchFieldFocused: Bool
 
     private let candidatePageSize = 20
 
@@ -103,13 +103,8 @@ struct MusicDownloadView: View {
     private var searchContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                TextField("歌曲、歌手或专辑", text: $query)
-                    .foregroundStyle(.black)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($isSearchFieldFocused)
-                    .submitLabel(.search)
-                    .onSubmit { submitSearch() }
+                LiveSearchTextField(text: $query, onSubmit: submitSearch)
+                    .frame(maxWidth: .infinity, minHeight: 34)
                 if !query.isEmpty {
                     Button {
                         query = ""
@@ -119,7 +114,7 @@ struct MusicDownloadView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Button(action: commitInputAndSearch) {
+                Button(action: submitSearch) {
                     Text(isSearching ? "重新搜索" : "搜索")
                         .font(.subheadline.weight(.semibold))
                         .frame(minWidth: 52, minHeight: 34)
@@ -303,14 +298,6 @@ struct MusicDownloadView: View {
         searchTask = Task { await search(keyword: keyword, generation: generation) }
     }
 
-    private func commitInputAndSearch() {
-        isSearchFieldFocused = false
-        Task { @MainActor in
-            await Task.yield()
-            submitSearch()
-        }
-    }
-
     private func search(keyword: String, generation: Int) async {
         let sourceIDs = sources.map(\.id)
         let sourceGroups = sourceIDs.isEmpty ? [[]] : sourceIDs.map { [$0] }
@@ -403,6 +390,57 @@ struct MusicDownloadView: View {
         async let libraryRequest: Void = library.refresh()
         async let personalRequest: Void = personal.refresh()
         _ = await (libraryRequest, personalRequest)
+    }
+}
+
+private struct LiveSearchTextField: UIViewRepresentable {
+    @Binding var text: String
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField()
+        textField.placeholder = "歌曲、歌手或专辑"
+        textField.textColor = .black
+        textField.autocapitalizationType = .none
+        textField.autocorrectionType = .no
+        textField.returnKeyType = .search
+        textField.delegate = context.coordinator
+        textField.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.textChanged(_:)),
+            for: .editingChanged
+        )
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return textField
+    }
+
+    func updateUIView(_ textField: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if textField.text != text {
+            textField.text = text
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: LiveSearchTextField
+
+        init(parent: LiveSearchTextField) {
+            self.parent = parent
+        }
+
+        @objc func textChanged(_ textField: UITextField) {
+            parent.text = textField.text ?? ""
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            textChanged(textField)
+            parent.onSubmit()
+            return true
+        }
     }
 }
 
