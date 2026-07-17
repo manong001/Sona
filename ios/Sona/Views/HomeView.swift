@@ -1,5 +1,24 @@
 import SwiftUI
 
+private let favoriteRotationInterval: Duration = .seconds(5)
+private let playlistShuffleInterval: TimeInterval = 30 * 60
+
+private func playlistShufflePeriod(at date: Date) -> Int64 {
+    Int64(date.timeIntervalSince1970 / playlistShuffleInterval)
+}
+
+private func playlistShuffleKey(id: String, period: Int64) -> UInt64 {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in id.utf8 {
+        hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
+    }
+
+    var value = hash ^ UInt64(bitPattern: period)
+    value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+    return value ^ (value >> 31)
+}
+
 struct HomeView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
@@ -7,6 +26,8 @@ struct HomeView: View {
     @State private var selectedFilter = "全部"
     @State private var dailyTracks: [Track] = []
     @State private var genres: [String] = []
+    @State private var favoriteRotationOffset = 0
+    @State private var playlistOrderPeriod = playlistShufflePeriod(at: .now)
     @AppStorage("childMode") private var childMode = false
     let openDrawer: () -> Void
 
@@ -77,6 +98,14 @@ struct HomeView: View {
         }
     }
 
+    private var shuffledPlaylistCollections: [SonaCollection] {
+        playlistCollections.sorted { lhs, rhs in
+            let lhsKey = playlistShuffleKey(id: lhs.id, period: playlistOrderPeriod)
+            let rhsKey = playlistShuffleKey(id: rhs.id, period: playlistOrderPeriod)
+            return lhsKey == rhsKey ? lhs.id < rhs.id : lhsKey < rhsKey
+        }
+    }
+
     private var recentCollections: [SonaCollection] {
         historyTracks.map { track in
             SonaCollection(
@@ -91,7 +120,7 @@ struct HomeView: View {
     }
 
     private var favoriteCollections: [SonaCollection] {
-        favoriteTracks.prefix(12).map { track in
+        let collections = favoriteTracks.prefix(12).map { track in
             SonaCollection(
                 id: "favorite-\(track.id)",
                 title: track.title,
@@ -101,6 +130,10 @@ struct HomeView: View {
                 shape: .square
             )
         }
+        guard collections.count > 1 else { return collections }
+
+        let offset = favoriteRotationOffset % collections.count
+        return Array(collections[offset...]) + Array(collections[..<offset])
     }
 
     private var dailyCollection: SonaCollection {
@@ -181,6 +214,8 @@ struct HomeView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .task(id: childMode) { await loadRecommendations() }
+            .task { await rotateFavorites() }
+            .task { await refreshPlaylistOrderAtBoundaries() }
         }
     }
 
@@ -224,7 +259,7 @@ struct HomeView: View {
                 collections: favoriteCollections,
                 titleDestination: likedSongsCollection
             )
-            mediaSection(title: "歌单", collections: playlistCollections)
+            mediaSection(title: "歌单", collections: shuffledPlaylistCollections)
             onlinePlaylistPlaceholder
         }
 
@@ -431,6 +466,42 @@ struct HomeView: View {
         } catch {
             dailyTracks = []
             genres = []
+        }
+    }
+
+    private func rotateFavorites() async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: favoriteRotationInterval)
+            } catch {
+                return
+            }
+
+            let count = min(favoriteTracks.count, 12)
+            guard count > 1 else { continue }
+            withAnimation(.easeInOut(duration: 0.5)) {
+                favoriteRotationOffset = (favoriteRotationOffset + 1) % count
+            }
+        }
+    }
+
+    private func refreshPlaylistOrderAtBoundaries() async {
+        while !Task.isCancelled {
+            let now = Date()
+            let currentPeriod = playlistShufflePeriod(at: now)
+            playlistOrderPeriod = currentPeriod
+
+            let nextBoundary = Date(
+                timeIntervalSince1970: TimeInterval(currentPeriod + 1) * playlistShuffleInterval
+            )
+            let nanoseconds = UInt64(
+                max(0.1, nextBoundary.timeIntervalSinceNow) * 1_000_000_000
+            )
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
         }
     }
 }

@@ -39,8 +39,7 @@ private struct DebugQueueReproView: View {
     @EnvironmentObject private var player: PlayerStore
 
     var body: some View {
-        PlaybackQueueView()
-            .environment(\.editMode, .constant(.active))
+        NowPlayingView()
             .task {
                 player.configureQueueRepro()
                 while !Task.isCancelled {
