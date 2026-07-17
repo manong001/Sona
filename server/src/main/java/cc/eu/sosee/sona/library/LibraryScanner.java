@@ -67,12 +67,7 @@ class LibraryScanner {
                 .forEach(path -> scanFile(path, counts, errors));
         }
         if (relativeDirectory == null || relativeDirectory.isBlank()) {
-            for (var track : trackStore.findUnderPath(scanDirectory)) {
-                if (!Files.isRegularFile(track.path())) {
-                    trackStore.delete(track.id());
-                    counts[2]++;
-                }
-            }
+            counts[2] += removeMissingTracks(scanDirectory);
         }
         lastErrors.set(List.copyOf(errors));
         return new ScanResult(counts[0], counts[1], counts[2], counts[3], counts[4]);
@@ -80,6 +75,21 @@ class LibraryScanner {
 
     List<String> lastErrors() {
         return lastErrors.get();
+    }
+
+    int removeMissingTracks() {
+        return removeMissingTracks(directoryService.resolve(""));
+    }
+
+    private int removeMissingTracks(Path directory) {
+        var removed = 0;
+        for (var track : trackStore.findUnderPath(directory)) {
+            if (!Files.isRegularFile(track.path())) {
+                trackStore.delete(track.id());
+                removed++;
+            }
+        }
+        return removed;
     }
 
     private void scanFile(Path path, int[] counts, List<String> errors) {
@@ -222,8 +232,7 @@ class LibraryScanner {
     }
 
     private boolean needsScrapeRetry(TrackRecord track) {
-        return "NEEDS_REVIEW".equals(track.metadataStatus())
-            || !"SCRAPED".equals(track.metadataStatus()) && track.artworkPath() == null;
+        return "NEEDS_REVIEW".equals(track.metadataStatus()) && track.updatedAt() == 0;
     }
 
     private String blankToNull(String value) {

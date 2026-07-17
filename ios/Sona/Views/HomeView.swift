@@ -10,6 +10,29 @@ struct HomeView: View {
     @AppStorage("childMode") private var childMode = false
     let openDrawer: () -> Void
 
+    private let chartShortcuts = [
+        ChartShortcut(
+            region: "ALL", title: "热歌总榜", subtitle: "全站播放热度",
+            systemImage: "flame.fill", color: Color(red: 0.72, green: 0.19, blue: 0.26)
+        ),
+        ChartShortcut(
+            region: "CN", title: "华语榜", subtitle: "华语热门歌曲",
+            systemImage: "music.mic", color: Color(red: 0.74, green: 0.29, blue: 0.16)
+        ),
+        ChartShortcut(
+            region: "US", title: "美国榜", subtitle: "美国热门歌曲",
+            systemImage: "star.fill", color: Color(red: 0.20, green: 0.36, blue: 0.72)
+        ),
+        ChartShortcut(
+            region: "KR", title: "韩国榜", subtitle: "韩国热门歌曲",
+            systemImage: "waveform", color: Color(red: 0.48, green: 0.24, blue: 0.67)
+        ),
+        ChartShortcut(
+            region: "JP", title: "日本榜", subtitle: "日本热门歌曲",
+            systemImage: "sparkles", color: Color(red: 0.12, green: 0.52, blue: 0.48)
+        )
+    ]
+
     private var username: String {
         session.currentUser?.username ?? "Sona"
     }
@@ -277,17 +300,19 @@ struct HomeView: View {
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    NavigationLink {
-                        ChartsView()
-                    } label: {
-                        recommendationTile(
-                            title: "排行榜",
-                            subtitle: "总榜 · 韩榜 · 国榜 · 美榜 · 日榜",
-                            systemImage: "chart.bar.fill",
-                            color: Color(red: 0.72, green: 0.19, blue: 0.26)
-                        )
+                    ForEach(chartShortcuts) { chart in
+                        NavigationLink {
+                            ChartsView(initialRegion: chart.region)
+                        } label: {
+                            recommendationTile(
+                                title: chart.title,
+                                subtitle: chart.subtitle,
+                                systemImage: chart.systemImage,
+                                color: chart.color
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
 
                     ForEach(genres, id: \.self) { genre in
                         NavigationLink {
@@ -483,8 +508,12 @@ private struct ChartsView: View {
     @State private var errorMessage: String?
 
     private let regions = [
-        ("ALL", "总榜"), ("KR", "韩榜"), ("CN", "国榜"), ("US", "美榜"), ("JP", "日榜")
+        ("ALL", "总榜"), ("CN", "华语"), ("US", "美国"), ("KR", "韩国"), ("JP", "日本")
     ]
+
+    init(initialRegion: String = "ALL") {
+        _region = State(initialValue: initialRegion)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -556,4 +585,14 @@ private struct ChartsView: View {
             offlineURLProvider: offline.localURL(for:)
         )
     }
+}
+
+private struct ChartShortcut: Identifiable {
+    let region: String
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let color: Color
+
+    var id: String { region }
 }

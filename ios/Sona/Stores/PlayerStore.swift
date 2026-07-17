@@ -635,7 +635,15 @@ final class PlayerStore: ObservableObject {
             self.offlineURLProvider = offlineURLProvider
             queueType = state.queueType
             queueContextID = state.queueContextId
-            queueTitle = state.queueType == "DISCOVERY" ? "发现" : (state.queueContextId ?? "随机播放")
+            if state.queueType == "DISCOVERY" {
+                queueTitle = "发现"
+            } else if state.queueType == "DAILY" {
+                queueTitle = "每日推荐"
+            } else if state.queueType == "PLAYLIST" {
+                queueTitle = "歌单"
+            } else {
+                queueTitle = "随机播放"
+            }
             playbackQueue = restoredQueue
             startPlayback(track, autoplay: false)
             if track.id == state.trackId {

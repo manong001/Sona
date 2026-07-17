@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -31,14 +32,7 @@ public class DirectoryPlaylistService {
 
     @Transactional
     public void sync() throws IOException {
-        var ownerId = jdbcClient.sql("""
-                SELECT id FROM users
-                WHERE role = 'ADMIN' AND enabled = 1
-                ORDER BY created_at, id
-                LIMIT 1
-                """)
-            .query(String.class)
-            .optional();
+        var ownerId = ownerId();
         if (ownerId.isEmpty() || !Files.isDirectory(musicDirectory)) {
             return;
         }
@@ -66,6 +60,38 @@ public class DirectoryPlaylistService {
                     .update();
             }
         }
+    }
+
+    public List<String> leafDirectoryPaths() throws IOException {
+        if (!Files.isDirectory(musicDirectory)) {
+            return List.of();
+        }
+        return leafDirectories().stream().map(this::relative).toList();
+    }
+
+    @Transactional
+    public void sync(String relativePath) {
+        var ownerId = ownerId();
+        var directory = musicDirectory.resolve(relativePath).normalize();
+        if (ownerId.isEmpty()
+            || directory.equals(musicDirectory)
+            || !directory.startsWith(musicDirectory)
+            || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        var playlist = findOrCreate(ownerId.get(), directory, relative(directory));
+        syncTracks(playlist.id(), playlist.poolType(), directory);
+    }
+
+    private Optional<String> ownerId() {
+        return jdbcClient.sql("""
+                SELECT id FROM users
+                WHERE role = 'ADMIN' AND enabled = 1
+                ORDER BY created_at, id
+                LIMIT 1
+                """)
+            .query(String.class)
+            .optional();
     }
 
     private List<Path> leafDirectories() throws IOException {

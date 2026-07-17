@@ -337,6 +337,12 @@ struct SonaTrackListView: View {
         prioritizedQueueTitle == nil ? nil : collection.id
     }
 
+    private var showsShuffleButton: Bool {
+        collection.id == "liked-songs" ||
+            collection.id.hasPrefix("playlist-") ||
+            collection.subtitle.hasPrefix("歌单")
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -364,6 +370,22 @@ struct SonaTrackListView: View {
                                 .font(.caption)
                                 .foregroundStyle(Color.sonaSecondaryText)
                             Spacer()
+                            if showsShuffleButton {
+                                Button {
+                                    playRandom()
+                                } label: {
+                                    Image(systemName: "shuffle")
+                                        .font(.title3.bold())
+                                        .foregroundStyle(.white)
+                                        .frame(width: 48, height: 48)
+                                        .background(.white.opacity(0.1), in: Circle())
+                                }
+                                .accessibilityLabel("随机播放")
+                                .disabled(
+                                    tracks.isEmpty ||
+                                    (collection.id == "liked-songs" && personal.isLoadingMoreFavorites)
+                                )
+                            }
                             Button {
                                 if collection.id == "liked-songs" {
                                     Task {
@@ -551,6 +573,28 @@ struct SonaTrackListView: View {
         player.play(
             track: track,
             queue: queue,
+            prioritizedQueueTitle: prioritizedQueueTitle,
+            queueContextID: queueContextID,
+            offlineURLProvider: offline.localURL(for:)
+        )
+    }
+
+    private func playRandom() {
+        if collection.id == "liked-songs" {
+            Task {
+                playRandom(await personal.loadAllFavoriteTracks())
+            }
+        } else {
+            playRandom(tracks)
+        }
+    }
+
+    private func playRandom(_ values: [Track]) {
+        let shuffled = values.shuffled()
+        guard let first = shuffled.first else { return }
+        player.play(
+            track: first,
+            queue: shuffled,
             prioritizedQueueTitle: prioritizedQueueTitle,
             queueContextID: queueContextID,
             offlineURLProvider: offline.localURL(for:)

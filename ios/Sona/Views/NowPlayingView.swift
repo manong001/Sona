@@ -7,6 +7,7 @@ struct NowPlayingView: View {
     @EnvironmentObject private var personal: PersonalStore
     @State private var showsLyrics = false
     @State private var showsQueue = false
+    @State private var lyricLines: [LyricLine] = []
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -34,7 +35,7 @@ struct NowPlayingView: View {
                                 .frame(width: 44, height: 44)
                             Spacer()
                             VStack(spacing: 2) {
-                                Text(player.queueTitle)
+                                Text(displayQueueTitle)
                                     .font(.caption.bold())
                                 Text("正在播放")
                                     .font(.caption2)
@@ -60,7 +61,23 @@ struct NowPlayingView: View {
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.16), lineWidth: 1))
                             .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
 
-                        Spacer(minLength: 22)
+                        Spacer(minLength: 18)
+
+                        Button {
+                            showsLyrics = true
+                        } label: {
+                            Text(currentLyric ?? (track.hasLyrics ? "载入歌词…" : "暂无歌词"))
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(
+                                    currentLyric == nil ? Color.sonaSecondaryText : .white
+                                )
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .contentTransition(.opacity)
+                                .animation(.easeInOut(duration: 0.25), value: currentLyric)
+                        }
+                        .disabled(!track.hasLyrics)
+                        .padding(.bottom, 16)
 
                         HStack(spacing: 14) {
                             VStack(alignment: .leading, spacing: 5) {
@@ -169,11 +186,10 @@ struct NowPlayingView: View {
                         }
                         .font(.caption.weight(.semibold))
 
-                        Spacer(minLength: 10)
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 28)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 28)
                 }
             }
             .contentShape(Rectangle())
@@ -192,6 +208,34 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showsQueue) {
             PlaybackQueueView()
+        }
+        .task(id: player.currentTrack?.id) {
+            await loadLyrics(for: player.currentTrack)
+        }
+    }
+
+    private var displayQueueTitle: String {
+        player.queueTitle == player.queueContextID ? "歌单" : player.queueTitle
+    }
+
+    private var currentLyric: String? {
+        LyricsParser.activeLine(
+            in: lyricLines,
+            at: player.elapsed,
+            duration: player.duration
+        )?.text
+    }
+
+    @MainActor
+    private func loadLyrics(for track: Track?) async {
+        lyricLines = []
+        guard let track, track.hasLyrics else { return }
+        do {
+            let lyrics = try await APIClient.shared.lyrics(for: track)
+            guard !Task.isCancelled, player.currentTrack?.id == track.id else { return }
+            lyricLines = LyricsParser.parse(synced: lyrics.synced, plain: lyrics.plain)
+        } catch {
+            lyricLines = []
         }
     }
 
