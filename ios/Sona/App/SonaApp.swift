@@ -11,17 +11,7 @@ struct SonaApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
-#if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("-queue-repro") {
-                    DebugQueueReproView()
-                } else {
-                    RootView()
-                }
-#else
-                RootView()
-#endif
-            }
+            RootView()
                 .environmentObject(session)
                 .environmentObject(library)
                 .environmentObject(player)
@@ -33,23 +23,6 @@ struct SonaApp: App {
         }
     }
 }
-
-#if DEBUG
-private struct DebugQueueReproView: View {
-    @EnvironmentObject private var player: PlayerStore
-
-    var body: some View {
-        NowPlayingView()
-            .task {
-                player.configureQueueRepro()
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    player.tickQueueRepro()
-                }
-            }
-    }
-}
-#endif
 
 extension Color {
     static let sonaGreen = Color(red: 0.118, green: 0.843, blue: 0.376)

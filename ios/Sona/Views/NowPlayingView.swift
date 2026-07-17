@@ -264,6 +264,7 @@ struct PlaybackQueueView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
+    @State private var editMode: EditMode = .inactive
 
     var body: some View {
         NavigationStack {
@@ -313,6 +314,7 @@ struct PlaybackQueueView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.sonaBackground)
+            .environment(\.editMode, $editMode)
             .navigationTitle("播放列表")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -321,7 +323,12 @@ struct PlaybackQueueView: View {
                         .disabled(player.playbackQueue.count <= 1)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    EditButton()
+                    Button(
+                        editMode == .active ? "完成" : "编辑",
+                        systemImage: editMode == .active ? "checkmark" : "pencil"
+                    ) {
+                        editMode = editMode == .active ? .inactive : .active
+                    }
                 }
             }
         }
