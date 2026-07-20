@@ -26,7 +26,10 @@ final class APIClient {
         if let absolute = URL(string: path), absolute.scheme != nil {
             return absolute
         }
-        return serverURL.appending(path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        return URL(string: path, relativeTo: serverURL)?.absoluteURL
+            ?? serverURL.appending(
+                path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            )
     }
 
     func currentUser() async throws -> UserResponse {

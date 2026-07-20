@@ -243,6 +243,8 @@ final class PersonalStore: ObservableObject {
         guard currentUserID != userID else { return }
         currentUserID = userID
         serverSupportsHomeItems = nil
+        playlists = []
+        loadCachedPlaylists()
         applyLocalHomeItems()
     }
 
@@ -252,6 +254,7 @@ final class PersonalStore: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
         var firstError: String?
+        async let playlistRefresh: Void = refreshPlaylists()
         do {
             let favorites = try await api.favorites()
             favoriteIDs = Set(favorites.trackIDs)
@@ -273,7 +276,10 @@ final class PersonalStore: ObservableObject {
         } catch {
             firstError = firstError ?? error.localizedDescription
         }
-        await refreshPlaylists()
+        await playlistRefresh
+        if serverSupportsHomeItems == true {
+            persistLocalHomeItems()
+        }
         firstError = firstError ?? playlistErrorMessage
         do {
             history = try await api.history().items
@@ -293,6 +299,7 @@ final class PersonalStore: ObservableObject {
             if serverSupportsHomeItems == false {
                 applyLocalHomeItems()
             }
+            saveCachedPlaylists()
         } catch {
             playlistErrorMessage = error.localizedDescription
         }
@@ -393,6 +400,7 @@ final class PersonalStore: ObservableObject {
             guard let index = playlists.firstIndex(where: { $0.id == id }) else { return false }
             playlists[index] = playlists[index].withShownOnHome(shown)
             normalizeHomeItemPositions()
+            persistLocalHomeItems()
             return true
         } catch {
             if isMissingHomeEndpoint(error) {
@@ -419,6 +427,7 @@ final class PersonalStore: ObservableObject {
             favoritesShownOnHome = shown
             favoritesHomePosition = shown ? -1 : nil
             normalizeHomeItemPositions()
+            persistLocalHomeItems()
             return true
         } catch {
             if isMissingHomeEndpoint(error) {
@@ -444,6 +453,7 @@ final class PersonalStore: ObservableObject {
         do {
             try await api.reorderHomeItems(ids: ids)
             applyHomeItemOrder(ids)
+            persistLocalHomeItems()
             return true
         } catch {
             if isMissingHomeEndpoint(error) {
@@ -530,6 +540,36 @@ final class PersonalStore: ObservableObject {
         guard let apiError = error as? APIError,
               case let .server(status, _) = apiError else { return false }
         return status == 404
+    }
+
+    private func loadCachedPlaylists() {
+        guard let cacheURL = playlistCacheURL,
+              let data = try? Data(contentsOf: cacheURL),
+              let cached = try? JSONDecoder().decode([Playlist].self, from: data) else { return }
+        playlists = cached
+    }
+
+    private func saveCachedPlaylists() {
+        guard let cacheURL = playlistCacheURL,
+              let data = try? JSONEncoder().encode(playlists) else { return }
+        let directory = cacheURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: cacheURL, options: .atomic)
+    }
+
+    private var playlistCacheURL: URL? {
+        guard let currentUserID,
+              let caches = FileManager.default.urls(
+                for: .cachesDirectory,
+                in: .userDomainMask
+              ).first else { return nil }
+        let server = "\(api.serverURL.scheme ?? "http")-\(api.serverURL.host ?? "server")-\(api.serverURL.port ?? 0)"
+        return caches
+            .appendingPathComponent("SonaPlaylistCache", isDirectory: true)
+            .appendingPathComponent("\(server)-\(currentUserID).json")
     }
 
     func updateDirectoryPlaylist(id: String, name: String, poolType: String) async {

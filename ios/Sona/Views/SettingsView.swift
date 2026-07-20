@@ -1749,7 +1749,11 @@ struct AvatarSelectionView: View {
                 }
             }
 
-            PhotosPicker(selection: $photoItem, matching: .images) {
+            PhotosPicker(
+                selection: $photoItem,
+                matching: .images,
+                preferredItemEncoding: .compatible
+            ) {
                 Label("从相册上传图片", systemImage: "photo.badge.plus")
                     .frame(maxWidth: .infinity)
             }
