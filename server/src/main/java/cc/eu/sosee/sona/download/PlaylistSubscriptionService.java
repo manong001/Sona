@@ -62,6 +62,7 @@ class PlaylistSubscriptionService {
             userId, target.id(), sourceUrl.strip(), name, normalizedPoolType,
             autoDownload, syncIntervalHours
         );
+        playlistImportService.addToHome(userId, target.id());
         return sync(subscription, preview);
     }
 

@@ -61,6 +61,12 @@ public class PlaylistDownloadImportService {
         }
     }
 
+    public void addToHome(String userId, String playlistId) {
+        if (!repository.setPlaylistShownOnHome(userId, playlistId, true)) {
+            throw new IllegalArgumentException("订阅目标歌单不存在");
+        }
+    }
+
     private Path resolveFile(String relativeFile) {
         var path = musicDirectory.resolve(relativeFile).normalize();
         if (!path.startsWith(musicDirectory) || !Files.isRegularFile(path)) {

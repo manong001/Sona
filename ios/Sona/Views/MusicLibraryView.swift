@@ -3,6 +3,7 @@ import SwiftUI
 struct MusicLibraryView: View {
     private enum Filter: String, CaseIterable {
         case playlists = "歌单"
+        case subscriptions = "订阅"
         case songs = "歌曲"
         case albums = "专辑"
         case artists = "艺人"
@@ -18,6 +19,10 @@ struct MusicLibraryView: View {
     @State private var query = ""
     @State private var showsCreatePlaylist = false
     @State private var showsHomePlaylistPicker = false
+    @State private var showsCreateSubscription = false
+    @State private var showsSubscriptionManager = false
+    @State private var subscriptions: [PlaylistSubscription] = []
+    @State private var subscriptionErrorMessage: String?
     @State private var playlistName = ""
     @State private var selectedSort = "TITLE"
     @State private var selectedGenre: String?
@@ -50,7 +55,9 @@ struct MusicLibraryView: View {
             return SonaCollection(
                 id: playlist.id,
                 title: playlist.name,
-                subtitle: playlist.isDirectoryPlaylist
+                subtitle: subscriptionPlaylistIDs.contains(playlist.id)
+                    ? "订阅歌单 · \(username)"
+                    : playlist.isDirectoryPlaylist
                     ? "\(playlistPoolTitle(playlist.poolType)) · Sona"
                     : "歌单 · \(username)",
                 artworkURL: playlist.artworkURLs.first,
@@ -67,6 +74,8 @@ struct MusicLibraryView: View {
         switch selectedFilter {
         case .playlists:
             values = playlistCollections
+        case .subscriptions:
+            values = playlistCollections.filter { subscriptionPlaylistIDs.contains($0.id) }
         case .songs:
             values = []
         case .albums:
@@ -79,6 +88,14 @@ struct MusicLibraryView: View {
             $0.title.localizedCaseInsensitiveContains(query) ||
             $0.subtitle.localizedCaseInsensitiveContains(query)
         }
+    }
+
+    private var subscriptionPlaylistIDs: Set<String> {
+        Set(subscriptions.map(\.playlistId))
+    }
+
+    private var isPlaylistFilter: Bool {
+        selectedFilter == .playlists || selectedFilter == .subscriptions
     }
 
     var body: some View {
@@ -104,6 +121,7 @@ struct MusicLibraryView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .task { await loadSubscriptions() }
             .navigationDestination(for: String.self) { collectionID in
                 if collectionID == "liked-songs" {
                     SonaTrackListView(collection: SonaCollection(
@@ -149,6 +167,21 @@ struct MusicLibraryView: View {
             HomePlaylistSelectionView()
                 .environmentObject(personal)
         }
+        .sheet(isPresented: $showsCreateSubscription) {
+            CreatePlaylistSubscriptionView { subscription in
+                subscriptions.removeAll { $0.id == subscription.id }
+                subscriptions.insert(subscription, at: 0)
+                Task { await personal.refreshPlaylists() }
+            }
+        }
+        .sheet(isPresented: $showsSubscriptionManager) {
+            PlaylistSubscriptionsView {
+                Task {
+                    await loadSubscriptions()
+                    await personal.refreshPlaylists()
+                }
+            }
+        }
         .confirmationDialog(
             "覆盖信息刮削",
             isPresented: Binding(
@@ -173,6 +206,14 @@ struct MusicLibraryView: View {
         } message: {
             Text(forceScrapeMessage ?? "")
         }
+        .alert("订阅操作", isPresented: Binding(
+            get: { subscriptionErrorMessage != nil },
+            set: { if !$0 { subscriptionErrorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(subscriptionErrorMessage ?? "未知错误")
+        }
         .overlay(alignment: .bottom) {
             if isForceScrapingPlaylist {
                 HStack(spacing: 10) {
@@ -185,6 +226,36 @@ struct MusicLibraryView: View {
                 .background(.ultraThinMaterial, in: Capsule())
                 .padding(.bottom, 20)
             }
+        }
+    }
+
+    private func loadSubscriptions() async {
+        do {
+            subscriptions = try await APIClient.shared.playlistSubscriptions()
+        } catch {
+            subscriptionErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func syncSubscription(_ subscription: PlaylistSubscription) async {
+        do {
+            let updated = try await APIClient.shared.syncPlaylistSubscription(id: subscription.id)
+            if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                subscriptions[index] = updated
+            }
+            await personal.refreshPlaylists()
+        } catch {
+            subscriptionErrorMessage = error.localizedDescription
+            await loadSubscriptions()
+        }
+    }
+
+    private func unsubscribe(_ subscription: PlaylistSubscription) async {
+        do {
+            try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
+            subscriptions.removeAll { $0.id == subscription.id }
+        } catch {
+            subscriptionErrorMessage = error.localizedDescription
         }
     }
 
@@ -221,8 +292,12 @@ struct MusicLibraryView: View {
                     .frame(width: 44, height: 44)
             }
             Button {
-                playlistName = ""
-                showsCreatePlaylist = true
+                if selectedFilter == .subscriptions {
+                    showsCreateSubscription = true
+                } else {
+                    playlistName = ""
+                    showsCreatePlaylist = true
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 28, weight: .regular))
@@ -251,15 +326,55 @@ struct MusicLibraryView: View {
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(Filter.allCases, id: \.self) { filter in
-                    SonaFilterPill(title: filter.rawValue, isSelected: selectedFilter == filter) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            selectedFilter = filter
+                ForEach(
+                    [Filter.playlists, .songs, .albums, .artists], id: \.self
+                ) { filter in
+                    if filter == .playlists && isPlaylistFilter {
+                        playlistSubscriptionFilter
+                    } else {
+                        SonaFilterPill(title: filter.rawValue, isSelected: selectedFilter == filter) {
+                            selectFilter(filter)
                         }
                     }
                 }
             }
             .padding(.horizontal, 16)
+        }
+    }
+
+    private var playlistSubscriptionFilter: some View {
+        HStack(spacing: 0) {
+            joinedFilterButton(
+                title: Filter.playlists.rawValue,
+                isSelected: isPlaylistFilter
+            ) {
+                selectFilter(.playlists)
+            }
+            joinedFilterButton(
+                title: Filter.subscriptions.rawValue,
+                isSelected: selectedFilter == .subscriptions
+            ) {
+                selectFilter(.subscriptions)
+            }
+        }
+        .clipShape(Capsule())
+    }
+
+    private func joinedFilterButton(
+        title: String, isSelected: Bool, action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(isSelected ? Color.black.opacity(0.86) : .white)
+            .padding(.horizontal, 13)
+            .frame(height: 30)
+            .background(isSelected ? Color.sonaGreen : Color.sonaChip)
+            .buttonStyle(.plain)
+    }
+
+    private func selectFilter(_ filter: Filter) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            selectedFilter = filter
         }
     }
 
@@ -275,11 +390,19 @@ struct MusicLibraryView: View {
                     .font(.subheadline.weight(.medium))
             }
             Spacer()
-            if selectedFilter == .playlists {
+            if isPlaylistFilter {
                 Button {
                     showsHomePlaylistPicker = true
                 } label: {
                     Label("首页展示", systemImage: "house")
+                        .font(.subheadline.weight(.medium))
+                }
+            }
+            if selectedFilter == .subscriptions {
+                Button {
+                    showsSubscriptionManager = true
+                } label: {
+                    Label("管理订阅", systemImage: "link")
                         .font(.subheadline.weight(.medium))
                 }
             }
@@ -378,7 +501,7 @@ struct MusicLibraryView: View {
             if selectedFilter != .songs {
               ForEach(visibleCollections) { collection in
                 NavigationLink {
-                    if selectedFilter == .playlists {
+                    if isPlaylistFilter {
                         ManagedPlaylistDetailView(playlistID: collection.id)
                     } else {
                         SonaTrackListView(collection: collection)
@@ -388,20 +511,28 @@ struct MusicLibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .task {
-                    guard selectedFilter != .playlists,
+                    guard !isPlaylistFilter,
                           collection.id == visibleCollections.last?.id else { return }
                     await library.loadNextPage()
                 }
                 .contextMenu {
-                    if selectedFilter == .playlists,
+                    if isPlaylistFilter,
                        let playlist = personal.playlists.first(where: { $0.id == collection.id }) {
+                        if let subscription = subscriptions.first(where: { $0.playlistId == playlist.id }) {
+                            Button("立即同步", systemImage: "arrow.clockwise") {
+                                Task { await syncSubscription(subscription) }
+                            }
+                            Button("取消订阅", systemImage: "link.badge.minus", role: .destructive) {
+                                Task { await unsubscribe(subscription) }
+                            }
+                        }
                         if session.currentUser?.isAdmin == true {
                             Button("覆盖信息刮削", systemImage: "arrow.triangle.2.circlepath") {
                                 pendingForceScrapePlaylist = playlist
                             }
                             .disabled(isForceScrapingPlaylist || playlist.trackIDs.isEmpty)
                         }
-                        if !playlist.isDirectoryPlaylist {
+                        if !playlist.isDirectoryPlaylist && !subscriptionPlaylistIDs.contains(playlist.id) {
                             Button("删除歌单", systemImage: "trash", role: .destructive) {
                                 Task { await personal.deletePlaylist(id: collection.id) }
                             }
@@ -411,7 +542,7 @@ struct MusicLibraryView: View {
               }
             }
 
-            if selectedFilter != .playlists, library.isLoadingMore {
+            if !isPlaylistFilter, library.isLoadingMore {
                 ProgressView("载入更多…")
                     .padding(.vertical, 18)
             }

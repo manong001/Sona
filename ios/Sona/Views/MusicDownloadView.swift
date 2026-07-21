@@ -19,7 +19,6 @@ struct MusicDownloadView: View {
     @State private var isLoadingTasks = false
     @State private var errorMessage: String?
     @State private var showsPlaylistImport = false
-    @State private var showsPlaylistSubscriptions = false
     @State private var needsLibraryRefresh = false
     @State private var showsAddedToast = false
     @State private var addedToastTask: Task<Void, Never>?
@@ -51,15 +50,8 @@ struct MusicDownloadView: View {
                     Task { await loadTasks(showLoading: true) }
                 }
             } else {
-                Menu {
-                    Button("一次性导入", systemImage: "square.and.arrow.down") {
-                        showsPlaylistImport = true
-                    }
-                    Button("订阅在线歌单", systemImage: "link.badge.plus") {
-                        showsPlaylistSubscriptions = true
-                    }
-                } label: {
-                    Label("在线歌单", systemImage: "link")
+                Button("导入歌单", systemImage: "link.badge.plus") {
+                    showsPlaylistImport = true
                 }
             }
         }
@@ -97,12 +89,6 @@ struct MusicDownloadView: View {
                 }
                 needsLibraryRefresh = true
                 showAddedToast()
-            }
-        }
-        .sheet(isPresented: $showsPlaylistSubscriptions) {
-            PlaylistSubscriptionsView {
-                needsLibraryRefresh = true
-                Task { await refreshLibraryAfterDownloadsIfNeeded() }
             }
         }
         .overlay(alignment: .bottom) {
@@ -449,7 +435,7 @@ struct MusicDownloadView: View {
     }
 }
 
-private struct PlaylistSubscriptionsView: View {
+struct PlaylistSubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var subscriptions: [PlaylistSubscription] = []
     @State private var syncingIDs: Set<String> = []
@@ -591,6 +577,7 @@ private struct PlaylistSubscriptionsView: View {
         do {
             try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
             subscriptions.removeAll { $0.id == subscription.id }
+            changed()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -605,7 +592,7 @@ private struct PlaylistSubscriptionsView: View {
     }
 }
 
-private struct CreatePlaylistSubscriptionView: View {
+struct CreatePlaylistSubscriptionView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var sourceURL = ""
     @State private var name = ""
