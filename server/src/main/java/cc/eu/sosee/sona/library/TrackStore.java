@@ -37,6 +37,10 @@ interface TrackStore {
 
     List<TrackRecord> findDailyCandidates(String poolType, String userId, boolean childOnly);
 
+    default List<TrackRecord> findMadeForYouCandidates(String userId, boolean childOnly) {
+        return List.of();
+    }
+
     List<String> findGenres(String userId, boolean childOnly);
 
     List<TrackRecord> findByGenre(String genre, String userId, boolean childOnly, int limit);

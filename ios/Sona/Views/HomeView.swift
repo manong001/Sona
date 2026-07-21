@@ -11,8 +11,8 @@ struct HomeView: View {
     @State private var selectedFilter = "全部"
     @State private var dailyTracks: [Track] = []
     @State private var genres: [String] = []
+    @State private var madeForYouMixes: [MadeForYouMix] = []
     @State private var favoriteRotationOffset = 0
-    @State private var madeForYouSeed = UInt64.random(in: UInt64.min...UInt64.max)
     @AppStorage("childMode") private var childMode = false
     let openDrawer: () -> Void
 
@@ -207,104 +207,17 @@ struct HomeView: View {
     }
 
     private var madeForYouCollections: [SonaCollection] {
-        let frequentArtists = frequentArtistNames
-        let frequentKeys = Set(frequentArtists.map(normalizedArtistName))
-        let candidates = library.tracks.filter { track in
-            !personal.hiddenTrackIDs.contains(track.id) &&
-                trackArtistNames(track).contains { frequentKeys.contains(normalizedArtistName($0)) }
-        }
-        let anchors = frequentArtists.filter { artist in
-            candidates.contains { trackHasArtist($0, artist: artist) }
-        }.prefix(2)
-        guard !anchors.isEmpty else { return [] }
-
-        var assignedTrackIDs = Set<String>()
-        return anchors.enumerated().compactMap { index, artist in
-            let unused = candidates.filter { !assignedTrackIDs.contains($0.id) }
-            let fallback = candidates.filter { assignedTrackIDs.contains($0.id) }
-            let anchorTrack = randomizedTracks(
-                unused.filter { trackHasArtist($0, artist: artist) },
-                salt: UInt64(index * 2)
-            ).first
-            let randomized = randomizedTracks(unused, salt: UInt64(index * 2 + 1)) +
-                randomizedTracks(fallback, salt: UInt64(index * 2 + 2))
-            let tracks = Array(uniqueTracks((anchorTrack.map { [$0] } ?? []) + randomized).prefix(50))
-            guard !tracks.isEmpty else { return nil }
-            assignedTrackIDs.formUnion(tracks.map(\.id))
+        madeForYouMixes.compactMap { mix in
+            guard !mix.tracks.isEmpty else { return nil }
             return SonaCollection(
-                id: "made-for-you-\(index)",
-                title: "\(artist) 合辑",
-                subtitle: artistSummary(from: tracks, limit: 3),
-                artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
-                tracks: tracks,
+                id: mix.id,
+                title: "\(mix.artist) 合辑",
+                subtitle: artistSummary(from: mix.tracks, limit: 3),
+                artworkURL: mix.tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                tracks: mix.tracks,
                 shape: .square
             )
         }
-    }
-
-    private var frequentArtistNames: [String] {
-        var counts: [String: Int] = [:]
-        var displayNames: [String: String] = [:]
-        var firstPositions: [String: Int] = [:]
-
-        for (position, item) in personal.history.enumerated() {
-            guard let track = library.track(id: item.trackID),
-                  !personal.hiddenTrackIDs.contains(track.id) else { continue }
-            for artist in trackArtistNames(track) {
-                let key = normalizedArtistName(artist)
-                guard !key.isEmpty else { continue }
-                counts[key, default: 0] += 1
-                displayNames[key] = displayNames[key] ?? artist
-                firstPositions[key] = min(firstPositions[key] ?? position, position)
-            }
-        }
-
-        return counts.keys.sorted { left, right in
-            if counts[left] != counts[right] { return counts[left, default: 0] > counts[right, default: 0] }
-            if firstPositions[left] != firstPositions[right] {
-                return firstPositions[left, default: .max] < firstPositions[right, default: .max]
-            }
-            return left.localizedStandardCompare(right) == .orderedAscending
-        }.prefix(8).compactMap { displayNames[$0] }
-    }
-
-    private func randomizedTracks(_ tracks: [Track], salt: UInt64) -> [Track] {
-        tracks.sorted { left, right in
-            let leftRank = randomRank(left.id, salt: salt)
-            let rightRank = randomRank(right.id, salt: salt)
-            return leftRank == rightRank ? left.id < right.id : leftRank < rightRank
-        }
-    }
-
-    private func randomRank(_ value: String, salt: UInt64) -> UInt64 {
-        var hash = UInt64(1_469_598_103_934_665_603) ^ madeForYouSeed ^ salt
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return hash
-    }
-
-    private func trackHasArtist(_ track: Track, artist: String) -> Bool {
-        let key = normalizedArtistName(artist)
-        return trackArtistNames(track).contains { normalizedArtistName($0) == key }
-    }
-
-    private func trackArtistNames(_ track: Track) -> [String] {
-        var values: [String] = []
-        let source = track.artists.isEmpty ? [track.artist] : track.artists
-        for value in source {
-            let name = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, !values.contains(where: {
-                normalizedArtistName($0) == normalizedArtistName(name)
-            }) else { continue }
-            values.append(name)
-        }
-        return values
-    }
-
-    private func normalizedArtistName(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func artistSummary(from tracks: [Track], limit: Int) -> String {
@@ -381,14 +294,10 @@ struct HomeView: View {
                 .refreshable {
                     await personal.refresh()
                     await loadRecommendations()
-                    madeForYouSeed = UInt64.random(in: UInt64.min...UInt64.max)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
             .task(id: childMode) { await loadRecommendations() }
-            .task(id: session.currentUser?.id) {
-                madeForYouSeed = UInt64.random(in: UInt64.min...UInt64.max)
-            }
             .task { await rotateFavorites() }
         }
     }
@@ -729,14 +638,21 @@ struct HomeView: View {
     }
 
     private func loadRecommendations() async {
+        async let loadedDaily = APIClient.shared.dailyRecommendations()
+        async let loadedGenres = APIClient.shared.recommendationGenres()
+        async let loadedMadeForYou = APIClient.shared.madeForYouRecommendations()
         do {
-            async let loadedDaily = APIClient.shared.dailyRecommendations()
-            async let loadedGenres = APIClient.shared.recommendationGenres()
-            dailyTracks = uniqueTracks(try await loadedDaily)
-            genres = try await loadedGenres
+            let (daily, loadedGenreValues) = try await (loadedDaily, loadedGenres)
+            dailyTracks = uniqueTracks(daily)
+            genres = loadedGenreValues
         } catch {
             dailyTracks = []
             genres = []
+        }
+        do {
+            madeForYouMixes = try await loadedMadeForYou
+        } catch {
+            madeForYouMixes = []
         }
     }
 

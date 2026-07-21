@@ -398,6 +398,15 @@ final class APIClient {
         return try await request(url: components.url!)
     }
 
+    func madeForYouRecommendations() async throws -> [MadeForYouMix] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/made-for-you"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "childMode", value: childModeValue)]
+        return try await request(url: components.url!)
+    }
+
     func recommendationGenres() async throws -> [String] {
         var components = URLComponents(
             url: url(for: "/api/v1/recommendations/genres"), resolvingAgainstBaseURL: false

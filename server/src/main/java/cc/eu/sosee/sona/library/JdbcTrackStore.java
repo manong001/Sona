@@ -434,6 +434,55 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
+    public List<TrackRecord> findMadeForYouCandidates(String userId, boolean childOnly) {
+        var historyAudienceFilter = childOnly
+            ? " AND history_tracks.audience_type = 'CHILD'\n" : "\n";
+        var candidateAudienceFilter = childOnly
+            ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        return jdbcClient.sql("""
+                WITH frequent_artists AS (
+                    SELECT LOWER(TRIM(history_tracks.artist)) AS artist_key,
+                      COUNT(*) AS play_count, MAX(play_history.played_at) AS last_played
+                    FROM play_history
+                    JOIN tracks history_tracks ON history_tracks.id = play_history.track_id
+                    WHERE play_history.user_id = :userId
+                      AND history_tracks.pool_type = 'NORMAL'
+                      AND TRIM(history_tracks.artist) <> ''
+                      AND NOT EXISTS (
+                        SELECT 1 FROM hidden_tracks
+                        WHERE hidden_tracks.user_id = :userId
+                          AND hidden_tracks.track_id = history_tracks.id
+                      )
+                """ + historyAudienceFilter + """
+                    GROUP BY LOWER(TRIM(history_tracks.artist))
+                    ORDER BY play_count DESC, last_played DESC, artist_key
+                    LIMIT 8
+                ), ranked_tracks AS (
+                    SELECT tracks.*, frequent_artists.play_count, frequent_artists.last_played,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY frequent_artists.artist_key ORDER BY tracks.id
+                      ) AS artist_position
+                    FROM frequent_artists
+                    JOIN tracks ON LOWER(TRIM(tracks.artist)) = frequent_artists.artist_key
+                    WHERE tracks.pool_type = 'NORMAL'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM hidden_tracks
+                        WHERE hidden_tracks.user_id = :userId
+                          AND hidden_tracks.track_id = tracks.id
+                      )
+                """ + candidateAudienceFilter + """
+                )
+                SELECT * FROM ranked_tracks
+                WHERE artist_position <= 100
+                ORDER BY play_count DESC, last_played DESC,
+                  artist COLLATE NOCASE, id
+                """)
+            .param("userId", userId)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
+    @Override
     public List<String> findGenres(String userId, boolean childOnly) {
         var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""

@@ -252,3 +252,9 @@ struct HistoryItem: Decodable, Identifiable {
         case playedAt
     }
 }
+
+struct MadeForYouMix: Decodable, Identifiable {
+    let id: String
+    let artist: String
+    let tracks: [Track]
+}
