@@ -20,6 +20,8 @@ struct MusicDownloadView: View {
     @State private var errorMessage: String?
     @State private var showsPlaylistImport = false
     @State private var needsLibraryRefresh = false
+    @State private var showsAddedToast = false
+    @State private var addedToastTask: Task<Void, Never>?
 
     private let candidatePageSize = 20
 
@@ -76,14 +78,17 @@ struct MusicDownloadView: View {
                 }
             }
         }
-        .onDisappear { searchTask?.cancel() }
+        .onDisappear {
+            searchTask?.cancel()
+            addedToastTask?.cancel()
+        }
         .sheet(isPresented: $showsPlaylistImport) {
             PlaylistDownloadImportView { result in
                 tasks = result.tasks + tasks.filter { existing in
                     !result.tasks.contains(where: { $0.id == existing.id })
                 }
                 needsLibraryRefresh = true
-                selectedSection = 1
+                showAddedToast()
             }
         }
         .overlay(alignment: .bottom) {
@@ -96,6 +101,17 @@ struct MusicDownloadView: View {
                     .background(.red.opacity(0.92), in: Capsule())
                     .padding()
                     .onTapGesture { self.errorMessage = nil }
+            } else if showsAddedToast {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("已添加")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.sonaGreen, in: Capsule())
+                .padding()
             }
         }
     }
@@ -356,9 +372,23 @@ struct MusicDownloadView: View {
             tasks.removeAll { $0.id == task.id }
             tasks.insert(task, at: 0)
             needsLibraryRefresh = true
-            selectedSection = 1
+            showAddedToast()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func showAddedToast() {
+        addedToastTask?.cancel()
+        showsAddedToast = true
+        addedToastTask = Task {
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            showsAddedToast = false
         }
     }
 
