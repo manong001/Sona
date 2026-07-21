@@ -192,7 +192,8 @@ struct MusicDownloadView: View {
                         ForEach(visibleCandidates) { candidate in
                             DownloadCandidateRow(
                                 candidate: candidate,
-                                isQueuing: queuedCandidateIDs.contains(candidate.id)
+                                isQueuing: queuedCandidateIDs.contains(candidate.id),
+                                downloadState: downloadState(for: candidate)
                             ) {
                                 Task { await queue(candidate) }
                             }
@@ -364,6 +365,7 @@ struct MusicDownloadView: View {
     }
 
     private func queue(_ candidate: DownloadCandidate) async {
+        guard downloadState(for: candidate) == nil else { return }
         guard queuedCandidateIDs.insert(candidate.id).inserted else { return }
         errorMessage = nil
         defer { queuedCandidateIDs.remove(candidate.id) }
@@ -390,6 +392,16 @@ struct MusicDownloadView: View {
             guard !Task.isCancelled else { return }
             showsAddedToast = false
         }
+    }
+
+    private func downloadState(for candidate: DownloadCandidate) -> MusicDownloadState? {
+        if let task = tasks.first(where: {
+            $0.title.localizedCaseInsensitiveCompare(candidate.title) == .orderedSame
+                && $0.artist.localizedCaseInsensitiveCompare(candidate.artist) == .orderedSame
+        }) {
+            return task.state == .failed ? nil : task.state
+        }
+        return candidate.downloadState
     }
 
     private func loadTasks(showLoading: Bool) async {
@@ -611,6 +623,7 @@ private struct PlaylistDownloadImportView: View {
 private struct DownloadCandidateRow: View {
     let candidate: DownloadCandidate
     let isQueuing: Bool
+    let downloadState: MusicDownloadState?
     let queue: () -> Void
 
     var body: some View {
@@ -638,6 +651,12 @@ private struct DownloadCandidateRow: View {
             Button(action: queue) {
                 if isQueuing {
                     ProgressView().tint(.sonaGreen)
+                } else if let downloadState {
+                    Image(systemName: downloadState == .completed
+                        ? "checkmark.circle.fill"
+                        : "clock.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
                 } else {
                     Image(systemName: "arrow.down.circle")
                         .font(.title2)
@@ -645,8 +664,12 @@ private struct DownloadCandidateRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(isQueuing)
-            .accessibilityLabel("下载 \(candidate.title)")
+            .disabled(isQueuing || downloadState != nil)
+            .accessibilityLabel(downloadState == .completed
+                ? "已下载 \(candidate.title)"
+                : downloadState != nil
+                    ? "已在下载列表 \(candidate.title)"
+                    : "下载 \(candidate.title)")
         }
         .padding(.horizontal, 16)
         .frame(minHeight: 76)

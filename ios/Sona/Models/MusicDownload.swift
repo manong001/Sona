@@ -24,6 +24,7 @@ struct DownloadCandidate: Codable, Identifiable, Hashable {
     let fileSizeBytes: Int64?
     let artworkUrl: String?
     let hasLyrics: Bool
+    let downloadState: MusicDownloadState?
 
     var id: String { candidateId }
 

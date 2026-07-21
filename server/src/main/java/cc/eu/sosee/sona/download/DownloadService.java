@@ -2,8 +2,10 @@ package cc.eu.sosee.sona.download;
 
 import cc.eu.sosee.sona.library.ScanCoordinator;
 import cc.eu.sosee.sona.personal.PlaylistDownloadImportService;
+import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.RejectedExecutionException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
@@ -42,6 +44,9 @@ class DownloadService {
     List<DownloadCandidate> search(String query, List<String> sources) {
         requireEnabled();
         return gateway.search(query.strip(), sources).stream()
+            .map(candidate -> candidate.withDownloadState(
+                existingState(candidate).orElse(null)
+            ))
             .sorted(Comparator.comparing(
                 DownloadCandidate::fileSizeBytes,
                 Comparator.nullsLast(Comparator.reverseOrder())
@@ -55,15 +60,29 @@ class DownloadService {
 
     DownloadPlaylistPreview parsePlaylist(String url) {
         requireEnabled();
-        return gateway.parsePlaylist(url.strip());
+        var preview = gateway.parsePlaylist(url.strip());
+        return new DownloadPlaylistPreview(
+            preview.name(),
+            preview.items().stream()
+                .map(candidate -> candidate.withDownloadState(
+                    existingState(candidate).orElse(null)
+                ))
+                .toList()
+        );
     }
 
-    PlaylistQueueResult queuePlaylist(
+    synchronized PlaylistQueueResult queuePlaylist(
         String name, List<DownloadCandidate> candidates, String userId, String username
     ) {
         requireEnabled();
+        var available = candidates.stream()
+            .filter(candidate -> existingState(candidate).isEmpty())
+            .toList();
+        if (available.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "歌曲均已下载或已在下载列表");
+        }
         var target = playlistImportService.createFeatured(userId, name);
-        var tasks = candidates.stream()
+        var tasks = available.stream()
             .map(candidate -> {
                 var task = repository.create(candidate, username, target.id());
                 submit(task);
@@ -73,11 +92,33 @@ class DownloadService {
         return new PlaylistQueueResult(target.id(), target.name(), tasks);
     }
 
-    DownloadTask queue(DownloadCandidate candidate, String requestedBy) {
+    synchronized DownloadTask queue(DownloadCandidate candidate, String requestedBy) {
         requireEnabled();
+        var state = existingState(candidate);
+        if (state.isPresent()) {
+            var message = state.get() == DownloadTaskState.COMPLETED
+                ? "歌曲已存在于曲库"
+                : "歌曲已在下载列表";
+            throw new ResponseStatusException(HttpStatus.CONFLICT, message);
+        }
         var task = repository.create(candidate, requestedBy);
         submit(task);
         return task;
+    }
+
+    private Optional<DownloadTaskState> existingState(DownloadCandidate candidate) {
+        if (repository.existsInLibrary(candidate)) {
+            return Optional.of(DownloadTaskState.COMPLETED);
+        }
+        return repository.findExistingState(candidate);
+    }
+
+    private void scanDownloadedFiles(List<String> files) {
+        files.stream()
+            .map(Path::of)
+            .map(path -> path.getParent() == null ? "" : path.getParent().toString())
+            .distinct()
+            .forEach(directory -> scanCoordinator.enqueue(directory).join());
     }
 
     DownloadTask retry(String id, String requestedBy) {
@@ -116,7 +157,7 @@ class DownloadService {
                 throw new IllegalStateException("下载服务没有返回文件");
             }
             if (task.targetPlaylistId() == null) {
-                scanCoordinator.trigger();
+                scanDownloadedFiles(files);
             } else {
                 playlistImportService.addDownloadedFiles(task.targetPlaylistId(), files);
             }

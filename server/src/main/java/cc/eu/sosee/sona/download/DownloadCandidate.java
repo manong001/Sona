@@ -16,6 +16,24 @@ public record DownloadCandidate(
     Long fileSizeBytes,
     String artworkUrl,
     boolean hasLyrics,
-    String lyrics
+    String lyrics,
+    DownloadTaskState downloadState
 ) {
+    public DownloadCandidate(
+        String candidateId, String source, String sourceName, String title, String artist,
+        String album, String extension, String quality, Long durationMs, Long fileSizeBytes,
+        String artworkUrl, boolean hasLyrics, String lyrics
+    ) {
+        this(
+            candidateId, source, sourceName, title, artist, album, extension, quality,
+            durationMs, fileSizeBytes, artworkUrl, hasLyrics, lyrics, null
+        );
+    }
+
+    DownloadCandidate withDownloadState(DownloadTaskState state) {
+        return new DownloadCandidate(
+            candidateId, source, sourceName, title, artist, album, extension, quality,
+            durationMs, fileSizeBytes, artworkUrl, hasLyrics, lyrics, state
+        );
+    }
 }

@@ -88,6 +88,37 @@ class DownloadTaskRepository {
             .list();
     }
 
+    boolean existsInLibrary(DownloadCandidate candidate) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM tracks
+                WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                  AND trim(artist) COLLATE NOCASE = trim(:artist) COLLATE NOCASE
+                """)
+            .param("title", candidate.title())
+            .param("artist", candidate.artist())
+            .query(Integer.class)
+            .single() > 0;
+    }
+
+    Optional<DownloadTaskState> findExistingState(DownloadCandidate candidate) {
+        return jdbcClient.sql("""
+                SELECT state FROM download_tasks
+                WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                  AND trim(artist) COLLATE NOCASE = trim(:artist) COLLATE NOCASE
+                  AND state IN ('QUEUED', 'RUNNING')
+                ORDER BY CASE state
+                    WHEN 'RUNNING' THEN 0
+                    ELSE 2
+                END
+                LIMIT 1
+                """)
+            .param("title", candidate.title().strip())
+            .param("artist", candidate.artist().strip())
+            .query(String.class)
+            .optional()
+            .map(DownloadTaskState::valueOf);
+    }
+
     Optional<DownloadTask> findById(String id) {
         return jdbcClient.sql("SELECT * FROM download_tasks WHERE id = :id")
             .param("id", id)
