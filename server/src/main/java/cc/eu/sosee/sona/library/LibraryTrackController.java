@@ -66,6 +66,14 @@ class LibraryTrackController {
         return duplicateTrackService.findDuplicates();
     }
 
+    @PostMapping("/duplicates/{id}/replace")
+    ResponseEntity<Void> replaceDuplicate(
+        @PathVariable String id, @Valid @RequestBody DuplicateReplacementRequest request
+    ) throws IOException {
+        duplicateTrackService.replaceAndDelete(id, request.replacementTrackId());
+        return ResponseEntity.noContent().build();
+    }
+
     @PatchMapping("/{id}")
     TrackResponse classify(@PathVariable String id, @Valid @RequestBody ClassificationRequest request) {
         if (!POOL_TYPES.contains(request.poolType()) || !AUDIENCE_TYPES.contains(request.audienceType())) {
@@ -188,6 +196,9 @@ class LibraryTrackController {
         String genre,
         String region
     ) {
+    }
+
+    record DuplicateReplacementRequest(@NotBlank String replacementTrackId) {
     }
     record MetadataEditRequest(
         @NotBlank @jakarta.validation.constraints.Size(max = 200) String title,

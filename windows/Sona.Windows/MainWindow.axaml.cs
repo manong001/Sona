@@ -11,12 +11,15 @@ public sealed partial class MainWindow : Window
 {
     private readonly SonaApiClient _api = new();
     private readonly AudioPlayerService _player = new();
+    private readonly AudioPlayerService _previewPlayer = new();
     private readonly ObservableCollection<Track> _tracks = [];
     private readonly ObservableCollection<Track> _queue = [];
     private readonly ObservableCollection<DuplicateTrackGroup> _duplicateGroups = [];
     private User? _user;
     private Track? _currentTrack;
     private DuplicateTrackItem? _pendingDuplicateDeletion;
+    private string? _previewTrackId;
+    private bool _resumeMainPlayerAfterPreview;
     private int _currentIndex = -1;
 
     public MainWindow()
@@ -31,9 +34,16 @@ public sealed partial class MainWindow : Window
             StatusLabel.Text = "播放失败：LibVLC 无法解码当前音频流";
             PlayPauseButton.Content = "▶";
         });
+        _previewPlayer.PlaybackEnded += (_, _) => Dispatcher.UIThread.Post(StopDuplicatePreview);
+        _previewPlayer.PlaybackFailed += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            StopDuplicatePreview();
+            DuplicateStatusLabel.Text = "试听失败：LibVLC 无法解码当前音频流";
+        });
         Closed += (_, _) =>
         {
             _player.Dispose();
+            _previewPlayer.Dispose();
             _api.Dispose();
         };
     }
@@ -242,6 +252,7 @@ public sealed partial class MainWindow : Window
 
     private void Settings_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        StopDuplicatePreview();
         PageTitle.Text = "设置";
         SettingsServerLabel.Text = _api.ServerUri.ToString().TrimEnd('/');
         SettingsUserLabel.Text = _user is null ? "未登录" : $"{_user.Username} · {_user.RoleTitle}";
@@ -268,6 +279,52 @@ public sealed partial class MainWindow : Window
 
     private async void RefreshDuplicates_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         => await LoadDuplicatesAsync();
+
+    private async void DuplicatePreview_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: DuplicateTrackItem item })
+        {
+            return;
+        }
+        if (_previewTrackId == item.Track.Id)
+        {
+            StopDuplicatePreview();
+            return;
+        }
+        StopDuplicatePreview();
+        if (_player.IsPlaying)
+        {
+            _player.TogglePause();
+            _resumeMainPlayerAfterPreview = true;
+        }
+        try
+        {
+            await _previewPlayer.PlayAsync(item.Track, _api);
+            _previewTrackId = item.Track.Id;
+            DuplicateStatusLabel.Text = $"正在试听：{item.Track.Artist} - {item.Track.Title}（未加入播放队列）";
+        }
+        catch (Exception exception) when (exception is SonaApiException or HttpRequestException
+            or TaskCanceledException or InvalidOperationException or PlatformNotSupportedException)
+        {
+            StopDuplicatePreview();
+            DuplicateStatusLabel.Text = $"试听失败：{exception.Message}";
+        }
+    }
+
+    private void StopDuplicatePreview()
+    {
+        _previewPlayer.Stop();
+        _previewTrackId = null;
+        if (_resumeMainPlayerAfterPreview && !_player.IsPlaying)
+        {
+            _player.TogglePause();
+        }
+        _resumeMainPlayerAfterPreview = false;
+        if (DuplicatePanel.IsVisible)
+        {
+            DuplicateStatusLabel.Text = "按标准化歌手和歌名列出；试听不会占用播放队列。";
+        }
+    }
 
     private async Task LoadDuplicatesAsync()
     {
@@ -300,13 +357,17 @@ public sealed partial class MainWindow : Window
             return;
         }
         _pendingDuplicateDeletion = item;
-        DeleteConfirmDetails.Text = $"文件：{item.Path}\n\n{item.UsersText}";
+        var group = _duplicateGroups.First(group => group.Tracks.Any(track => track.Track.Id == item.Track.Id));
+        ReplacementTargetsList.ItemsSource = group.Tracks.Where(track => track.Track.Id != item.Track.Id).ToList();
+        ReplacementTargetsList.SelectedIndex = 0;
+        DeleteConfirmDetails.Text = $"将永久删除：{item.Path}\n\n{item.UsersText}";
         DeleteConfirmOverlay.IsVisible = true;
     }
 
     private void CancelDuplicateDelete_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         _pendingDuplicateDeletion = null;
+        ReplacementTargetsList.ItemsSource = null;
         DeleteConfirmOverlay.IsVisible = false;
     }
 
@@ -315,7 +376,8 @@ public sealed partial class MainWindow : Window
         Avalonia.Interactivity.RoutedEventArgs e
     )
     {
-        if (_pendingDuplicateDeletion is not { } item)
+        if (_pendingDuplicateDeletion is not { } item
+            || ReplacementTargetsList.SelectedItem is not DuplicateTrackItem replacement)
         {
             return;
         }
@@ -323,8 +385,10 @@ public sealed partial class MainWindow : Window
         ConfirmDuplicateDeleteButton.Content = "正在删除…";
         try
         {
-            await _api.DeleteManagedTrackAsync(item.Track.Id);
+            StopDuplicatePreview();
+            await _api.ReplaceDuplicateTrackAsync(item.Track.Id, replacement.Track.Id);
             _pendingDuplicateDeletion = null;
+            ReplacementTargetsList.ItemsSource = null;
             DeleteConfirmOverlay.IsVisible = false;
             await LoadDuplicatesAsync();
         }
@@ -335,12 +399,13 @@ public sealed partial class MainWindow : Window
         finally
         {
             ConfirmDuplicateDeleteButton.IsEnabled = true;
-            ConfirmDuplicateDeleteButton.Content = "永久删除";
+            ConfirmDuplicateDeleteButton.Content = "确认迁移并删除";
         }
     }
 
     private async void Logout_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        StopDuplicatePreview();
         _player.Stop();
         try
         {

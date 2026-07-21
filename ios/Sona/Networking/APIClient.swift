@@ -454,6 +454,17 @@ final class APIClient {
         try await request(path: "/api/v1/library/tracks/duplicates")
     }
 
+    func replaceDuplicateTrack(id: String, replacementTrackID: String) async throws {
+        struct Body: Encodable {
+            let replacementTrackId: String
+        }
+        try await requestVoid(
+            path: "/api/v1/library/tracks/duplicates/\(id)/replace",
+            method: "POST",
+            body: try encoder.encode(Body(replacementTrackId: replacementTrackID))
+        )
+    }
+
     func classifyTrack(
         id: String, poolType: String, audienceType: String,
         genre: String? = nil, region: String? = nil

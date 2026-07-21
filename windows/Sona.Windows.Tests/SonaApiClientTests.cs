@@ -159,6 +159,28 @@ public sealed class SonaApiClientTests
             captured.RequestUri!.ToString());
     }
 
+    [Fact]
+    public async Task Duplicate_replacement_posts_source_and_target()
+    {
+        HttpRequestMessage? captured = null;
+        string? body = null;
+        var handler = new StubHandler(async request =>
+        {
+            captured = request;
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        using var api = new SonaApiClient(new HttpClient(handler));
+
+        await api.ReplaceDuplicateTrackAsync("old-track", "new-track");
+
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Equal(
+            "http://sosee.eu.cc:6699/api/v1/library/tracks/duplicates/old-track/replace",
+            captured.RequestUri!.ToString());
+        Assert.Contains("\"replacementTrackId\":\"new-track\"", body);
+    }
+
     private static HttpResponseMessage Json(HttpStatusCode status, string json) => new(status)
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")

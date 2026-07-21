@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import PhotosUI
+import AVFoundation
 
 struct SettingsView: View {
     let availableRelease: AppReleaseInfo?
@@ -870,8 +871,13 @@ private struct AppShareSheet: UIViewControllerRepresentable {
 }
 
 private struct DuplicateTrackManagementView: View {
+    @EnvironmentObject private var mainPlayer: PlayerStore
     @State private var groups: [DuplicateTrackGroup] = []
-    @State private var pendingDeletion: DuplicateTrackItem?
+    @State private var replacementSource: DuplicateReplacementSource?
+    @State private var pendingReplacement: PendingDuplicateReplacement?
+    @State private var previewPlayer: AVPlayer?
+    @State private var previewTrackID: String?
+    @State private var resumeMainPlayerAfterPreview = false
     @State private var errorMessage: String?
     @State private var isLoading = false
 
@@ -904,8 +910,20 @@ private struct DuplicateTrackManagementView: View {
                                     .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("删除", role: .destructive) {
-                                    pendingDeletion = item
+                                Button {
+                                    togglePreview(item.track)
+                                } label: {
+                                    Label(
+                                        previewTrackID == item.track.id ? "停止" : "试听",
+                                        systemImage: previewTrackID == item.track.id ? "stop.fill" : "play.fill"
+                                    )
+                                }
+                                .buttonStyle(.borderless)
+                                Button("替换并删除", role: .destructive) {
+                                    replacementSource = DuplicateReplacementSource(
+                                        source: item,
+                                        targets: group.tracks.filter { $0.id != item.id }
+                                    )
                                 }
                             }
 
@@ -943,12 +961,47 @@ private struct DuplicateTrackManagementView: View {
         }
         .task { await load() }
         .refreshable { await load() }
-        .alert(item: $pendingDeletion) { item in
+        .onDisappear { stopPreview() }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+            if notification.object as? AVPlayerItem === previewPlayer?.currentItem {
+                stopPreview()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)) { notification in
+            if notification.object as? AVPlayerItem === previewPlayer?.currentItem {
+                stopPreview()
+                errorMessage = "试听失败，无法播放当前音频文件。"
+            }
+        }
+        .confirmationDialog(
+            "选择接管用户记录的资源",
+            isPresented: Binding(
+                get: { replacementSource != nil },
+                set: { if !$0 { replacementSource = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let replacementSource {
+                ForEach(replacementSource.targets) { target in
+                    Button("\(target.track.album) · \(target.track.qualityText) · \(target.fileName)") {
+                        pendingReplacement = PendingDuplicateReplacement(
+                            source: replacementSource.source,
+                            target: target
+                        )
+                        self.replacementSource = nil
+                    }
+                }
+            }
+            Button("取消", role: .cancel) { replacementSource = nil }
+        } message: {
+            Text("收藏、歌单、播放历史和当前队列将迁移到所选资源。")
+        }
+        .alert(item: $pendingReplacement) { replacement in
             Alert(
-                title: Text("永久删除这首歌曲？"),
-                message: Text(deletionMessage(item)),
-                primaryButton: .destructive(Text("永久删除")) {
-                    Task { await delete(item) }
+                title: Text("替换并永久删除？"),
+                message: Text(replacementMessage(replacement)),
+                primaryButton: .destructive(Text("确认迁移并删除")) {
+                    Task { await replace(replacement) }
                 },
                 secondaryButton: .cancel(Text("取消"))
             )
@@ -975,9 +1028,13 @@ private struct DuplicateTrackManagementView: View {
         }
     }
 
-    private func delete(_ item: DuplicateTrackItem) async {
+    private func replace(_ replacement: PendingDuplicateReplacement) async {
         do {
-            try await APIClient.shared.deleteTrack(id: item.track.id, isAdmin: true)
+            stopPreview()
+            try await APIClient.shared.replaceDuplicateTrack(
+                id: replacement.source.track.id,
+                replacementTrackID: replacement.target.track.id
+            )
             await load()
         } catch {
             errorMessage = error.localizedDescription
@@ -995,12 +1052,52 @@ private struct DuplicateTrackManagementView: View {
         return "\(usage.username)：\(uses.joined(separator: "，"))"
     }
 
-    private func deletionMessage(_ item: DuplicateTrackItem) -> String {
-        let users = item.users.isEmpty
-            ? "没有用户引用"
-            : item.users.map(usageDescription).joined(separator: "\n")
-        return "此操作不可恢复，将删除服务器音频文件及全部用户引用。\n\n文件：\(item.path)\n\n\(users)"
+    private func togglePreview(_ track: Track) {
+        if previewTrackID == track.id {
+            stopPreview()
+            return
+        }
+        stopPreview()
+        if mainPlayer.isPlaying {
+            mainPlayer.togglePlayback()
+            resumeMainPlayerAfterPreview = true
+        }
+        let streamURL = APIClient.shared.url(for: track.streamURL)
+        let cookies = HTTPCookieStorage.shared.cookies(for: streamURL) ?? []
+        let asset = AVURLAsset(url: streamURL, options: [AVURLAssetHTTPCookiesKey: cookies])
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        previewPlayer = player
+        previewTrackID = track.id
+        player.play()
     }
+
+    private func stopPreview() {
+        previewPlayer?.pause()
+        previewPlayer = nil
+        previewTrackID = nil
+        if resumeMainPlayerAfterPreview && !mainPlayer.isPlaying {
+            mainPlayer.togglePlayback()
+        }
+        resumeMainPlayerAfterPreview = false
+    }
+
+    private func replacementMessage(_ replacement: PendingDuplicateReplacement) -> String {
+        let users = replacement.source.users.isEmpty
+            ? "没有用户引用"
+            : replacement.source.users.map(usageDescription).joined(separator: "\n")
+        return "用户引用将迁移到：\n\(replacement.target.path)\n\n随后永久删除：\n\(replacement.source.path)\n\n此操作不可恢复。\n\n\(users)"
+    }
+}
+
+private struct DuplicateReplacementSource {
+    let source: DuplicateTrackItem
+    let targets: [DuplicateTrackItem]
+}
+
+private struct PendingDuplicateReplacement: Identifiable {
+    let source: DuplicateTrackItem
+    let target: DuplicateTrackItem
+    var id: String { source.id + "\u{0}" + target.id }
 }
 
 private struct TrackManagementView: View {

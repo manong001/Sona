@@ -996,6 +996,32 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /library/tracks/duplicates/{id}/replace:
+    post:
+      operationId: replaceDuplicateTrack
+      summary: 将用户引用迁移到同组保留资源并永久删除旧资源
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replacementTrackId]
+              properties:
+                replacementTrackId: {type: string}
+      responses:
+        "204": {description: 引用迁移且旧资源永久删除成功}
+        "400": {description: 目标资源无效或不属于同一重复组}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": {description: 源资源或目标资源不存在}
   /library/ai-settings:
     get:
       operationId: getAiSettings

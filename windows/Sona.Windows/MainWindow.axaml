@@ -120,7 +120,8 @@
               <Grid RowDefinitions="Auto,*" RowSpacing="16">
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                   <Button Content="← 返回设置" Click="BackToSettings_Click" />
-                  <TextBlock Grid.Column="1" Text="按标准化歌手和歌名列出，不会自动删除。"
+                  <TextBlock x:Name="DuplicateStatusLabel" Grid.Column="1"
+                             Text="按标准化歌手和歌名列出；试听不会占用播放队列。"
                              Foreground="#B3B3B3" VerticalAlignment="Center" />
                   <Button Grid.Column="2" Content="刷新" Click="RefreshDuplicates_Click" />
                 </Grid>
@@ -151,8 +152,11 @@
                                         <TextBlock Text="{Binding UsersText}" Foreground="#B3B3B3" FontSize="12"
                                                    TextWrapping="Wrap" />
                                       </StackPanel>
-                                      <Button Grid.Column="1" Content="删除" Foreground="#FF6577"
-                                              VerticalAlignment="Top" Click="DuplicateDelete_Click" />
+                                      <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top">
+                                        <Button Content="试听" Click="DuplicatePreview_Click" />
+                                        <Button Content="替换并删除" Foreground="#FF6577"
+                                                Click="DuplicateDelete_Click" />
+                                      </StackPanel>
                                     </Grid>
                                   </Border>
                                 </DataTemplate>
@@ -250,14 +254,21 @@
       <Border Width="540" Background="#242424" CornerRadius="16" Padding="26"
               HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel Spacing="14">
-          <TextBlock Text="永久删除这首歌曲？" FontSize="22" FontWeight="Bold" />
-          <TextBlock Text="此操作不可恢复，将删除服务器音频文件及全部用户引用。"
+          <TextBlock Text="迁移记录并永久删除？" FontSize="22" FontWeight="Bold" />
+          <TextBlock Text="选择保留资源。收藏、歌单、播放历史和当前队列将迁移，然后永久删除旧文件。"
                      Foreground="#FF6577" TextWrapping="Wrap" />
+          <ComboBox x:Name="ReplacementTargetsList" PlaceholderText="选择保留资源">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="models:DuplicateTrackItem">
+                <TextBlock Text="{Binding ReplacementText}" TextTrimming="CharacterEllipsis" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
           <TextBlock x:Name="DeleteConfirmDetails" Foreground="#B3B3B3" TextWrapping="Wrap"
                      MaxHeight="260" />
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
             <Button Content="取消" Click="CancelDuplicateDelete_Click" />
-            <Button x:Name="ConfirmDuplicateDeleteButton" Content="永久删除"
+            <Button x:Name="ConfirmDuplicateDeleteButton" Content="确认迁移并删除"
                     Background="#E91429" Foreground="White" Click="ConfirmDuplicateDelete_Click" />
           </StackPanel>
         </StackPanel>

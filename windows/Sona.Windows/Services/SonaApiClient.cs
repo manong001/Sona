@@ -100,6 +100,22 @@ public sealed class SonaApiClient : IDisposable
         }
     }
 
+    public async Task ReplaceDuplicateTrackAsync(
+        string trackId,
+        string replacementTrackId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PostAsJsonAsync(
+            BuildUri("/api/v1/library/tracks/duplicates/" + Uri.EscapeDataString(trackId) + "/replace"),
+            new { replacementTrackId },
+            JsonOptions,
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            await ThrowApiErrorAsync(response, cancellationToken);
+        }
+    }
+
     public async Task LogoutAsync(CancellationToken cancellationToken = default)
     {
         using var response = await _httpClient.PostAsync(

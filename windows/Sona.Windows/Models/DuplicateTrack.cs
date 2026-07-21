@@ -16,6 +16,8 @@ public sealed record DuplicateTrackItem(
 {
     public string VersionText => $"{Track.Album} · {Track.QualityText} · {Track.DurationText}";
 
+    public string ReplacementText => $"{VersionText} · {System.IO.Path.GetFileName(Path)}";
+
     public string FileSizeText => FileSize switch
     {
         >= 1_073_741_824 => $"{FileSize / 1_073_741_824d:0.##} GB",

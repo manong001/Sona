@@ -119,6 +119,7 @@ struct DuplicateTrackItem: Decodable, Identifiable {
     let users: [DuplicateTrackUsage]
 
     var id: String { track.id }
+    var fileName: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
 struct DuplicateTrackUsage: Decodable, Identifiable {

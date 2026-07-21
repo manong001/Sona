@@ -1,5 +1,7 @@
 package cc.eu.sosee.sona.library;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -10,6 +12,11 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @Service
 class DuplicateTrackService {
@@ -50,6 +57,91 @@ class DuplicateTrackService {
             .sorted(Comparator.comparing(DuplicateTrackGroup::artist, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(DuplicateTrackGroup::title, String.CASE_INSENSITIVE_ORDER))
             .toList();
+    }
+
+    @Transactional
+    void replaceAndDelete(String sourceId, String targetId) throws IOException {
+        if (sourceId.equals(targetId)) {
+            throw new ResponseStatusException(BAD_REQUEST, "Replacement track must be different");
+        }
+        var source = trackStore.findById(sourceId)
+            .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
+        var target = trackStore.findById(targetId)
+            .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Replacement track not found"));
+        if (!duplicateKey(source).equals(duplicateKey(target))) {
+            throw new ResponseStatusException(BAD_REQUEST, "Tracks are not duplicates");
+        }
+
+        copyUniqueReference("favorites", "user_id", "created_at", sourceId, targetId);
+        copyUniqueReference("playlist_tracks", "playlist_id", "added_at", sourceId, targetId);
+        copyUniqueReference("hidden_tracks", "user_id", "created_at", sourceId, targetId);
+        jdbcClient.sql("UPDATE play_history SET track_id = :target WHERE track_id = :source")
+            .param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("UPDATE playback_records SET track_id = :target WHERE track_id = :source")
+            .param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("UPDATE playlists SET artwork_track_id = :target WHERE artwork_track_id = :source")
+            .param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("UPDATE playback_state SET track_id = :target WHERE track_id = :source")
+            .param("target", targetId).param("source", sourceId).update();
+        replaceQueueReferences(sourceId, targetId);
+        jdbcClient.sql("""
+                INSERT INTO track_play_stats(
+                    track_id, play_count, completion_count, completion_percent_sum
+                )
+                SELECT :target, play_count, completion_count, completion_percent_sum
+                FROM track_play_stats WHERE track_id = :source
+                ON CONFLICT(track_id) DO UPDATE SET
+                    play_count = play_count + excluded.play_count,
+                    completion_count = completion_count + excluded.completion_count,
+                    completion_percent_sum = completion_percent_sum + excluded.completion_percent_sum
+                """).param("target", targetId).param("source", sourceId).update();
+
+        if (!trackStore.delete(sourceId)) {
+            throw new ResponseStatusException(NOT_FOUND, "Track not found");
+        }
+        Files.deleteIfExists(source.path());
+        if (source.artworkPath() != null && !source.artworkPath().equals(target.artworkPath())) {
+            Files.deleteIfExists(source.artworkPath());
+        }
+    }
+
+    private void copyUniqueReference(
+        String table, String ownerColumn, String timeColumn, String sourceId, String targetId
+    ) {
+        var positionColumns = table.equals("playlist_tracks") ? ", position" : "";
+        jdbcClient.sql("INSERT OR IGNORE INTO " + table + "(" + ownerColumn + ", track_id"
+                + positionColumns + ", " + timeColumn + ") SELECT " + ownerColumn + ", :target"
+                + positionColumns + ", " + timeColumn + " FROM " + table + " WHERE track_id = :source")
+            .param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("DELETE FROM " + table + " WHERE track_id = :source")
+            .param("source", sourceId).update();
+    }
+
+    private void replaceQueueReferences(String sourceId, String targetId) {
+        var states = jdbcClient.sql("""
+                SELECT user_id, queue_track_ids FROM playback_state
+                WHERE ',' || queue_track_ids || ',' LIKE '%,' || :source || ',%'
+                """).param("source", sourceId)
+            .query((resultSet, rowNumber) -> Map.entry(
+                resultSet.getString("user_id"), resultSet.getString("queue_track_ids")
+            )).list();
+        for (var state : states) {
+            var replaced = new LinkedHashSet<String>();
+            for (var id : state.getValue().split(",")) {
+                if (!id.isBlank()) {
+                    replaced.add(id.equals(sourceId) ? targetId : id);
+                }
+            }
+            jdbcClient.sql("UPDATE playback_state SET queue_track_ids = :queue WHERE user_id = :userId")
+                .param("queue", String.join(",", replaced)).param("userId", state.getKey()).update();
+        }
+    }
+
+    private DuplicateKey duplicateKey(TrackRecord track) {
+        return new DuplicateKey(
+            TextNormalizer.sortKey(ArtistNames.canonical(track.artist())),
+            TextNormalizer.sortKey(track.title())
+        );
     }
 
     private DuplicateTrackGroup group(
