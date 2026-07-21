@@ -6,15 +6,31 @@ struct MacMainView: View {
     @Binding var selectedTab: SonaTab
     @Binding var showsNowPlaying: Bool
     let availableRelease: AppReleaseInfo?
+    let openDrawer: () -> Void
     @State private var showsQueue = true
     @State private var showsCompactQueue = false
+    @State private var requestedCollectionID: String?
+    @State private var libraryNavigationRequestID = 0
+    @State private var createPlaylistRequestID = 0
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .trailing) {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
-                        MacSidebar(selectedTab: $selectedTab)
+                        MacSidebar(
+                            selectedTab: $selectedTab,
+                            openLibraryCollection: { collectionID in
+                                requestedCollectionID = collectionID
+                                libraryNavigationRequestID += 1
+                                selectedTab = .library
+                            },
+                            createPlaylist: {
+                                createPlaylistRequestID += 1
+                                selectedTab = .library
+                            },
+                            openProfileMenu: openDrawer
+                        )
                             .frame(width: 246)
 
                         page
@@ -79,7 +95,12 @@ struct MacMainView: View {
         case .search:
             SearchView(openDrawer: {})
         case .library:
-            MusicLibraryView(openDrawer: {})
+            MusicLibraryView(
+                openDrawer: {},
+                requestedCollectionID: requestedCollectionID,
+                libraryNavigationRequestID: libraryNavigationRequestID,
+                createPlaylistRequestID: createPlaylistRequestID
+            )
         case .settings:
             SettingsView(availableRelease: availableRelease)
         }
@@ -89,7 +110,11 @@ struct MacMainView: View {
 private struct MacSidebar: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var personal: PersonalStore
+    @EnvironmentObject private var library: LibraryStore
     @Binding var selectedTab: SonaTab
+    let openLibraryCollection: (String) -> Void
+    let createPlaylist: () -> Void
+    let openProfileMenu: () -> Void
 
     private let primaryItems: [(SonaTab, String, String)] = [
         (.home, "首页", "house.fill"),
@@ -127,8 +152,12 @@ private struct MacSidebar: View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.sonaSecondaryText)
                 Spacer()
-                Image(systemName: "plus")
-                    .foregroundStyle(Color.sonaSecondaryText)
+                Button(action: createPlaylist) {
+                    Image(systemName: "plus")
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("新建歌单")
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 8)
@@ -136,7 +165,7 @@ private struct MacSidebar: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     Button {
-                        selectedTab = .library
+                        openLibraryCollection("liked-songs")
                     } label: {
                         libraryRow(
                             title: "收藏的歌曲",
@@ -147,13 +176,14 @@ private struct MacSidebar: View {
                     }
                     ForEach(personal.playlists) { playlist in
                         Button {
-                            selectedTab = .library
+                            openLibraryCollection(playlist.id)
                         } label: {
                             libraryRow(
                                 title: playlist.name,
                                 subtitle: "歌单 · \(session.currentUser?.username ?? "Sona")",
                                 icon: "music.note.list",
-                                color: .sonaSurface
+                                color: .sonaSurface,
+                                artworkURL: artworkURL(for: playlist)
                             )
                         }
                     }
@@ -162,18 +192,28 @@ private struct MacSidebar: View {
                 .padding(.horizontal, 8)
             }
 
-            HStack(spacing: 10) {
-                SonaAvatarView(username: session.currentUser?.username ?? "Sona")
-                    .frame(width: 32, height: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.currentUser?.username ?? "Sona")
-                        .font(.subheadline.weight(.semibold))
-                    Text(session.currentUser?.role.title ?? "用户")
-                        .font(.caption2)
-                        .foregroundStyle(Color.sonaSecondaryText)
+            Button(action: openProfileMenu) {
+                HStack(spacing: 10) {
+                    SonaAvatarView(
+                        username: session.currentUser?.username ?? "Sona",
+                        avatarPreset: session.currentUser?.avatarPreset,
+                        avatarURL: session.currentUser?.avatarURL,
+                        size: 32
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.currentUser?.username ?? "Sona")
+                            .font(.subheadline.weight(.semibold))
+                        Text(session.currentUser?.role.title ?? "用户")
+                            .font(.caption2)
+                            .foregroundStyle(Color.sonaSecondaryText)
+                    }
+                    Spacer(minLength: 0)
                 }
+                .contentShape(Rectangle())
+                .padding(14)
             }
-            .padding(14)
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开账户菜单")
         }
         .foregroundStyle(.white)
         .background(Color(red: 0.055, green: 0.055, blue: 0.055))
@@ -202,16 +242,22 @@ private struct MacSidebar: View {
         title: String,
         subtitle: String,
         icon: String,
-        color: Color
+        color: Color,
+        artworkURL: String? = nil
     ) -> some View {
         HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(color)
-                .frame(width: 42, height: 42)
-                .overlay {
-                    Image(systemName: icon)
-                        .foregroundStyle(.white)
-                }
+            if let artworkURL {
+                ArtworkView(path: artworkURL, cornerRadius: 4, thumbnailSize: 192)
+                    .frame(width: 42, height: 42)
+            } else {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(color)
+                    .frame(width: 42, height: 42)
+                    .overlay {
+                        Image(systemName: icon)
+                            .foregroundStyle(.white)
+                    }
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).lineLimit(1)
                 Text(subtitle)
@@ -225,6 +271,18 @@ private struct MacSidebar: View {
         .padding(.horizontal, 8)
         .frame(height: 54)
         .contentShape(Rectangle())
+    }
+
+    private func artworkURL(for playlist: Playlist) -> String? {
+        if let artworkURL = playlist.artworkURLs.first {
+            return artworkURL
+        }
+        for trackID in playlist.trackIDs {
+            if let artworkURL = library.track(id: trackID)?.artworkURL {
+                return artworkURL
+            }
+        }
+        return nil
     }
 }
 

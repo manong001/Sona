@@ -25,11 +25,37 @@ struct MainTabView: View {
     var body: some View {
         Group {
 #if targetEnvironment(macCatalyst)
-            MacMainView(
-                selectedTab: $selectedTab,
-                showsNowPlaying: $showsNowPlaying,
-                availableRelease: availableRelease
-            )
+            ZStack(alignment: .leading) {
+                MacMainView(
+                    selectedTab: $selectedTab,
+                    showsNowPlaying: $showsNowPlaying,
+                    availableRelease: availableRelease,
+                    openDrawer: openDrawer
+                )
+
+                if showsDrawer {
+                    Color.black.opacity(0.56)
+                        .ignoresSafeArea()
+                        .onTapGesture { closeDrawer() }
+                        .transition(.opacity)
+
+                    GeometryReader { proxy in
+                        ProfileDrawerView(
+                            selectTab: { selectedTab = $0 },
+                            manageAccount: { showsAccountSecurity = true },
+                            editAvatar: { showsAvatarEditor = true },
+                            showAchievements: { showsAchievements = true },
+                            showSocial: { showsSocial = true },
+                            manageUsers: { showsUserManagement = true },
+                            close: closeDrawer
+                        )
+                        .frame(width: min(proxy.size.width * 0.76, 330))
+                        .frame(maxHeight: .infinity)
+                        .transition(.move(edge: .leading))
+                    }
+                }
+            }
+            .animation(.easeOut(duration: 0.24), value: showsDrawer)
 #else
         ZStack(alignment: .leading) {
             TabView(selection: $selectedTab) {

@@ -28,6 +28,10 @@ struct MusicLibraryView: View {
     @State private var isForceScrapingPlaylist = false
     @State private var forceScrapeMessage: String?
     let openDrawer: () -> Void
+    var requestedCollectionID: String? = nil
+    var libraryNavigationRequestID = 0
+    var createPlaylistRequestID = 0
+    @State private var navigationPath: [String] = []
 
     private var username: String {
         session.currentUser?.username ?? "Sona"
@@ -78,7 +82,7 @@ struct MusicLibraryView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ZStack {
                 Color.sonaBackground.ignoresSafeArea()
                 ScrollView {
@@ -100,6 +104,20 @@ struct MusicLibraryView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: String.self) { collectionID in
+                if collectionID == "liked-songs" {
+                    SonaTrackListView(collection: SonaCollection(
+                        id: "liked-songs",
+                        title: "收藏的歌曲",
+                        subtitle: "歌单 · \(username)",
+                        artworkURL: favoriteTracks.first?.artworkURL,
+                        tracks: favoriteTracks,
+                        shape: .square
+                    ))
+                } else {
+                    ManagedPlaylistDetailView(playlistID: collectionID)
+                }
+            }
             .alert("新建歌单", isPresented: $showsCreatePlaylist) {
                 TextField("歌单名称", text: $playlistName)
                 Button("取消", role: .cancel) { }
@@ -109,6 +127,17 @@ struct MusicLibraryView: View {
                     Task { await personal.createPlaylist(name: name) }
                 }
             }
+        }
+        .onChange(of: libraryNavigationRequestID, initial: true) { _, requestID in
+            guard requestID > 0, let requestedCollectionID else { return }
+            selectedFilter = .playlists
+            query = ""
+            navigationPath = [requestedCollectionID]
+        }
+        .onChange(of: createPlaylistRequestID, initial: true) { _, requestID in
+            guard requestID > 0 else { return }
+            playlistName = ""
+            showsCreatePlaylist = true
         }
         .sheet(item: $editingTrack) { track in
             TrackIdentityEditorView(track: track) { updated in
