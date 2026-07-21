@@ -13,8 +13,10 @@ public sealed partial class MainWindow : Window
     private readonly AudioPlayerService _player = new();
     private readonly ObservableCollection<Track> _tracks = [];
     private readonly ObservableCollection<Track> _queue = [];
+    private readonly ObservableCollection<DuplicateTrackGroup> _duplicateGroups = [];
     private User? _user;
     private Track? _currentTrack;
+    private DuplicateTrackItem? _pendingDuplicateDeletion;
     private int _currentIndex = -1;
 
     public MainWindow()
@@ -22,6 +24,7 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         TracksList.ItemsSource = _tracks;
         QueueList.ItemsSource = _queue;
+        DuplicateGroupsList.ItemsSource = _duplicateGroups;
         _player.PlaybackEnded += (_, _) => Dispatcher.UIThread.Post(() => _ = PlayNextAsync());
         _player.PlaybackFailed += (_, _) => Dispatcher.UIThread.Post(() =>
         {
@@ -64,6 +67,7 @@ public sealed partial class MainWindow : Window
             UsernameLabel.Text = _user.Username;
             RoleLabel.Text = _user.RoleTitle;
             AvatarLetter.Text = _user.Username[..1].ToUpperInvariant();
+            DuplicateManagerButton.IsVisible = _user.IsAdmin;
             LoginPanel.IsVisible = false;
             Shell.IsVisible = true;
             await LoadTracksAsync();
@@ -242,7 +246,97 @@ public sealed partial class MainWindow : Window
         SettingsServerLabel.Text = _api.ServerUri.ToString().TrimEnd('/');
         SettingsUserLabel.Text = _user is null ? "未登录" : $"{_user.Username} · {_user.RoleTitle}";
         TracksList.IsVisible = false;
+        DuplicatePanel.IsVisible = false;
         SettingsPanel.IsVisible = true;
+    }
+
+    private async void OpenDuplicates_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_user?.IsAdmin != true)
+        {
+            return;
+        }
+        PageTitle.Text = "歌曲去重";
+        SettingsPanel.IsVisible = false;
+        TracksList.IsVisible = false;
+        DuplicatePanel.IsVisible = true;
+        await LoadDuplicatesAsync();
+    }
+
+    private void BackToSettings_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        => Settings_Click(sender, e);
+
+    private async void RefreshDuplicates_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        => await LoadDuplicatesAsync();
+
+    private async Task LoadDuplicatesAsync()
+    {
+        DuplicateEmptyLabel.Text = "正在检查重复歌曲…";
+        DuplicateEmptyLabel.IsVisible = true;
+        try
+        {
+            var groups = await _api.GetDuplicateTracksAsync();
+            _duplicateGroups.Clear();
+            foreach (var group in groups)
+            {
+                _duplicateGroups.Add(group);
+            }
+            DuplicateEmptyLabel.Text = "没有重复歌曲";
+            DuplicateEmptyLabel.IsVisible = _duplicateGroups.Count == 0;
+        }
+        catch (Exception exception) when (exception is SonaApiException or HttpRequestException or TaskCanceledException)
+        {
+            DuplicateEmptyLabel.Text = exception is TaskCanceledException
+                ? "检查重复歌曲超时"
+                : exception.Message;
+            DuplicateEmptyLabel.IsVisible = true;
+        }
+    }
+
+    private void DuplicateDelete_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: DuplicateTrackItem item })
+        {
+            return;
+        }
+        _pendingDuplicateDeletion = item;
+        DeleteConfirmDetails.Text = $"文件：{item.Path}\n\n{item.UsersText}";
+        DeleteConfirmOverlay.IsVisible = true;
+    }
+
+    private void CancelDuplicateDelete_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _pendingDuplicateDeletion = null;
+        DeleteConfirmOverlay.IsVisible = false;
+    }
+
+    private async void ConfirmDuplicateDelete_Click(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e
+    )
+    {
+        if (_pendingDuplicateDeletion is not { } item)
+        {
+            return;
+        }
+        ConfirmDuplicateDeleteButton.IsEnabled = false;
+        ConfirmDuplicateDeleteButton.Content = "正在删除…";
+        try
+        {
+            await _api.DeleteManagedTrackAsync(item.Track.Id);
+            _pendingDuplicateDeletion = null;
+            DeleteConfirmOverlay.IsVisible = false;
+            await LoadDuplicatesAsync();
+        }
+        catch (Exception exception) when (exception is SonaApiException or HttpRequestException or TaskCanceledException)
+        {
+            DeleteConfirmDetails.Text = $"删除失败：{exception.Message}\n\n文件：{item.Path}\n\n{item.UsersText}";
+        }
+        finally
+        {
+            ConfirmDuplicateDeleteButton.IsEnabled = true;
+            ConfirmDuplicateDeleteButton.Content = "永久删除";
+        }
     }
 
     private async void Logout_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -257,8 +351,10 @@ public sealed partial class MainWindow : Window
             StatusLabel.Text = $"退出登录请求失败：{exception.Message}";
         }
         _user = null;
+        DuplicateManagerButton.IsVisible = false;
         _tracks.Clear();
         _queue.Clear();
+        _duplicateGroups.Clear();
         PasswordBox.Text = string.Empty;
         Shell.IsVisible = false;
         LoginPanel.IsVisible = true;
@@ -273,6 +369,7 @@ public sealed partial class MainWindow : Window
     private void ShowTrackContent()
     {
         SettingsPanel.IsVisible = false;
+        DuplicatePanel.IsVisible = false;
         TracksList.IsVisible = true;
     }
 

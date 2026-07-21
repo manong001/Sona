@@ -656,6 +656,13 @@ class JdbcTrackStore implements TrackStore {
     public boolean delete(String id) {
         jdbcClient.sql("DELETE FROM random_track_exposures WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM playback_state WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("""
+                UPDATE playback_state
+                SET queue_track_ids = trim(
+                    replace(',' || queue_track_ids || ',', ',' || :id || ',', ','), ','
+                )
+                WHERE ',' || queue_track_ids || ',' LIKE '%,' || :id || ',%'
+                """).param("id", id).update();
         jdbcClient.sql("DELETE FROM hidden_tracks WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM playback_records WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM play_history WHERE track_id = :id").param("id", id).update();

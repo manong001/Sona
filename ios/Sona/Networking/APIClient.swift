@@ -450,6 +450,10 @@ final class APIClient {
         return try await request(url: components.url!)
     }
 
+    func duplicateTracks() async throws -> [DuplicateTrackGroup] {
+        try await request(path: "/api/v1/library/tracks/duplicates")
+    }
+
     func classifyTrack(
         id: String, poolType: String, audienceType: String,
         genre: String? = nil, region: String? = nil

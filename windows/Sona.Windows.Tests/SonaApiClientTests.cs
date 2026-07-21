@@ -121,6 +121,44 @@ public sealed class SonaApiClientTests
             captured!.RequestUri!.ToString());
     }
 
+    [Fact]
+    public async Task Duplicate_tracks_uses_admin_library_endpoint()
+    {
+        HttpRequestMessage? captured = null;
+        var handler = new StubHandler(request =>
+        {
+            captured = request;
+            return Task.FromResult(Json(HttpStatusCode.OK, "[]"));
+        });
+        using var api = new SonaApiClient(new HttpClient(handler));
+
+        var groups = await api.GetDuplicateTracksAsync();
+
+        Assert.Empty(groups);
+        Assert.Equal(
+            "http://sosee.eu.cc:6699/api/v1/library/tracks/duplicates",
+            captured!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task Managed_track_delete_uses_permanent_delete_endpoint()
+    {
+        HttpRequestMessage? captured = null;
+        var handler = new StubHandler(request =>
+        {
+            captured = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        });
+        using var api = new SonaApiClient(new HttpClient(handler));
+
+        await api.DeleteManagedTrackAsync("track-id");
+
+        Assert.Equal(HttpMethod.Delete, captured!.Method);
+        Assert.Equal(
+            "http://sosee.eu.cc:6699/api/v1/library/tracks/track-id",
+            captured.RequestUri!.ToString());
+    }
+
     private static HttpResponseMessage Json(HttpStatusCode status, string json) => new(status)
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")

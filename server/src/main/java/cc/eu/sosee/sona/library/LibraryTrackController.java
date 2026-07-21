@@ -39,15 +39,17 @@ class LibraryTrackController {
     private final TrackStore trackStore;
     private final ScanCoordinator scanCoordinator;
     private final TrackAiService trackAiService;
+    private final DuplicateTrackService duplicateTrackService;
     private final Path uploadDirectory;
 
     LibraryTrackController(
         TrackStore trackStore, ScanCoordinator scanCoordinator, SonaProperties properties,
-        TrackAiService trackAiService
+        TrackAiService trackAiService, DuplicateTrackService duplicateTrackService
     ) {
         this.trackStore = trackStore;
         this.scanCoordinator = scanCoordinator;
         this.trackAiService = trackAiService;
+        this.duplicateTrackService = duplicateTrackService;
         this.uploadDirectory = properties.getMusicDir().toAbsolutePath().normalize().resolve("Uploads");
     }
 
@@ -57,6 +59,11 @@ class LibraryTrackController {
             throw new ResponseStatusException(BAD_REQUEST, "Invalid pool type");
         }
         return trackStore.findManaged(poolType).stream().map(TrackResponse::from).toList();
+    }
+
+    @GetMapping("/duplicates")
+    List<DuplicateTrackService.DuplicateTrackGroup> duplicates() {
+        return duplicateTrackService.findDuplicates();
     }
 
     @PatchMapping("/{id}")

@@ -979,6 +979,23 @@ paths:
           content:
             application/json:
               schema: {type: array, items: {$ref: "#/components/schemas/Track"}}
+  /library/tracks/duplicates:
+    get:
+      operationId: duplicateTracks
+      summary: 按标准化歌手和歌名列出重复歌曲候选及用户引用
+      responses:
+        "200":
+          description: 重复歌曲候选，仅管理员可访问
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DuplicateTrackGroup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /library/ai-settings:
     get:
       operationId: getAiSettings
@@ -1681,6 +1698,36 @@ components:
             $ref: "#/components/schemas/Track"
         nextCursor:
           type: [string, "null"]
+    DuplicateTrackGroup:
+      type: object
+      required: [artist, title, tracks]
+      properties:
+        artist: {type: string}
+        title: {type: string}
+        tracks:
+          type: array
+          minItems: 2
+          items: {$ref: "#/components/schemas/DuplicateTrackItem"}
+    DuplicateTrackItem:
+      type: object
+      required: [track, path, fileSize, users]
+      properties:
+        track: {$ref: "#/components/schemas/Track"}
+        path: {type: string}
+        fileSize: {type: integer, format: int64}
+        users:
+          type: array
+          items: {$ref: "#/components/schemas/DuplicateTrackUsage"}
+    DuplicateTrackUsage:
+      type: object
+      required: [userId, username, favorite, playlists, history, currentQueue]
+      properties:
+        userId: {type: string, format: uuid}
+        username: {type: string}
+        favorite: {type: boolean}
+        playlists: {type: array, items: {type: string}}
+        history: {type: boolean}
+        currentQueue: {type: boolean}
     Lyrics:
       type: object
       properties:

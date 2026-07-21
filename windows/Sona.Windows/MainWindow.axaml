@@ -110,7 +110,61 @@
                 </Border>
                 <TextBlock Text="首版 Windows 客户端已支持登录、曲库、搜索、收藏、发现和基础播放。其余管理与社交功能将逐步迁移。"
                            Foreground="#B3B3B3" TextWrapping="Wrap" />
+                <Button x:Name="DuplicateManagerButton" Content="歌曲去重" IsVisible="False"
+                        HorizontalAlignment="Left" Padding="18,10" Click="OpenDuplicates_Click" />
               </StackPanel>
+            </Border>
+
+            <Border x:Name="DuplicatePanel" Grid.Row="1" Grid.RowSpan="2" Background="#121212"
+                    Padding="24" IsVisible="False">
+              <Grid RowDefinitions="Auto,*" RowSpacing="16">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                  <Button Content="← 返回设置" Click="BackToSettings_Click" />
+                  <TextBlock Grid.Column="1" Text="按标准化歌手和歌名列出，不会自动删除。"
+                             Foreground="#B3B3B3" VerticalAlignment="Center" />
+                  <Button Grid.Column="2" Content="刷新" Click="RefreshDuplicates_Click" />
+                </Grid>
+                <ScrollViewer Grid.Row="1">
+                  <StackPanel>
+                    <TextBlock x:Name="DuplicateEmptyLabel" Text="没有重复歌曲"
+                               Foreground="#B3B3B3" FontSize="18" Margin="0,24"
+                               HorizontalAlignment="Center" IsVisible="False" />
+                    <ItemsControl x:Name="DuplicateGroupsList">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:DuplicateTrackGroup">
+                          <StackPanel Margin="0,0,0,20" Spacing="8">
+                            <TextBlock Text="{Binding Header}" FontSize="18" FontWeight="Bold" />
+                            <ItemsControl ItemsSource="{Binding Tracks}">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:DuplicateTrackItem">
+                                  <Border Background="#242424" CornerRadius="10" Padding="14" Margin="0,4">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                      <StackPanel Spacing="5">
+                                        <TextBlock Text="{Binding VersionText}" FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding FileSizeText}" Foreground="#B3B3B3"
+                                                   FontSize="12" />
+                                        <TextBlock Text="{Binding Path}" Foreground="#8F8F8F" FontSize="11"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Text="使用中的用户" FontWeight="SemiBold" FontSize="12"
+                                                   Margin="0,4,0,0" />
+                                        <TextBlock Text="{Binding UsersText}" Foreground="#B3B3B3" FontSize="12"
+                                                   TextWrapping="Wrap" />
+                                      </StackPanel>
+                                      <Button Grid.Column="1" Content="删除" Foreground="#FF6577"
+                                              VerticalAlignment="Top" Click="DuplicateDelete_Click" />
+                                    </Grid>
+                                  </Border>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                          </StackPanel>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </ScrollViewer>
+              </Grid>
             </Border>
           </Grid>
         </Border>
@@ -191,5 +245,23 @@
                 FontWeight="Bold" CornerRadius="22" Padding="16,11" Click="Login_Click" />
       </StackPanel>
     </Border>
+
+    <Grid x:Name="DeleteConfirmOverlay" Background="#CC000000" IsVisible="False">
+      <Border Width="540" Background="#242424" CornerRadius="16" Padding="26"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="14">
+          <TextBlock Text="永久删除这首歌曲？" FontSize="22" FontWeight="Bold" />
+          <TextBlock Text="此操作不可恢复，将删除服务器音频文件及全部用户引用。"
+                     Foreground="#FF6577" TextWrapping="Wrap" />
+          <TextBlock x:Name="DeleteConfirmDetails" Foreground="#B3B3B3" TextWrapping="Wrap"
+                     MaxHeight="260" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Content="取消" Click="CancelDuplicateDelete_Click" />
+            <Button x:Name="ConfirmDuplicateDeleteButton" Content="永久删除"
+                    Background="#E91429" Foreground="White" Click="ConfirmDuplicateDelete_Click" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
   </Grid>
 </Window>

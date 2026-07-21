@@ -79,6 +79,12 @@ struct SettingsView: View {
                             Label("歌曲分类", systemImage: "tray.full")
                         }
 
+                        NavigationLink {
+                            DuplicateTrackManagementView()
+                        } label: {
+                            Label("歌曲去重", systemImage: "rectangle.on.rectangle")
+                        }
+
                         Button("从 App 批量导入", systemImage: "square.and.arrow.down") {
                             showsImporter = true
                         }
@@ -861,6 +867,140 @@ private struct AppShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ viewController: UIActivityViewController, context: Context) {}
+}
+
+private struct DuplicateTrackManagementView: View {
+    @State private var groups: [DuplicateTrackGroup] = []
+    @State private var pendingDeletion: DuplicateTrackItem?
+    @State private var errorMessage: String?
+    @State private var isLoading = false
+
+    var body: some View {
+        List {
+            if groups.isEmpty && !isLoading {
+                ContentUnavailableView(
+                    "没有重复歌曲",
+                    systemImage: "checkmark.circle",
+                    description: Text("按标准化歌手和歌名检测，目前没有重复候选。")
+                )
+                .listRowBackground(Color.clear)
+            }
+
+            ForEach(groups) { group in
+                Section {
+                    ForEach(group.tracks) { item in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.track.album)
+                                        .font(.headline)
+                                    Text("\(item.track.qualityText) · \(item.track.durationText)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(ByteCountFormatter.string(
+                                        fromByteCount: item.fileSize, countStyle: .file
+                                    ))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("删除", role: .destructive) {
+                                    pendingDeletion = item
+                                }
+                            }
+
+                            Text(item.path)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+
+                            if item.users.isEmpty {
+                                Label("没有用户引用", systemImage: "person.slash")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("使用中的用户")
+                                        .font(.caption.weight(.semibold))
+                                    ForEach(item.users) { usage in
+                                        Text(usageDescription(usage))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("\(group.artist) · \(group.title)（\(group.tracks.count) 个文件）")
+                }
+            }
+        }
+        .navigationTitle("歌曲去重")
+        .overlay {
+            if isLoading { ProgressView("正在检查重复歌曲…") }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+        .alert(item: $pendingDeletion) { item in
+            Alert(
+                title: Text("永久删除这首歌曲？"),
+                message: Text(deletionMessage(item)),
+                primaryButton: .destructive(Text("永久删除")) {
+                    Task { await delete(item) }
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
+        }
+        .overlay(alignment: .bottom) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.red, in: Capsule())
+                    .padding(.bottom, 8)
+            }
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            groups = try await APIClient.shared.duplicateTracks()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func delete(_ item: DuplicateTrackItem) async {
+        do {
+            try await APIClient.shared.deleteTrack(id: item.track.id, isAdmin: true)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func usageDescription(_ usage: DuplicateTrackUsage) -> String {
+        var uses: [String] = []
+        if usage.favorite { uses.append("收藏") }
+        if !usage.playlists.isEmpty {
+            uses.append("歌单：" + usage.playlists.joined(separator: "、"))
+        }
+        if usage.history { uses.append("播放历史") }
+        if usage.currentQueue { uses.append("当前队列") }
+        return "\(usage.username)：\(uses.joined(separator: "，"))"
+    }
+
+    private func deletionMessage(_ item: DuplicateTrackItem) -> String {
+        let users = item.users.isEmpty
+            ? "没有用户引用"
+            : item.users.map(usageDescription).joined(separator: "\n")
+        return "此操作不可恢复，将删除服务器音频文件及全部用户引用。\n\n文件：\(item.path)\n\n\(users)"
+    }
 }
 
 private struct TrackManagementView: View {

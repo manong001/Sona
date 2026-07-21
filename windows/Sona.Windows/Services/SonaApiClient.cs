@@ -78,6 +78,28 @@ public sealed class SonaApiClient : IDisposable
         return await ReadAsync<TrackPage>(response, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<DuplicateTrackGroup>> GetDuplicateTracksAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync(
+            BuildUri("/api/v1/library/tracks/duplicates"),
+            cancellationToken);
+        return await ReadAsync<IReadOnlyList<DuplicateTrackGroup>>(response, cancellationToken);
+    }
+
+    public async Task DeleteManagedTrackAsync(
+        string trackId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.DeleteAsync(
+            BuildUri("/api/v1/library/tracks/" + Uri.EscapeDataString(trackId)),
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            await ThrowApiErrorAsync(response, cancellationToken);
+        }
+    }
+
     public async Task LogoutAsync(CancellationToken cancellationToken = default)
     {
         using var response = await _httpClient.PostAsync(

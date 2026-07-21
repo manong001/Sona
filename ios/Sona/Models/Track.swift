@@ -104,6 +104,34 @@ struct TrackPage: Decodable {
     let nextCursor: String?
 }
 
+struct DuplicateTrackGroup: Decodable, Identifiable {
+    let artist: String
+    let title: String
+    let tracks: [DuplicateTrackItem]
+
+    var id: String { artist + "\u{0}" + title }
+}
+
+struct DuplicateTrackItem: Decodable, Identifiable {
+    let track: Track
+    let path: String
+    let fileSize: Int64
+    let users: [DuplicateTrackUsage]
+
+    var id: String { track.id }
+}
+
+struct DuplicateTrackUsage: Decodable, Identifiable {
+    let userId: String
+    let username: String
+    let favorite: Bool
+    let playlists: [String]
+    let history: Bool
+    let currentQueue: Bool
+
+    var id: String { userId }
+}
+
 struct ChartEntry: Decodable, Identifiable {
     let track: Track
     let playCount: Int64
