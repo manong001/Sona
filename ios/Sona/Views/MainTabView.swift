@@ -137,19 +137,19 @@ struct MainTabView: View {
         }
 #endif
         .sheet(isPresented: $showsAccountSecurity) {
-            NavigationStack { AccountSecurityView() }
+            NavigationStack { AccountSecurityView().macModalBackButton() }
         }
         .sheet(isPresented: $showsAvatarEditor) {
             NavigationStack { OwnAvatarEditorView() }
         }
         .sheet(isPresented: $showsUserManagement) {
-            NavigationStack { UserManagementView() }
+            NavigationStack { UserManagementView().macModalBackButton() }
         }
         .sheet(isPresented: $showsAchievements) {
-            NavigationStack { AchievementsView() }
+            NavigationStack { AchievementsView().macModalBackButton() }
         }
         .sheet(isPresented: $showsSocial) {
-            SocialHubView()
+            SocialHubView().macModalBackButton()
         }
         .alert("发现新版本", isPresented: $showsUpdateAlert) {
             Button("稍后", role: .cancel) { }
@@ -168,12 +168,18 @@ struct MainTabView: View {
                     await personal.setFavorite(trackID: trackID, isFavorite: isFavorite)
                 }
             )
+            player.configureCarPlayAutoPlayback(
+                favoriteTracks: { await personal.loadAllFavoriteTracks() },
+                offlineURLProvider: { offline.localURL(for: $0) }
+            )
             player.beginSession(userID: userID)
+            player.restoreCachedStateIfAvailable { offline.localURL(for: $0) }
+            await player.restoreStateIfNeeded { offline.localURL(for: $0) }
             if library.tracks.isEmpty {
                 await library.refresh()
             }
             await personal.refresh()
-            await player.restoreStateIfNeeded { offline.localURL(for: $0) }
+            await player.startCarPlayPlaybackIfNeeded()
             await player.prepareRandomQueueIfNeeded { offline.localURL(for: $0) }
         }
         .task {
@@ -250,6 +256,31 @@ struct MainTabView: View {
             values.append(notes)
         }
         return values.joined(separator: "\n")
+    }
+}
+
+private struct MacModalBackButtonModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if targetEnvironment(macCatalyst)
+        content.toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("返回", systemImage: "chevron.left") {
+                    dismiss()
+                }
+            }
+        }
+#else
+        content
+#endif
+    }
+}
+
+private extension View {
+    func macModalBackButton() -> some View {
+        modifier(MacModalBackButtonModifier())
     }
 }
 

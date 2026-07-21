@@ -47,11 +47,14 @@ final class PlayerStore: ObservableObject {
     private var itemEndObserver: NSObjectProtocol?
     private var itemFailureObserver: NSObjectProtocol?
     private var audioInterruptionObserver: NSObjectProtocol?
+    private var audioRouteChangeObserver: NSObjectProtocol?
     private var resumeAfterInterruption = false
     private var fallbackTrackID: String?
     private var artworkTask: Task<Void, Never>?
     private var randomQueueTask: Task<Void, Never>?
+    private var stateRestoreTask: Task<Void, Never>?
     private var stateSaveTask: Task<Void, Never>?
+    private var carPlayPlaybackTask: Task<Void, Never>?
     private var dailyRecommendationQueues: [[Track]]?
     private var dailyRecommendationQueueIndex: Int?
     private var nowPlayingArtwork: MPMediaItemArtwork?
@@ -61,6 +64,9 @@ final class PlayerStore: ObservableObject {
     private var lastSavedProgressBucket: Int64 = -1
     private var favoriteStateProvider: ((String) -> Bool)?
     private var favoriteUpdateHandler: ((String, Bool) async -> Bool)?
+    private var carPlayFavoriteTracksProvider: (() async -> [Track])?
+    private var carPlayOfflineURLProvider: ((Track) -> URL?)?
+    private var wasCarPlayConnected = false
 
     init() {
         configureAudioSession()
@@ -68,6 +74,8 @@ final class PlayerStore: ObservableObject {
         observeItemEnd()
         observeItemFailure()
         observeAudioInterruptions()
+        wasCarPlayConnected = isCarPlayConnected
+        observeAudioRouteChanges()
         configureRemoteCommands()
     }
 
@@ -84,9 +92,14 @@ final class PlayerStore: ObservableObject {
         if let audioInterruptionObserver {
             NotificationCenter.default.removeObserver(audioInterruptionObserver)
         }
+        if let audioRouteChangeObserver {
+            NotificationCenter.default.removeObserver(audioRouteChangeObserver)
+        }
         artworkTask?.cancel()
         randomQueueTask?.cancel()
+        stateRestoreTask?.cancel()
         stateSaveTask?.cancel()
+        carPlayPlaybackTask?.cancel()
     }
 
     var canGoPrevious: Bool {
@@ -108,6 +121,7 @@ final class PlayerStore: ObservableObject {
         activeAPI = api
         self.offlineURLProvider = offlineURLProvider
         randomQueueTask?.cancel()
+        stateRestoreTask?.cancel()
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
         queueErrorMessage = nil
@@ -147,6 +161,7 @@ final class PlayerStore: ObservableObject {
         activeAPI = api
         self.offlineURLProvider = offlineURLProvider
         randomQueueTask?.cancel()
+        stateRestoreTask?.cancel()
         queueErrorMessage = nil
         dailyRecommendationQueues = queues
         dailyRecommendationQueueIndex = queueIndex
@@ -166,7 +181,8 @@ final class PlayerStore: ObservableObject {
     private func startPlayback(
         _ track: Track,
         streamURLOverride: String? = nil,
-        autoplay: Bool = true
+        autoplay: Bool = true,
+        persistState: Bool = true
     ) {
         if streamURLOverride == nil {
             fallbackTrackID = nil
@@ -199,7 +215,9 @@ final class PlayerStore: ObservableObject {
         }
         isPlaying = autoplay
         loadNowPlayingArtwork(for: track)
-        persistState()
+        if persistState {
+            self.persistState()
+        }
     }
 
     func previous() {
@@ -274,6 +292,7 @@ final class PlayerStore: ObservableObject {
 
     func stop() {
         submitCurrentPlayback()
+        clearCachedPlayback()
         clearLocalPlayback()
     }
 
@@ -281,6 +300,8 @@ final class PlayerStore: ObservableObject {
         clearLocalPlayback()
         activeUserID = nil
         hasRestoredState = false
+        carPlayFavoriteTracksProvider = nil
+        carPlayOfflineURLProvider = nil
         try? AVAudioSession.sharedInstance().setActive(
             false,
             options: .notifyOthersOnDeactivation
@@ -302,7 +323,9 @@ final class PlayerStore: ObservableObject {
         player.replaceCurrentItem(with: nil)
         artworkTask?.cancel()
         randomQueueTask?.cancel()
+        stateRestoreTask?.cancel()
         stateSaveTask?.cancel()
+        carPlayPlaybackTask?.cancel()
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
         playbackQueue = []
@@ -333,12 +356,14 @@ final class PlayerStore: ObservableObject {
         }
     }
 
-    private func resume() {
+    private func resume(persistState: Bool = true) {
         activateAudioSession()
         player.play()
         isPlaying = true
         updateNowPlaying()
-        persistState()
+        if persistState {
+            self.persistState()
+        }
     }
 
     private func pause() {
@@ -349,11 +374,13 @@ final class PlayerStore: ObservableObject {
         persistState()
     }
 
-    func seek(to seconds: Double) {
+    func seek(to seconds: Double, persistState: Bool = true) {
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
         elapsed = seconds
         updateNowPlaying()
-        persistState()
+        if persistState {
+            self.persistState()
+        }
     }
 
     private func configureAudioSession() {
@@ -431,6 +458,29 @@ final class PlayerStore: ObservableObject {
             Task { @MainActor in
                 self?.handleAudioInterruption(notification)
             }
+        }
+    }
+
+    private func observeAudioRouteChanges() {
+        audioRouteChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleAudioRouteChange()
+            }
+        }
+    }
+
+    private func handleAudioRouteChange() {
+        let connected = isCarPlayConnected
+        let newlyConnected = connected && !wasCarPlayConnected
+        wasCarPlayConnected = connected
+        guard newlyConnected else { return }
+        carPlayPlaybackTask?.cancel()
+        carPlayPlaybackTask = Task { [weak self] in
+            await self?.startCarPlayPlaybackIfNeeded()
         }
     }
 
@@ -626,6 +676,7 @@ final class PlayerStore: ObservableObject {
 
     func flushState() async {
         guard let snapshot = playbackStateSnapshot() else { return }
+        cachePlaybackState()
         submitCurrentPlayback()
         stateSaveTask?.cancel()
         try? await snapshot.api.savePlaybackState(
@@ -647,6 +698,7 @@ final class PlayerStore: ObservableObject {
 
     private func persistState() {
         guard let snapshot = playbackStateSnapshot() else { return }
+        cachePlaybackState()
         stateSaveTask?.cancel()
         stateSaveTask = Task {
             try? await snapshot.api.savePlaybackState(
@@ -675,53 +727,139 @@ final class PlayerStore: ObservableObject {
         )
     }
 
+    func restoreCachedStateIfAvailable(
+        offlineURLProvider: @escaping (Track) -> URL?
+    ) {
+        guard currentTrack == nil,
+              let key = playbackCacheKey,
+              let data = UserDefaults.standard.data(forKey: key),
+              let state = try? JSONDecoder().decode(CachedPlaybackState.self, from: data),
+              let track = state.queue.first(where: { $0.id == state.currentTrackID }) else {
+            return
+        }
+        self.offlineURLProvider = offlineURLProvider
+        configureRestoredQueue(type: state.queueType, contextID: state.queueContextID)
+        playbackQueue = state.queue
+        startPlayback(track, autoplay: false, persistState: false)
+        seek(to: Double(state.progressMs) / 1_000, persistState: false)
+        if isCarPlayConnected {
+            resume(persistState: false)
+        }
+    }
+
     func restoreStateIfNeeded(offlineURLProvider: @escaping (Track) -> URL?) async {
-        guard !hasRestoredState, currentTrack == nil else { return }
+        guard !hasRestoredState else { return }
         do {
             guard let state = try await activeAPI.playbackState() else {
+                clearCachedPlayback()
+                clearLocalPlayback()
                 hasRestoredState = true
                 return
             }
-            var restoredQueue: [Track] = []
+            let initialTrackID = currentTrack?.id
+            let cachedTrack = currentTrack?.id == state.trackId ? currentTrack : nil
+            let track: Track
+            do {
+                track = try await activeAPI.track(id: state.trackId)
+            } catch APIError.server(let status, _) where status == 404 {
+                clearCachedPlayback()
+                clearLocalPlayback()
+                hasRestoredState = true
+                return
+            } catch {
+                guard let cachedTrack else { throw error }
+                track = cachedTrack
+            }
+            guard currentTrack?.id == initialTrackID else {
+                return
+            }
+            self.offlineURLProvider = offlineURLProvider
+            configureRestoredQueue(type: state.queueType, contextID: state.queueContextId)
+            if playbackQueue.isEmpty {
+                playbackQueue = [track]
+            }
+            if currentTrack?.id == track.id {
+                currentTrack = track
+                duration = Double(track.durationMs) / 1_000
+            } else {
+                startPlayback(track, autoplay: false, persistState: false)
+            }
+            seek(to: Double(state.progressMs) / 1_000, persistState: false)
+            if hasAutomaticPlaybackRoute {
+                resume(persistState: false)
+            }
+            hasRestoredState = true
+
             let trackIDs = PlaybackRestoration.orderedTrackIDs(
                 currentTrackID: state.trackId,
                 queueTrackIDs: state.queueTrackIds
             )
-            for id in trackIDs {
-                if let track = try? await activeAPI.track(id: id) { restoredQueue.append(track) }
+            let api = activeAPI
+            isLoadingQueue = true
+            stateRestoreTask?.cancel()
+            stateRestoreTask = Task { [weak self] in
+                var restoredQueue: [Track] = []
+                for id in trackIDs {
+                    guard !Task.isCancelled else { return }
+                    if id == track.id {
+                        restoredQueue.append(track)
+                    } else if let queueTrack = try? await api.track(id: id) {
+                        restoredQueue.append(queueTrack)
+                    }
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.currentTrack?.id == track.id,
+                      !restoredQueue.isEmpty else { return }
+                self.playbackQueue = restoredQueue
+                self.isLoadingQueue = false
+                self.cachePlaybackState()
             }
-            guard let restoredTrackID = PlaybackRestoration.currentTrackID(
-                preferredID: state.trackId,
-                availableIDs: restoredQueue.map(\.id)
-            ), let track = restoredQueue.first(where: { $0.id == restoredTrackID }) else {
-                hasRestoredState = true
-                return
-            }
-            self.offlineURLProvider = offlineURLProvider
-            queueType = state.queueType
-            queueContextID = state.queueContextId
-            if state.queueType == "DISCOVERY" {
-                queueTitle = "发现"
-            } else if state.queueType == "DAILY" {
-                queueTitle = "每日推荐"
-            } else if state.queueType == "PLAYLIST" {
-                queueTitle = "歌单"
-            } else {
-                queueTitle = "随机播放"
-            }
-            playbackQueue = restoredQueue
-            startPlayback(track, autoplay: false)
-            if track.id == state.trackId {
-                seek(to: Double(state.progressMs) / 1_000)
-            }
-            if hasConnectedHeadphones {
-                resume()
-            }
-            hasRestoredState = true
         } catch {
             hasRestoredState = false
             queueErrorMessage = error.localizedDescription
         }
+    }
+
+    private func configureRestoredQueue(type: String, contextID: String?) {
+        queueType = type
+        queueContextID = contextID
+        if type == "DISCOVERY" {
+            queueTitle = "发现"
+        } else if type == "DAILY" {
+            queueTitle = "每日推荐"
+        } else if type == "PLAYLIST" {
+            queueTitle = "歌单"
+        } else {
+            queueTitle = "随机播放"
+        }
+    }
+
+    private var playbackCacheKey: String? {
+        activeUserID.map { "sona.playback.cache.\($0)" }
+    }
+
+    private func cachePlaybackState() {
+        guard let key = playbackCacheKey, let currentTrack else { return }
+        var queue = playbackQueue
+        if !queue.contains(where: { $0.id == currentTrack.id }) {
+            queue.insert(currentTrack, at: 0)
+        }
+        let state = CachedPlaybackState(
+            queueType: queueType,
+            queueContextID: queueContextID,
+            currentTrackID: currentTrack.id,
+            queue: queue,
+            progressMs: Int64(max(0, elapsed) * 1_000)
+        )
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private func clearCachedPlayback() {
+        guard let key = playbackCacheKey else { return }
+        UserDefaults.standard.removeObject(forKey: key)
     }
 
     func prepareRandomQueueIfNeeded(
@@ -738,16 +876,27 @@ final class PlayerStore: ObservableObject {
                 return
             }
             self.offlineURLProvider = offlineURLProvider
-            startPlayback(first, autoplay: hasConnectedHeadphones)
+            startPlayback(first, autoplay: hasAutomaticPlaybackRoute)
         } catch {
             queueErrorMessage = error.localizedDescription
         }
     }
 
-    private var hasConnectedHeadphones: Bool {
+    private var hasAutomaticPlaybackRoute: Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
             switch output.portType {
-            case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE:
+            case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .carAudio:
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    private var isCarPlayConnected: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
+            switch output.portType {
+            case .carAudio:
                 true
             default:
                 false
@@ -761,6 +910,14 @@ final class PlayerStore: ObservableObject {
         let queueContextID: String?
         let trackID: String
         let queueTrackIDs: [String]
+        let progressMs: Int64
+    }
+
+    private struct CachedPlaybackState: Codable {
+        let queueType: String
+        let queueContextID: String?
+        let currentTrackID: String
+        let queue: [Track]
         let progressMs: Int64
     }
 
@@ -811,6 +968,39 @@ final class PlayerStore: ObservableObject {
         favoriteStateProvider = isFavorite
         favoriteUpdateHandler = updateFavorite
         refreshRemoteFavoriteState()
+    }
+
+    func configureCarPlayAutoPlayback(
+        favoriteTracks: @escaping () async -> [Track],
+        offlineURLProvider: @escaping (Track) -> URL?
+    ) {
+        carPlayFavoriteTracksProvider = favoriteTracks
+        carPlayOfflineURLProvider = offlineURLProvider
+    }
+
+    func startCarPlayPlaybackIfNeeded() async {
+        guard isCarPlayConnected else { return }
+        if currentTrack != nil {
+            if !isPlaying {
+                resume()
+            }
+            return
+        }
+        guard let favoriteTracksProvider = carPlayFavoriteTracksProvider,
+              let offlineURLProvider = carPlayOfflineURLProvider else { return }
+        let favoriteTracks = await favoriteTracksProvider()
+        guard !Task.isCancelled, isCarPlayConnected, currentTrack == nil else { return }
+        if let first = favoriteTracks.first {
+            play(
+                track: first,
+                queue: favoriteTracks,
+                prioritizedQueueTitle: "收藏的歌曲",
+                queueContextID: "liked-songs",
+                offlineURLProvider: offlineURLProvider
+            )
+            return
+        }
+        await prepareRandomQueueIfNeeded(offlineURLProvider: offlineURLProvider)
     }
 
     func refreshRemoteFavoriteState() {
