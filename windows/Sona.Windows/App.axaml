@@ -1,0 +1,46 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Sona.Windows.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="Window">
+      <Setter Property="Background" Value="#080808" />
+      <Setter Property="FontFamily" Value="Inter, Microsoft YaHei UI" />
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.nav">
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="14,11" />
+      <Setter Property="Margin" Value="6,2" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#B3B3B3" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.nav:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#242424" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.icon">
+      <Setter Property="Width" Value="40" />
+      <Setter Property="Height" Value="40" />
+      <Setter Property="CornerRadius" Value="20" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector="TextBox.search">
+      <Setter Property="Background" Value="#242424" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="PlaceholderText" Value="想听什么？" />
+      <Setter Property="CornerRadius" Value="20" />
+      <Setter Property="Padding" Value="16,9" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+  </Application.Styles>
+</Application>

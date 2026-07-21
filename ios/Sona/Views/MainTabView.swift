@@ -288,6 +288,7 @@ struct DiscoveryView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
     @State private var tracks: [Track] = []
     @State private var isLoading = false
@@ -326,6 +327,7 @@ struct DiscoveryView: View {
                                 tracks: tracks,
                                 currentTrackID: player.currentTrack?.id,
                                 startedAt: flowStartedAt,
+                                hasFixedMiniPlayer: hasFixedMiniPlayer,
                                 play: play
                             )
                             .id(remixID)
@@ -358,7 +360,7 @@ struct DiscoveryView: View {
 
             Spacer(minLength: 8)
 
-            Button("换一片", systemImage: "sparkles") { remix() }
+            Button("换一批", systemImage: "sparkles") { remix() }
                 .font(.caption.bold())
                 .foregroundStyle(.black.opacity(0.86))
                 .padding(.horizontal, 12)
@@ -392,6 +394,14 @@ struct DiscoveryView: View {
             prioritizedQueueTitle: "发现",
             offlineURLProvider: { offline.localURL(for: $0) }
         )
+    }
+
+    private var hasFixedMiniPlayer: Bool {
+#if targetEnvironment(macCatalyst)
+        false
+#else
+        miniPlayerMode == "fixed"
+#endif
     }
 
     private func remix() {
@@ -441,16 +451,20 @@ private struct DiscoveryRiver: View {
     let tracks: [Track]
     let currentTrackID: String?
     let startedAt: Date
+    let hasFixedMiniPlayer: Bool
     let play: (Track) -> Void
 
     var body: some View {
         GeometryReader { proxy in
-            let availableHeight = max(480, proxy.size.height)
+            let availableHeight = hasFixedMiniPlayer
+                ? proxy.size.height
+                : max(480, proxy.size.height)
+            let laneScale = hasFixedMiniPlayer ? 0.90 : 1.0
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 12) {
                     DiscoveryFlowLane(
                         tracks: laneTracks(0),
-                        height: availableHeight * 0.34,
+                        height: availableHeight * 0.34 * laneScale,
                         lane: 0,
                         speed: 8,
                         direction: -1,
@@ -460,7 +474,7 @@ private struct DiscoveryRiver: View {
                     )
                     DiscoveryFlowLane(
                         tracks: laneTracks(1),
-                        height: availableHeight * 0.31,
+                        height: availableHeight * 0.31 * laneScale,
                         lane: 1,
                         speed: 6,
                         direction: 1,
@@ -470,7 +484,7 @@ private struct DiscoveryRiver: View {
                     )
                     DiscoveryFlowLane(
                         tracks: laneTracks(2),
-                        height: availableHeight * 0.29,
+                        height: availableHeight * 0.29 * laneScale,
                         lane: 2,
                         speed: 7,
                         direction: -1,

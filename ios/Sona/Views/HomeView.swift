@@ -14,6 +14,7 @@ struct HomeView: View {
     @State private var madeForYouMixes: [MadeForYouMix] = []
     @State private var favoriteRotationOffset = 0
     @AppStorage("childMode") private var childMode = false
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
 
     private let chartShortcuts = [
@@ -289,7 +290,7 @@ struct HomeView: View {
                             homeContent
                         }
                     }
-                    .padding(.bottom, 24)
+                    .padding(.bottom, homeBottomPadding)
                 }
                 .refreshable {
                     await personal.refresh()
@@ -300,6 +301,14 @@ struct HomeView: View {
             .task(id: childMode) { await loadRecommendations() }
             .task { await rotateFavorites() }
         }
+    }
+
+    private var homeBottomPadding: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24
+#else
+        miniPlayerMode == "fixed" ? 92 : 24
+#endif
     }
 
     private var header: some View {

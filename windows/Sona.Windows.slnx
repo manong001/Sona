@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Sona.Windows/Sona.Windows.csproj" />
+  <Project Path="Sona.Windows.Tests/Sona.Windows.Tests.csproj" />
+</Solution>

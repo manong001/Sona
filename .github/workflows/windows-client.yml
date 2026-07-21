@@ -1,0 +1,63 @@
+name: Windows client
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-client.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-client.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore windows/Sona.Windows.slnx
+
+      - name: Restore Windows x64 runtime
+        run: dotnet restore windows/Sona.Windows/Sona.Windows.csproj --runtime win-x64
+
+      - name: Test
+        run: dotnet test windows/Sona.Windows.slnx --no-restore --configuration Release
+
+      - name: Publish self-contained Windows x64 client
+        run: >-
+          dotnet publish windows/Sona.Windows/Sona.Windows.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          -p:PublishSingleFile=false
+          --output windows/build/win-x64
+
+      - name: Verify runtime files
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "windows/build/win-x64/Sona.exe")) {
+            throw "Sona.exe was not generated"
+          }
+          if (-not (Get-ChildItem "windows/build/win-x64" -Recurse -Filter "libvlc.dll")) {
+            throw "libvlc.dll was not packaged"
+          }
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sona-Windows-x64
+          path: windows/build/win-x64/
+          if-no-files-found: error
+          retention-days: 14

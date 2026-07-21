@@ -35,3 +35,9 @@ ios/RegressionTests/
 
 # Local server tests
 server/src/test/
+
+# Local .NET/Avalonia build artifacts
+windows/**/bin/
+windows/**/obj/
+windows/build/
+windows/dist/
