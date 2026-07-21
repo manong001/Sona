@@ -346,6 +346,110 @@ struct SonaMediaCard: View {
     }
 }
 
+struct SonaMacHoverMediaCard<Content: View>: View {
+    var artworkSize: CGFloat = 168
+    let playAction: () -> Void
+    private let content: Content
+    @State private var isHovered = false
+
+    init(
+        artworkSize: CGFloat = 168,
+        playAction: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.artworkSize = artworkSize
+        self.playAction = playAction
+        self.content = content()
+    }
+
+    @ViewBuilder
+    var body: some View {
+        #if targetEnvironment(macCatalyst)
+        ZStack(alignment: .topLeading) {
+            content
+                .padding(10)
+                .background(
+                    isHovered ? Color.white.opacity(0.09) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+
+            if isHovered {
+                Button(action: playAction) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(width: 48, height: 48)
+                        .background(Color.sonaGreen, in: Circle())
+                        .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("播放")
+                .offset(x: artworkSize - 46, y: artworkSize - 46)
+                .transition(.scale(scale: 0.88).combined(with: .opacity))
+            }
+        }
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+        #else
+        content
+        #endif
+    }
+}
+
+struct SonaMacHoverShortcutCard<Content: View>: View {
+    let playAction: () -> Void
+    private let content: Content
+    @State private var isHovered = false
+
+    init(playAction: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.playAction = playAction
+        self.content = content()
+    }
+
+    @ViewBuilder
+    var body: some View {
+        #if targetEnvironment(macCatalyst)
+        ZStack(alignment: .trailing) {
+            cardContent
+
+            if isHovered {
+                Button(action: playAction) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(width: 34, height: 34)
+                        .background(Color.sonaGreen, in: Circle())
+                        .shadow(color: .black.opacity(0.32), radius: 5, y: 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("播放")
+                .padding(.trailing, 8)
+                .transition(.scale(scale: 0.88).combined(with: .opacity))
+            }
+        }
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.14), value: isHovered)
+        #else
+        cardContent
+        #endif
+    }
+
+    private var cardContent: some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.sonaSurface.opacity(0.95))
+                    .overlay {
+                        if isHovered {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.white.opacity(0.09))
+                        }
+                    }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
 struct SonaTrackListView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore

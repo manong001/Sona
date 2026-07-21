@@ -111,6 +111,8 @@ private struct MacSidebar: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var personal: PersonalStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
     @Binding var selectedTab: SonaTab
     let openLibraryCollection: (String) -> Void
     let createPlaylist: () -> Void
@@ -164,31 +166,38 @@ private struct MacSidebar: View {
 
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    Button {
-                        openLibraryCollection("liked-songs")
-                    } label: {
-                        libraryRow(
-                            title: "收藏的歌曲",
-                            subtitle: "歌单",
-                            icon: "heart.fill",
-                            color: Color(red: 0.43, green: 0.30, blue: 0.78)
-                        )
-                    }
-                    ForEach(personal.playlists) { playlist in
-                        Button {
-                            openLibraryCollection(playlist.id)
-                        } label: {
-                            libraryRow(
-                                title: playlist.name,
-                                subtitle: "歌单 · \(session.currentUser?.username ?? "Sona")",
-                                icon: "music.note.list",
-                                color: .sonaSurface,
-                                artworkURL: artworkURL(for: playlist)
+                    MacSidebarLibraryRow(
+                        title: "收藏的歌曲",
+                        subtitle: "歌单",
+                        icon: "heart.fill",
+                        color: Color(red: 0.43, green: 0.30, blue: 0.78),
+                        openAction: { openLibraryCollection("liked-songs") },
+                        playAction: {
+                            playLibraryCollection(
+                                title: "收藏的歌曲",
+                                id: "liked-songs",
+                                tracks: favoriteTracks
                             )
                         }
+                    )
+                    ForEach(personal.playlists) { playlist in
+                        MacSidebarLibraryRow(
+                            title: playlist.name,
+                            subtitle: "歌单 · \(session.currentUser?.username ?? "Sona")",
+                            icon: "music.note.list",
+                            color: .sonaSurface,
+                            artworkURL: artworkURL(for: playlist),
+                            openAction: { openLibraryCollection(playlist.id) },
+                            playAction: {
+                                playLibraryCollection(
+                                    title: playlist.name,
+                                    id: playlist.id,
+                                    tracks: playlist.trackIDs.compactMap(library.track(id:))
+                                )
+                            }
+                        )
                     }
                 }
-                .buttonStyle(.plain)
                 .padding(.horizontal, 8)
             }
 
@@ -238,39 +247,23 @@ private struct MacSidebar: View {
         .buttonStyle(.plain)
     }
 
-    private func libraryRow(
-        title: String,
-        subtitle: String,
-        icon: String,
-        color: Color,
-        artworkURL: String? = nil
-    ) -> some View {
-        HStack(spacing: 10) {
-            if let artworkURL {
-                ArtworkView(path: artworkURL, cornerRadius: 4, thumbnailSize: 192)
-                    .frame(width: 42, height: 42)
-            } else {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(color)
-                    .frame(width: 42, height: 42)
-                    .overlay {
-                        Image(systemName: icon)
-                            .foregroundStyle(.white)
-                    }
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(Color.sonaSecondaryText)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 8)
-        .frame(height: 54)
-        .contentShape(Rectangle())
+    private var favoriteTracks: [Track] {
+        let tracks = !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty
+            ? personal.favoriteTracks
+            : library.tracks.filter { personal.favoriteIDs.contains($0.id) }
+        return tracks.filter { !personal.hiddenTrackIDs.contains($0.id) }
+    }
+
+    private func playLibraryCollection(title: String, id: String, tracks: [Track]) {
+        let visibleTracks = tracks.filter { !personal.hiddenTrackIDs.contains($0.id) }
+        guard let first = visibleTracks.first else { return }
+        player.play(
+            track: first,
+            queue: visibleTracks,
+            prioritizedQueueTitle: title,
+            queueContextID: id,
+            offlineURLProvider: offline.localURL(for:)
+        )
     }
 
     private func artworkURL(for playlist: Playlist) -> String? {
@@ -283,6 +276,79 @@ private struct MacSidebar: View {
             }
         }
         return nil
+    }
+}
+
+private struct MacSidebarLibraryRow: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let color: Color
+    var artworkURL: String? = nil
+    let openAction: () -> Void
+    let playAction: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Button(action: openAction) {
+                HStack(spacing: 10) {
+                    artwork
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(Color.sonaSecondaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.subheadline)
+                .padding(.horizontal, 8)
+                .frame(height: 54)
+                .contentShape(Rectangle())
+                .background(
+                    isHovered ? Color.white.opacity(0.09) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
+            }
+            .buttonStyle(.plain)
+
+            if isHovered {
+                Button(action: playAction) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.8), radius: 3)
+                        .frame(width: 42, height: 42)
+                        .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("播放")
+                .padding(.leading, 8)
+                .transition(.opacity)
+            }
+        }
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+
+    @ViewBuilder
+    private var artwork: some View {
+        if let artworkURL {
+            ArtworkView(path: artworkURL, cornerRadius: 4, thumbnailSize: 192)
+                .frame(width: 42, height: 42)
+        } else {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(color)
+                .frame(width: 42, height: 42)
+                .overlay {
+                    Image(systemName: icon)
+                        .foregroundStyle(.white)
+                }
+        }
     }
 }
 
