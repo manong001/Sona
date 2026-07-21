@@ -19,6 +19,7 @@ struct MusicDownloadView: View {
     @State private var isLoadingTasks = false
     @State private var errorMessage: String?
     @State private var showsPlaylistImport = false
+    @State private var showsPlaylistSubscriptions = false
     @State private var needsLibraryRefresh = false
     @State private var showsAddedToast = false
     @State private var addedToastTask: Task<Void, Never>?
@@ -50,8 +51,15 @@ struct MusicDownloadView: View {
                     Task { await loadTasks(showLoading: true) }
                 }
             } else {
-                Button("导入歌单", systemImage: "link.badge.plus") {
-                    showsPlaylistImport = true
+                Menu {
+                    Button("一次性导入", systemImage: "square.and.arrow.down") {
+                        showsPlaylistImport = true
+                    }
+                    Button("订阅在线歌单", systemImage: "link.badge.plus") {
+                        showsPlaylistSubscriptions = true
+                    }
+                } label: {
+                    Label("在线歌单", systemImage: "link")
                 }
             }
         }
@@ -89,6 +97,12 @@ struct MusicDownloadView: View {
                 }
                 needsLibraryRefresh = true
                 showAddedToast()
+            }
+        }
+        .sheet(isPresented: $showsPlaylistSubscriptions) {
+            PlaylistSubscriptionsView {
+                needsLibraryRefresh = true
+                Task { await refreshLibraryAfterDownloadsIfNeeded() }
             }
         }
         .overlay(alignment: .bottom) {
@@ -432,6 +446,258 @@ struct MusicDownloadView: View {
         async let libraryRequest: Void = library.refresh()
         async let personalRequest: Void = personal.refresh()
         _ = await (libraryRequest, personalRequest)
+    }
+}
+
+private struct PlaylistSubscriptionsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var subscriptions: [PlaylistSubscription] = []
+    @State private var syncingIDs: Set<String> = []
+    @State private var isLoading = true
+    @State private var showsCreate = false
+    @State private var errorMessage: String?
+    let changed: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && subscriptions.isEmpty {
+                    ProgressView("正在载入订阅…")
+                } else if subscriptions.isEmpty {
+                    ContentUnavailableView(
+                        "还没有在线歌单订阅",
+                        systemImage: "link.badge.plus",
+                        description: Text("订阅公开歌单后，Sona 会按周期匹配本地曲库。")
+                    )
+                } else {
+                    List {
+                        ForEach(subscriptions) { subscription in
+                            subscriptionRow(subscription)
+                                .swipeActions {
+                                    Button("取消订阅", role: .destructive) {
+                                        Task { await delete(subscription) }
+                                    }
+                                }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .background(Color.sonaBackground)
+            .navigationTitle("在线歌单订阅")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("添加", systemImage: "plus") { showsCreate = true }
+                }
+            }
+            .task { await load() }
+            .refreshable { await load() }
+            .sheet(isPresented: $showsCreate) {
+                CreatePlaylistSubscriptionView { subscription in
+                    subscriptions.insert(subscription, at: 0)
+                    changed()
+                }
+            }
+            .alert("操作失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "未知错误")
+            }
+        }
+    }
+
+    private func subscriptionRow(_ subscription: PlaylistSubscription) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(subscription.name).font(.headline)
+                    Text("\(poolTitle(subscription.poolType)) · 每 \(subscription.syncIntervalHours) 小时同步")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+                Spacer()
+                Button {
+                    Task { await sync(subscription) }
+                } label: {
+                    if syncingIDs.contains(subscription.id) {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(syncingIDs.contains(subscription.id))
+            }
+            Text("共 \(subscription.itemCount) 首 · 已匹配 \(subscription.matchedCount) · 缺少 \(subscription.missingCount)")
+                .font(.subheadline)
+            if subscription.downloadingCount > 0 {
+                Label("\(subscription.downloadingCount) 首正在下载", systemImage: "arrow.down.circle")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaGreen)
+            } else if subscription.autoDownload {
+                Label("缺少音源时自动下载", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaGreen)
+            }
+            if let error = subscription.lastError, !error.isEmpty {
+                Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+        }
+        .padding(.vertical, 6)
+        .listRowBackground(Color.sonaBackground)
+        .contextMenu {
+            Button("立即同步", systemImage: "arrow.clockwise") {
+                Task { await sync(subscription) }
+            }
+            Button("取消订阅", systemImage: "link.badge.minus", role: .destructive) {
+                Task { await delete(subscription) }
+            }
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            subscriptions = try await APIClient.shared.playlistSubscriptions()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func sync(_ subscription: PlaylistSubscription) async {
+        syncingIDs.insert(subscription.id)
+        defer { syncingIDs.remove(subscription.id) }
+        do {
+            let updated = try await APIClient.shared.syncPlaylistSubscription(id: subscription.id)
+            if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                subscriptions[index] = updated
+            }
+            changed()
+        } catch {
+            errorMessage = error.localizedDescription
+            await load()
+        }
+    }
+
+    private func delete(_ subscription: PlaylistSubscription) async {
+        do {
+            try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
+            subscriptions.removeAll { $0.id == subscription.id }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func poolTitle(_ poolType: String) -> String {
+        switch poolType {
+        case "DISCOVERY": "发现歌曲池"
+        case "CHILD": "儿童歌池"
+        default: "正常歌曲池"
+        }
+    }
+}
+
+private struct CreatePlaylistSubscriptionView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var sourceURL = ""
+    @State private var name = ""
+    @State private var poolType = "NORMAL"
+    @State private var autoDownload = false
+    @State private var syncIntervalHours = 24
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    let created: (PlaylistSubscription) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("公开歌单") {
+                    TextField("粘贴歌单链接", text: $sourceURL, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("本地歌单名称（可选）", text: $name)
+                }
+                Section {
+                    Picker("歌曲池", selection: $poolType) {
+                        Text("正常歌曲池").tag("NORMAL")
+                        Text("发现歌曲池").tag("DISCOVERY")
+                        Text("儿童歌池").tag("CHILD")
+                    }
+                    Picker("同步频率", selection: $syncIntervalHours) {
+                        Text("每 6 小时").tag(6)
+                        Text("每 12 小时").tag(12)
+                        Text("每天").tag(24)
+                        Text("每 3 天").tag(72)
+                    }
+                    Toggle("缺少音源时自动下载", isOn: $autoDownload)
+                } header: {
+                    Text("同步设置")
+                } footer: {
+                    Text("关闭自动下载时只匹配本地曲库；外部歌单删除歌曲时，只移除歌单关系，不删除本地音频。")
+                }
+            }
+            .navigationTitle("添加歌单订阅")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }.disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("订阅") { Task { await save() } }
+                        .disabled(trimmedURL.isEmpty || isSaving)
+                }
+            }
+            .overlay {
+                if isSaving {
+                    ProgressView("正在解析并首次同步…")
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .alert("订阅失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "未知错误")
+            }
+        }
+    }
+
+    private var trimmedURL: String {
+        sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedName: String? {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let subscription = try await APIClient.shared.createPlaylistSubscription(
+                sourceURL: trimmedURL,
+                name: trimmedName,
+                poolType: poolType,
+                autoDownload: autoDownload,
+                syncIntervalHours: syncIntervalHours
+            )
+            created(subscription)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

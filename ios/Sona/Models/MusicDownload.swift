@@ -55,6 +55,25 @@ struct PlaylistDownloadQueueResponse: Decodable {
     let tasks: [MusicDownloadTask]
 }
 
+struct PlaylistSubscription: Decodable, Identifiable {
+    let id: String
+    let playlistId: String
+    let sourceUrl: String
+    let name: String
+    let poolType: String
+    let autoDownload: Bool
+    let syncIntervalHours: Int
+    let enabled: Bool
+    let lastSyncedAt: Int64?
+    let lastError: String?
+    let createdAt: Int64
+    let updatedAt: Int64
+    let itemCount: Int
+    let matchedCount: Int
+    let missingCount: Int
+    let downloadingCount: Int
+}
+
 enum MusicDownloadState: String, Codable {
     case queued = "QUEUED"
     case running = "RUNNING"
