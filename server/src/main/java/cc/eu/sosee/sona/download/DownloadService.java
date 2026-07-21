@@ -106,6 +106,18 @@ class DownloadService {
         return task;
     }
 
+    synchronized Optional<DownloadTask> queueForPlaylist(
+        DownloadCandidate candidate, String requestedBy, String targetPlaylistId
+    ) {
+        requireEnabled();
+        if (existingState(candidate).isPresent()) {
+            return Optional.empty();
+        }
+        var task = repository.create(candidate, requestedBy, targetPlaylistId);
+        submit(task);
+        return Optional.of(task);
+    }
+
     private Optional<DownloadTaskState> existingState(DownloadCandidate candidate) {
         if (repository.existsInLibrary(candidate)) {
             return Optional.of(DownloadTaskState.COMPLETED);

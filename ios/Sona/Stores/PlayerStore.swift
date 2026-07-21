@@ -882,6 +882,43 @@ final class PlayerStore: ObservableObject {
         }
     }
 
+    func prepareChildModeRandomQueue(
+        offlineURLProvider: @escaping (Track) -> URL?
+    ) async {
+        randomQueueTask?.cancel()
+        stateRestoreTask?.cancel()
+        dailyRecommendationQueues = nil
+        dailyRecommendationQueueIndex = nil
+        queueErrorMessage = nil
+        isLoadingQueue = true
+        if currentTrack?.poolType != "CHILD" {
+            pause()
+        }
+        defer { isLoadingQueue = false }
+
+        do {
+            let randomTracks = try await activeAPI.randomTracks(limit: 50, childMode: true)
+            guard !Task.isCancelled else { return }
+            playbackQueue = randomTracks
+            queueTitle = "儿童随机播放"
+            queueType = "RANDOM"
+            queueContextID = nil
+            self.offlineURLProvider = offlineURLProvider
+            guard let first = randomTracks.first else {
+                if currentTrack?.poolType != "CHILD" {
+                    clearLocalPlayback()
+                }
+                queueTitle = "儿童随机播放"
+                queueErrorMessage = "儿童歌池中暂无可播放的歌曲"
+                return
+            }
+            startPlayback(first, autoplay: false)
+        } catch {
+            guard !Task.isCancelled else { return }
+            queueErrorMessage = error.localizedDescription
+        }
+    }
+
     private var hasAutomaticPlaybackRoute: Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
             switch output.portType {

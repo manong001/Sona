@@ -1,0 +1,192 @@
+package cc.eu.sosee.sona.download;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Clock;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+@Repository
+class PlaylistSubscriptionRepository {
+
+    private final JdbcClient jdbcClient;
+    private final Clock clock;
+
+    PlaylistSubscriptionRepository(JdbcClient jdbcClient, Clock clock) {
+        this.jdbcClient = jdbcClient;
+        this.clock = clock;
+    }
+
+    Subscription create(
+        String userId, String playlistId, String sourceUrl, String name,
+        String poolType, boolean autoDownload, int syncIntervalHours
+    ) {
+        var now = clock.millis();
+        var id = UUID.randomUUID().toString();
+        jdbcClient.sql("""
+                INSERT INTO playlist_subscriptions (
+                    id, user_id, playlist_id, source_url, name, pool_type, auto_download,
+                    sync_interval_hours, enabled, created_at, updated_at
+                ) VALUES (
+                    :id, :userId, :playlistId, :sourceUrl, :name, :poolType, :autoDownload,
+                    :syncIntervalHours, 1, :now, :now
+                )
+                """)
+            .param("id", id)
+            .param("userId", userId)
+            .param("playlistId", playlistId)
+            .param("sourceUrl", sourceUrl)
+            .param("name", name)
+            .param("poolType", poolType)
+            .param("autoDownload", autoDownload ? 1 : 0)
+            .param("syncIntervalHours", syncIntervalHours)
+            .param("now", now)
+            .update();
+        return find(userId, id).orElseThrow();
+    }
+
+    List<Subscription> findAll(String userId) {
+        return select("WHERE subscriptions.user_id = :userId ORDER BY subscriptions.created_at DESC")
+            .param("userId", userId)
+            .query(this::map)
+            .list();
+    }
+
+    Optional<Subscription> find(String userId, String id) {
+        return select("WHERE subscriptions.user_id = :userId AND subscriptions.id = :id")
+            .param("userId", userId)
+            .param("id", id)
+            .query(this::map)
+            .optional();
+    }
+
+    List<Subscription> findDue() {
+        var now = clock.millis();
+        return select("""
+                WHERE subscriptions.enabled = 1
+                  AND (subscriptions.last_synced_at IS NULL
+                    OR subscriptions.last_synced_at + subscriptions.sync_interval_hours * 3600000 <= :now)
+                ORDER BY COALESCE(subscriptions.last_synced_at, 0), subscriptions.created_at
+                """)
+            .param("now", now)
+            .query(this::map)
+            .list();
+    }
+
+    @Transactional
+    void replaceItems(String subscriptionId, List<Item> items) {
+        jdbcClient.sql("DELETE FROM playlist_subscription_items WHERE subscription_id = :id")
+            .param("id", subscriptionId)
+            .update();
+        for (var item : items) {
+            jdbcClient.sql("""
+                    INSERT INTO playlist_subscription_items (
+                        subscription_id, item_key, position, title, artist, album,
+                        matched_track_id, state, last_seen_at
+                    ) VALUES (
+                        :subscriptionId, :itemKey, :position, :title, :artist, :album,
+                        :matchedTrackId, :state, :lastSeenAt
+                    )
+                    """)
+                .param("subscriptionId", subscriptionId)
+                .param("itemKey", item.itemKey())
+                .param("position", item.position())
+                .param("title", item.title())
+                .param("artist", item.artist())
+                .param("album", item.album())
+                .param("matchedTrackId", item.matchedTrackId())
+                .param("state", item.state())
+                .param("lastSeenAt", item.lastSeenAt())
+                .update();
+        }
+    }
+
+    void markSynced(String id) {
+        var now = clock.millis();
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET last_synced_at = :now, last_error = NULL, updated_at = :now
+                WHERE id = :id
+                """)
+            .param("now", now)
+            .param("id", id)
+            .update();
+    }
+
+    void markFailed(String id, String message) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions SET last_error = :message, updated_at = :now
+                WHERE id = :id
+                """)
+            .param("message", message)
+            .param("now", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
+    @Transactional
+    boolean delete(String userId, String id) {
+        var deleted = jdbcClient.sql("""
+                DELETE FROM playlist_subscriptions WHERE id = :id AND user_id = :userId
+                """)
+            .param("id", id)
+            .param("userId", userId)
+            .update() == 1;
+        if (deleted) {
+            jdbcClient.sql("DELETE FROM playlist_subscription_items WHERE subscription_id = :id")
+                .param("id", id)
+                .update();
+        }
+        return deleted;
+    }
+
+    private JdbcClient.StatementSpec select(String suffix) {
+        return jdbcClient.sql("""
+            SELECT subscriptions.*, users.username,
+                (SELECT COUNT(*) FROM playlist_subscription_items items
+                    WHERE items.subscription_id = subscriptions.id) AS item_count,
+                (SELECT COUNT(*) FROM playlist_subscription_items items
+                    WHERE items.subscription_id = subscriptions.id AND items.state = 'MATCHED') AS matched_count,
+                (SELECT COUNT(*) FROM playlist_subscription_items items
+                    WHERE items.subscription_id = subscriptions.id AND items.state = 'MISSING') AS missing_count,
+                (SELECT COUNT(*) FROM playlist_subscription_items items
+                    WHERE items.subscription_id = subscriptions.id AND items.state = 'DOWNLOADING') AS downloading_count
+            FROM playlist_subscriptions subscriptions
+            JOIN users ON users.id = subscriptions.user_id
+            """ + suffix);
+    }
+
+    private Subscription map(ResultSet resultSet, int rowNumber) throws SQLException {
+        var lastSyncedAt = resultSet.getLong("last_synced_at");
+        Long nullableLastSyncedAt = resultSet.wasNull() ? null : lastSyncedAt;
+        return new Subscription(
+            resultSet.getString("id"), resultSet.getString("user_id"),
+            resultSet.getString("username"), resultSet.getString("playlist_id"),
+            resultSet.getString("source_url"), resultSet.getString("name"),
+            resultSet.getString("pool_type"), resultSet.getInt("auto_download") == 1,
+            resultSet.getInt("sync_interval_hours"), resultSet.getInt("enabled") == 1,
+            nullableLastSyncedAt, resultSet.getString("last_error"),
+            resultSet.getLong("created_at"), resultSet.getLong("updated_at"),
+            resultSet.getInt("item_count"), resultSet.getInt("matched_count"),
+            resultSet.getInt("missing_count"), resultSet.getInt("downloading_count")
+        );
+    }
+
+    record Subscription(
+        String id, String userId, String username, String playlistId, String sourceUrl,
+        String name, String poolType, boolean autoDownload, int syncIntervalHours,
+        boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
+        int itemCount, int matchedCount, int missingCount, int downloadingCount
+    ) {
+    }
+
+    record Item(
+        String itemKey, int position, String title, String artist, String album,
+        String matchedTrackId, String state, long lastSeenAt
+    ) {
+    }
+}

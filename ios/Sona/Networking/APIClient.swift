@@ -373,14 +373,15 @@ final class APIClient {
         return try await request(url: components.url!)
     }
 
-    func randomTracks(limit: Int = 50) async throws -> [Track] {
+    func randomTracks(limit: Int = 50, childMode: Bool? = nil) async throws -> [Track] {
         var components = URLComponents(
             url: url(for: "/api/v1/tracks/random"),
             resolvingAgainstBaseURL: false
         )!
+        let modeValue = childMode.map { $0 ? "true" : "false" } ?? childModeValue
         components.queryItems = [
             URLQueryItem(name: "limit", value: String(limit)),
-            URLQueryItem(name: "childMode", value: childModeValue)
+            URLQueryItem(name: "childMode", value: modeValue)
         ]
         return try await request(url: components.url!)
     }
@@ -728,6 +729,44 @@ final class APIClient {
             body: try encoder.encode(Body(name: name, items: items)),
             timeout: 60
         )
+    }
+
+    func playlistSubscriptions() async throws -> [PlaylistSubscription] {
+        try await request(path: "/api/v1/me/playlist-subscriptions")
+    }
+
+    func createPlaylistSubscription(
+        sourceURL: String, name: String?, poolType: String,
+        autoDownload: Bool, syncIntervalHours: Int
+    ) async throws -> PlaylistSubscription {
+        struct Body: Encodable {
+            let sourceUrl: String
+            let name: String?
+            let poolType: String
+            let autoDownload: Bool
+            let syncIntervalHours: Int
+        }
+        return try await request(
+            path: "/api/v1/me/playlist-subscriptions",
+            method: "POST",
+            body: try encoder.encode(Body(
+                sourceUrl: sourceURL, name: name, poolType: poolType,
+                autoDownload: autoDownload, syncIntervalHours: syncIntervalHours
+            )),
+            timeout: 300
+        )
+    }
+
+    func syncPlaylistSubscription(id: String) async throws -> PlaylistSubscription {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/sync",
+            method: "POST",
+            timeout: 300
+        )
+    }
+
+    func deletePlaylistSubscription(id: String) async throws {
+        try await requestVoid(path: "/api/v1/me/playlist-subscriptions/\(id)", method: "DELETE")
     }
 
     func achievements() async throws -> AchievementSummary {

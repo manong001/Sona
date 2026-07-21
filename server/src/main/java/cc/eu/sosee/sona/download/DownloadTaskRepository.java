@@ -100,6 +100,20 @@ class DownloadTaskRepository {
             .single() > 0;
     }
 
+    Optional<String> findLibraryTrackId(DownloadCandidate candidate) {
+        return jdbcClient.sql("""
+                SELECT id FROM tracks
+                WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                  AND trim(artist) COLLATE NOCASE = trim(:artist) COLLATE NOCASE
+                ORDER BY updated_at DESC, id
+                LIMIT 1
+                """)
+            .param("title", candidate.title())
+            .param("artist", candidate.artist())
+            .query(String.class)
+            .optional();
+    }
+
     Optional<DownloadTaskState> findExistingState(DownloadCandidate candidate) {
         return jdbcClient.sql("""
                 SELECT state FROM download_tasks

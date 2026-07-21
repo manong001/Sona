@@ -425,6 +425,20 @@ class PersonalRepository {
         );
     }
 
+    @Transactional
+    PlaylistData createPlaylist(String userId, String name, String poolType) {
+        var playlist = createPlaylist(userId, name);
+        jdbcClient.sql("UPDATE playlists SET pool_type = :poolType WHERE id = :playlistId")
+            .param("poolType", poolType)
+            .param("playlistId", playlist.id())
+            .update();
+        return new PlaylistData(
+            playlist.id(), playlist.name(), playlist.trackIds(), playlist.artworkUrls(),
+            playlist.artworkTrackId(), playlist.createdAt(), playlist.featured(),
+            playlist.directoryPath(), poolType, playlist.shownOnHome(), playlist.homePosition()
+        );
+    }
+
     PlaylistData createFeaturedPlaylist(String userId, String name) {
         var id = UUID.randomUUID().toString();
         var createdAt = clock.millis();
@@ -546,7 +560,38 @@ class PersonalRepository {
         for (var trackId : trackIds) {
             insertPlaylistTrack(playlistId, trackId);
         }
+        applyPlaylistPoolType(playlistId, trackIds);
         return trackIds.size();
+    }
+
+    @Transactional
+    boolean replacePlaylistTracks(String userId, String playlistId, List<String> trackIds) {
+        if (!ownsPlaylist(userId, playlistId)) {
+            return false;
+        }
+        jdbcClient.sql("DELETE FROM playlist_tracks WHERE playlist_id = :playlistId")
+            .param("playlistId", playlistId)
+            .update();
+        trackIds.stream().distinct().forEach(trackId -> insertPlaylistTrack(playlistId, trackId));
+        applyPlaylistPoolType(playlistId, trackIds);
+        return true;
+    }
+
+    private void applyPlaylistPoolType(String playlistId, List<String> trackIds) {
+        if (trackIds.isEmpty()) {
+            return;
+        }
+        jdbcClient.sql("""
+                UPDATE tracks SET
+                    pool_type = (SELECT pool_type FROM playlists WHERE id = :playlistId),
+                    audience_type = CASE
+                        WHEN (SELECT pool_type FROM playlists WHERE id = :playlistId) = 'CHILD'
+                        THEN 'CHILD' ELSE 'GENERAL' END
+                WHERE id IN (:trackIds)
+                """)
+            .param("playlistId", playlistId)
+            .param("trackIds", trackIds)
+            .update();
     }
 
     @Transactional

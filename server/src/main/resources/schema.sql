@@ -147,6 +147,42 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS playlist_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL UNIQUE,
+    source_url TEXT NOT NULL,
+    name TEXT NOT NULL,
+    pool_type TEXT NOT NULL DEFAULT 'NORMAL',
+    auto_download INTEGER NOT NULL DEFAULT 0,
+    sync_interval_hours INTEGER NOT NULL DEFAULT 24,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_synced_at INTEGER,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (user_id, source_url),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_playlist_subscriptions_due
+    ON playlist_subscriptions(enabled, last_synced_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS playlist_subscription_items (
+    subscription_id TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT,
+    matched_track_id TEXT,
+    state TEXT NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    PRIMARY KEY (subscription_id, item_key),
+    FOREIGN KEY (subscription_id) REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS play_history (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

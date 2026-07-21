@@ -18,6 +18,7 @@ struct MainTabView: View {
     @State private var availableRelease: AppReleaseInfo?
     @State private var showsUpdateAlert = false
     @State private var selectedTab: SonaTab = .home
+    @State private var childModeRefreshTask: Task<Void, Never>?
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
@@ -114,21 +115,6 @@ struct MainTabView: View {
             }
         }
         .animation(.easeOut(duration: 0.24), value: showsDrawer)
-        .overlay(alignment: .top) {
-            if childMode {
-                Text(childTheme == "girl" ? "🦄 糖果音乐乐园" : "🚀 星空音乐探险")
-                    .font(.caption.bold())
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        childTheme == "girl" ? Color.pink.opacity(0.9) : Color.cyan.opacity(0.9),
-                        in: Capsule()
-                    )
-                    .foregroundStyle(.black)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: childMode)
 #endif
         }
 #if !targetEnvironment(macCatalyst)
@@ -192,11 +178,18 @@ struct MainTabView: View {
         .onChange(of: personal.favoriteIDs) { _, _ in
             player.refreshRemoteFavoriteState()
         }
-        .onChange(of: childMode) { _, _ in
-            personal.prepareForLibraryModeChange()
-            Task {
-                await library.refresh()
-                await personal.refresh()
+        .onChange(of: childMode) { oldValue, newValue in
+            personal.prepareForLibraryModeChange(from: oldValue, to: newValue)
+            childModeRefreshTask?.cancel()
+            childModeRefreshTask = Task {
+                async let libraryRefresh: Void = library.refreshForLibraryModeChange()
+                async let personalRefresh: Void = personal.refreshForLibraryModeChange()
+                if newValue {
+                    await player.prepareChildModeRandomQueue {
+                        offline.localURL(for: $0)
+                    }
+                }
+                _ = await (libraryRefresh, personalRefresh)
             }
         }
         .onChange(of: scenePhase) { _, phase in

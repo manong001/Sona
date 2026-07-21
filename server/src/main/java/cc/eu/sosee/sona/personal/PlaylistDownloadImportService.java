@@ -29,6 +29,11 @@ public class PlaylistDownloadImportService {
         return new Target(playlist.id(), playlist.name());
     }
 
+    public Target create(String userId, String name, String poolType) {
+        var playlist = repository.createPlaylist(userId, name.strip(), poolType);
+        return new Target(playlist.id(), playlist.name());
+    }
+
     public Target createFeatured(String userId, String name) {
         var playlist = repository.createFeaturedPlaylist(userId, name.strip());
         return new Target(playlist.id(), playlist.name());
@@ -47,6 +52,12 @@ public class PlaylistDownloadImportService {
         }
         if (repository.addPlaylistTracksByPaths(playlistId, files) == 0) {
             throw new IllegalStateException("歌曲已下载，但扫描后未找到可加入歌单的曲目");
+        }
+    }
+
+    public void replaceTracks(String userId, String playlistId, List<String> trackIds) {
+        if (!repository.replacePlaylistTracks(userId, playlistId, trackIds)) {
+            throw new IllegalArgumentException("订阅目标歌单不存在");
         }
     }
 

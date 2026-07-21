@@ -49,6 +49,18 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    func refreshForLibraryModeChange() async {
+        while isLoading || isLoadingMore {
+            do {
+                try await Task.sleep(for: .milliseconds(25))
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        await refresh()
+    }
+
     func loadNextPageIfNeeded(currentTrack: Track) async {
         guard let index = tracks.firstIndex(where: { $0.id == currentTrack.id }) else { return }
         let threshold = max(tracks.count - 10, 0)
@@ -295,6 +307,18 @@ final class PersonalStore: ObservableObject {
         errorMessage = firstError
     }
 
+    func refreshForLibraryModeChange() async {
+        while isLoading || isLoadingPlaylists {
+            do {
+                try await Task.sleep(for: .milliseconds(25))
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        await refresh()
+    }
+
     func refreshPlaylists() async {
         guard !isLoadingPlaylists else { return }
         isLoadingPlaylists = true
@@ -311,10 +335,14 @@ final class PersonalStore: ObservableObject {
         }
     }
 
-    func prepareForLibraryModeChange() {
-        playlists = []
+    func prepareForLibraryModeChange(from oldValue: Bool, to newValue: Bool) {
+        saveCachedPlaylists(childMode: oldValue)
         favoriteTracks = []
-        loadCachedPlaylists()
+        if !loadCachedPlaylists(childMode: newValue) {
+            playlists.removeAll { playlist in
+                newValue ? playlist.poolType != "CHILD" : playlist.poolType == "CHILD"
+            }
+        }
     }
 
     func applyTrackUpdate(_ track: Track) {
@@ -586,15 +614,19 @@ final class PersonalStore: ObservableObject {
         return status == 404
     }
 
-    private func loadCachedPlaylists() {
-        guard let cacheURL = playlistCacheURL,
+    @discardableResult
+    private func loadCachedPlaylists(childMode: Bool? = nil) -> Bool {
+        guard let cacheURL = playlistCacheURL(childMode: childMode),
               let data = try? Data(contentsOf: cacheURL),
-              let cached = try? JSONDecoder().decode([Playlist].self, from: data) else { return }
+              let cached = try? JSONDecoder().decode([Playlist].self, from: data) else {
+            return false
+        }
         playlists = cached
+        return true
     }
 
-    private func saveCachedPlaylists() {
-        guard let cacheURL = playlistCacheURL,
+    private func saveCachedPlaylists(childMode: Bool? = nil) {
+        guard let cacheURL = playlistCacheURL(childMode: childMode),
               let data = try? JSONEncoder().encode(playlists) else { return }
         let directory = cacheURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(
@@ -604,14 +636,15 @@ final class PersonalStore: ObservableObject {
         try? data.write(to: cacheURL, options: .atomic)
     }
 
-    private var playlistCacheURL: URL? {
+    private func playlistCacheURL(childMode: Bool? = nil) -> URL? {
         guard let currentUserID,
               let caches = FileManager.default.urls(
                 for: .cachesDirectory,
                 in: .userDomainMask
               ).first else { return nil }
         let server = "\(api.serverURL.scheme ?? "http")-\(api.serverURL.host ?? "server")-\(api.serverURL.port ?? 0)"
-        let mode = UserDefaults.standard.bool(forKey: "childMode") ? "child" : "general"
+        let isChildMode = childMode ?? UserDefaults.standard.bool(forKey: "childMode")
+        let mode = isChildMode ? "child" : "general"
         return caches
             .appendingPathComponent("SonaPlaylistCache", isDirectory: true)
             .appendingPathComponent("\(server)-\(currentUserID)-\(mode).json")
