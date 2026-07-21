@@ -5,7 +5,6 @@ struct LibraryView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
-    @EnvironmentObject private var session: SessionStore
     @State private var query = ""
 
     var body: some View {
@@ -38,16 +37,13 @@ struct LibraryView: View {
                                 await library.loadNextPageIfNeeded(currentTrack: track)
                             }
                             .contextMenu {
-                                Button("删除歌曲", systemImage: "trash", role: .destructive) {
+                                Button("移到个人垃圾桶", systemImage: "trash", role: .destructive) {
                                     Task {
-                                        do {
-                                            try await APIClient.shared.deleteTrack(
-                                                id: track.id,
-                                                isAdmin: session.currentUser?.isAdmin == true
-                                            )
-                                            await library.refresh(query: query)
-                                        } catch {
-                                            library.errorMessage = error.localizedDescription
+                                        if await personal.moveTrackToTrash(track.id) {
+                                            library.removeTrack(id: track.id)
+                                            player.removeTrack(id: track.id)
+                                        } else {
+                                            library.errorMessage = personal.errorMessage
                                         }
                                     }
                                 }

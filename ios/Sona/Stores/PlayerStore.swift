@@ -256,6 +256,16 @@ final class PlayerStore: ObservableObject {
         }
     }
 
+    func removeTrack(id: String) {
+        let wasCurrent = currentTrack?.id == id
+        playbackQueue.removeAll { $0.id == id }
+        if wasCurrent {
+            stop()
+        } else {
+            saveState()
+        }
+    }
+
     func clearUpcomingQueue() {
         guard let currentTrack else { return }
         playbackQueue = [currentTrack]

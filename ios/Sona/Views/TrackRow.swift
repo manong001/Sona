@@ -1,9 +1,15 @@
 import SwiftUI
 
 struct TrackRow: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var personal: PersonalStore
+    @State private var trashErrorMessage: String?
+
     let track: Track
     var showsOfflineBadge = false
     var isFavorite = false
+    var allowsMoveToTrash = true
     var moreActionTitle: String?
     var moreActionSystemImage = "ellipsis.circle"
     var moreActionDisabled = false
@@ -12,43 +18,70 @@ struct TrackRow: View {
     var deleteAction: (() -> Void)?
     var tapAction: (() -> Void)?
 
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 0) {
-            if let tapAction {
-                trackContent
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: tapAction)
-            } else {
-                trackContent
-            }
+        if !allowsMoveToTrash || !personal.hiddenTrackIDs.contains(track.id) {
+            HStack(spacing: 0) {
+                if let tapAction {
+                    trackContent
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: tapAction)
+                } else {
+                    trackContent
+                }
 
-            if moreAction != nil || deleteTitle != nil {
-                Menu {
-                    if let moreActionTitle, let moreAction {
-                        Button(moreActionTitle, systemImage: moreActionSystemImage) {
-                            moreAction()
+                if moreAction != nil || deleteTitle != nil || allowsMoveToTrash {
+                    Menu {
+                        if let moreActionTitle, let moreAction {
+                            Button(moreActionTitle, systemImage: moreActionSystemImage) {
+                                moreAction()
+                            }
+                            .disabled(moreActionDisabled)
                         }
-                        .disabled(moreActionDisabled)
-                    }
-                    if let deleteTitle, let deleteAction {
-                        Button(deleteTitle, systemImage: "trash", role: .destructive) {
-                            deleteAction()
+                        if let deleteTitle, let deleteAction {
+                            Button(deleteTitle, systemImage: "trash", role: .destructive) {
+                                deleteAction()
+                            }
                         }
+                        if allowsMoveToTrash {
+                            Button("移到个人垃圾桶", systemImage: "trash", role: .destructive) {
+                                Task { await moveToTrash() }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color.sonaSecondaryText)
+                            .frame(width: 28, height: 40)
                     }
-                } label: {
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("操作 \(track.title)")
+                } else {
                     Image(systemName: "ellipsis")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.sonaSecondaryText)
-                        .frame(width: 28, height: 40)
+                        .frame(width: 28)
                 }
-            } else {
-                Image(systemName: "ellipsis")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.sonaSecondaryText)
-                    .frame(width: 28)
+            }
+            .contentShape(Rectangle())
+            .alert("操作失败", isPresented: Binding(
+                get: { trashErrorMessage != nil },
+                set: { if !$0 { trashErrorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(trashErrorMessage ?? "未知错误")
             }
         }
-        .contentShape(Rectangle())
+    }
+
+    private func moveToTrash() async {
+        guard await personal.moveTrackToTrash(track.id) else {
+            trashErrorMessage = personal.errorMessage ?? "无法移到个人垃圾桶"
+            return
+        }
+        library.removeTrack(id: track.id)
+        player.removeTrack(id: track.id)
     }
 
     private var trackContent: some View {

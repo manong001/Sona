@@ -1191,6 +1191,7 @@ private struct OfflineManagementView: View {
 
 private struct TrashView: View {
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var personal: PersonalStore
     @State private var tracks: [Track] = []
     @State private var errorMessage: String?
 
@@ -1200,7 +1201,13 @@ private struct TrashView: View {
                 ContentUnavailableView("垃圾桶为空", systemImage: "trash")
             }
             ForEach(tracks) { track in
-                TrackRow(track: track)
+                TrackRow(
+                    track: track,
+                    allowsMoveToTrash: false,
+                    moreActionTitle: "恢复",
+                    moreActionSystemImage: "arrow.uturn.backward",
+                    moreAction: { Task { await restore(track) } }
+                )
                     .swipeActions {
                         Button("恢复") { Task { await restore(track) } }.tint(.green)
                     }
@@ -1211,9 +1218,17 @@ private struct TrashView: View {
         .toolbar {
             Button("全部恢复") {
                 Task {
-                    for track in tracks { try? await APIClient.shared.restoreTrack(id: track.id) }
+                    for track in tracks {
+                        do {
+                            try await APIClient.shared.restoreTrack(id: track.id)
+                            personal.markTrackRestored(track.id)
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                    }
                     await load()
                     await library.refresh()
+                    await personal.refresh()
                 }
             }
             .disabled(tracks.isEmpty)
@@ -1230,8 +1245,10 @@ private struct TrashView: View {
     private func restore(_ track: Track) async {
         do {
             try await APIClient.shared.restoreTrack(id: track.id)
+            personal.markTrackRestored(track.id)
             tracks.removeAll { $0.id == track.id }
             await library.refresh()
+            await personal.refresh()
         } catch { errorMessage = error.localizedDescription }
     }
 }

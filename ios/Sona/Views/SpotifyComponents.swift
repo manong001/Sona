@@ -359,7 +359,6 @@ struct SonaTrackListView: View {
     @State private var importMessage: String?
     @State private var isImportingServerDirectory = false
     @State private var importProgressMessage = ""
-    @State private var removedTrackIDs = Set<String>()
     @State private var loadedPlaylistTracks: [String: Track] = [:]
     @State private var isLoadingPlaylistTracks = false
     @State private var editedTracks: [String: Track] = [:]
@@ -418,7 +417,7 @@ struct SonaTrackListView: View {
         }
         return values
             .map { editedTracks[$0.id] ?? $0 }
-            .filter { !removedTrackIDs.contains($0.id) }
+            .filter { !personal.hiddenTrackIDs.contains($0.id) }
     }
 
     private var trackCount: Int {
@@ -491,6 +490,7 @@ struct SonaTrackListView: View {
                                         .frame(width: 48, height: 48)
                                         .background(.white.opacity(0.1), in: Circle())
                                 }
+                                .buttonStyle(.plain)
                                 .accessibilityLabel("随机播放")
                                 .disabled(
                                     tracks.isEmpty ||
@@ -537,6 +537,7 @@ struct SonaTrackListView: View {
                                         .background(Color.sonaGreen, in: Circle())
                                 }
                             }
+                            .buttonStyle(.plain)
                             .disabled(
                                 tracks.isEmpty ||
                                 (collection.id == "liked-songs" && personal.isLoadingMoreFavorites)
@@ -566,10 +567,6 @@ struct SonaTrackListView: View {
                                     ? "checkmark.circle.fill" : "photo",
                                 moreActionDisabled: playlist?.artworkTrackID == track.id,
                                 moreAction: playlistArtworkAction(for: track),
-                                deleteTitle: collection.id.hasPrefix("artist-") ? "删除歌曲" : nil,
-                                deleteAction: collection.id.hasPrefix("artist-") ? {
-                                    Task { await deleteArtistTrack(track) }
-                                } : nil,
                                 tapAction: {
                                     if isSelecting {
                                         if !selectedIDs.insert(track.id).inserted {
@@ -773,16 +770,6 @@ struct SonaTrackListView: View {
             queueContextID: queueContextID,
             offlineURLProvider: offline.localURL(for:)
         )
-    }
-
-    private func deleteArtistTrack(_ track: Track) async {
-        do {
-            try await APIClient.shared.deleteTrack(id: track.id, isAdmin: false)
-            removedTrackIDs.insert(track.id)
-            await library.refresh()
-        } catch {
-            importMessage = error.localizedDescription
-        }
     }
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {

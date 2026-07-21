@@ -203,6 +203,11 @@ final class LibraryStore: ObservableObject {
         prefetchArtwork(for: [track])
     }
 
+    func removeTrack(id: String) {
+        tracks.removeAll { $0.id == id }
+        searchResults.removeAll { $0.id == id }
+    }
+
     private func prefetchArtwork(for tracks: [Track]) {
         let urls = tracks.compactMap {
             sonaArtworkURL(path: $0.artworkURL, thumbnailSize: 768)
@@ -218,6 +223,7 @@ final class LibraryStore: ObservableObject {
 
 @MainActor
 final class PersonalStore: ObservableObject {
+    @Published private(set) var hiddenTrackIDs: Set<String> = []
     @Published private(set) var favoriteIDs: Set<String> = []
     @Published private(set) var favoriteTracks: [Track] = []
     @Published private(set) var favoritesShownOnHome = false
@@ -309,6 +315,38 @@ final class PersonalStore: ObservableObject {
         if let index = favoriteTracks.firstIndex(where: { $0.id == track.id }) {
             favoriteTracks[index] = track
         }
+    }
+
+    @discardableResult
+    func moveTrackToTrash(_ trackID: String) async -> Bool {
+        do {
+            try await api.deleteTrack(id: trackID, isAdmin: false)
+            hiddenTrackIDs.insert(trackID)
+            favoriteIDs.remove(trackID)
+            favoriteTracks.removeAll { $0.id == trackID }
+            history.removeAll { $0.trackID == trackID }
+            playlists = playlists.map { playlist in
+                guard playlist.trackIDs.contains(trackID) else { return playlist }
+                return Playlist(
+                    id: playlist.id, name: playlist.name,
+                    trackIDs: playlist.trackIDs.filter { $0 != trackID },
+                    artworkURLs: playlist.artworkURLs,
+                    artworkTrackID: playlist.artworkTrackID == trackID ? nil : playlist.artworkTrackID,
+                    createdAt: playlist.createdAt, featured: playlist.featured,
+                    directoryPath: playlist.directoryPath, poolType: playlist.poolType,
+                    shownOnHome: playlist.shownOnHome, homePosition: playlist.homePosition
+                )
+            }
+            saveCachedPlaylists()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func markTrackRestored(_ trackID: String) {
+        hiddenTrackIDs.remove(trackID)
     }
 
     func toggleFavorite(trackID: String) async {
@@ -673,6 +711,7 @@ final class PersonalStore: ObservableObject {
     }
 
     func reset() {
+        hiddenTrackIDs = []
         favoriteIDs = []
         favoriteTracks = []
         favoriteNextCursor = nil
