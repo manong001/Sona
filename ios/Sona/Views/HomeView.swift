@@ -763,18 +763,37 @@ private struct MadeForYouCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .top, spacing: 12) {
-                artwork
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(collection.title)
-                        .font(.title3.weight(.bold))
-                        .lineLimit(2)
-                    Text("Sona")
-                        .font(.body)
-                        .foregroundStyle(.white.opacity(0.92))
+            ZStack(alignment: .topTrailing) {
+                NavigationLink {
+                    SonaTrackListView(
+                        collection: collection,
+                        playbackQueue: collection.tracks
+                    )
+                } label: {
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(alignment: .top, spacing: 12) {
+                            artwork
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(collection.title)
+                                    .font(.title3.weight(.bold))
+                                    .lineLimit(2)
+                                Text("Sona")
+                                    .font(.body)
+                                    .foregroundStyle(.white.opacity(0.92))
+                            }
+                            .padding(.top, 4)
+                            Spacer(minLength: 40)
+                        }
+
+                        Text("\(collection.tracks.count) 首歌曲 · \(collection.subtitle)")
+                            .font(.body)
+                            .foregroundStyle(.white.opacity(0.76))
+                            .lineLimit(1)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .padding(.top, 4)
-                Spacer(minLength: 4)
+                .buttonStyle(.plain)
+
                 Menu {
                     Button("播放歌单", systemImage: "play.fill") { play(shuffled: false) }
                     Button("加入播放队列", systemImage: "text.badge.plus") { addToQueue() }
@@ -785,11 +804,6 @@ private struct MadeForYouCard: View {
                         .frame(width: 32, height: 32)
                 }
             }
-
-            Text("\(collection.tracks.count) 首歌曲 · \(collection.subtitle)")
-                .font(.body)
-                .foregroundStyle(.white.opacity(0.76))
-                .lineLimit(1)
 
             HStack(spacing: 14) {
                 Button { play(shuffled: true) } label: {

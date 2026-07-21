@@ -611,59 +611,60 @@ private struct DiscoveryTrackCard: View {
     let play: () -> Void
 
     var body: some View {
-        Button(action: play) {
-            ZStack(alignment: .bottomLeading) {
-                artwork
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.12), .black.opacity(0.90)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        ZStack(alignment: .bottomLeading) {
+            artwork
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.12), .black.opacity(0.90)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
 
-                VStack(alignment: .leading, spacing: 4) {
-                    if isPlaying {
-                        Label("正在播放", systemImage: "waveform")
-                            .font(.caption2.bold())
-                            .foregroundStyle(Color.sonaGreen)
-                    } else if width > 175 {
-                        Text(discoveryReason)
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white.opacity(0.74))
-                            .lineLimit(1)
-                    }
-
-                    Text(track.title)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text(track.artist)
-                        .font(.caption)
+            VStack(alignment: .leading, spacing: 4) {
+                if isPlaying {
+                    Label("正在播放", systemImage: "waveform")
+                        .font(.caption2.bold())
+                        .foregroundStyle(Color.sonaGreen)
+                } else if width > 175 {
+                    Text(discoveryReason)
+                        .font(.caption2.bold())
                         .foregroundStyle(.white.opacity(0.74))
                         .lineLimit(1)
                 }
-                .padding(13)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                if width > 205 {
-                    Image(systemName: "play.fill")
-                        .font(.caption.bold())
-                        .foregroundStyle(.black)
-                        .frame(width: 34, height: 34)
-                        .background(Color.sonaGreen, in: Circle())
-                        .padding(12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                }
+                Text(track.title)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(track.artist)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.74))
+                    .lineLimit(1)
             }
-            .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isPlaying ? Color.sonaGreen.opacity(0.72) : .white.opacity(0.10), lineWidth: 1)
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if width > 205 {
+                Image(systemName: "play.fill")
+                    .font(.caption.bold())
+                    .foregroundStyle(.black)
+                    .frame(width: 34, height: 34)
+                    .background(Color.sonaGreen, in: Circle())
+                    .padding(12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
-            .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
         }
-        .buttonStyle(.plain)
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isPlaying ? Color.sonaGreen.opacity(0.72) : .white.opacity(0.10), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(perform: play)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel("播放 \(track.title)，\(track.artist)")
+        .accessibilityAction { play() }
     }
 
     private var artwork: some View {
