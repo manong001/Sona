@@ -51,7 +51,7 @@ struct MusicLibraryView: View {
                 id: playlist.id,
                 title: playlist.name,
                 subtitle: playlist.isDirectoryPlaylist
-                    ? "\(playlist.poolType == "DISCOVERY" ? "发现歌曲池" : "正常歌曲池") · Sona"
+                    ? "\(playlistPoolTitle(playlist.poolType)) · Sona"
                     : "歌单 · \(username)",
                 artworkURL: playlist.artworkURLs.first,
                 artworkURLs: playlist.artworkURLs,
@@ -964,6 +964,7 @@ private struct DirectoryPlaylistEditor: View {
                     Picker("歌曲池", selection: $poolType) {
                         Text("正常歌曲池").tag("NORMAL")
                         Text("发现歌曲池").tag("DISCOVERY")
+                        Text("儿童歌池").tag("CHILD")
                     }
                     .pickerStyle(.segmented)
                 } header: {
@@ -990,6 +991,14 @@ private struct DirectoryPlaylistEditor: View {
         defer { isSaving = false }
         await saved(name.trimmingCharacters(in: .whitespacesAndNewlines), poolType)
         dismiss()
+    }
+}
+
+private func playlistPoolTitle(_ poolType: String) -> String {
+    switch poolType {
+    case "DISCOVERY": "发现歌曲池"
+    case "CHILD": "儿童歌池"
+    default: "正常歌曲池"
     }
 }
 

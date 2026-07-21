@@ -1111,6 +1111,7 @@ private struct TrackManagementView: View {
             Picker("歌曲池", selection: $filter) {
                 Text("正常").tag("NORMAL")
                 Text("发现").tag("DISCOVERY")
+                Text("儿童").tag("CHILD")
             }
             .pickerStyle(.segmented)
 
@@ -1121,14 +1122,11 @@ private struct TrackManagementView: View {
                         Button("编辑元数据", systemImage: "pencil") {
                             editingTrack = track
                         }
-                        Menu(track.audienceType == "CHILD" ? "儿童歌曲" : "全年龄") {
-                            Button("全年龄") { update(track, pool: filter, audience: "GENERAL") }
-                            Button("儿童歌曲") { update(track, pool: filter, audience: "CHILD") }
-                        }
                         Spacer()
                         Menu("划入歌曲池") {
-                            Button("正常池") { update(track, pool: "NORMAL", audience: track.audienceType) }
-                            Button("发现池") { update(track, pool: "DISCOVERY", audience: track.audienceType) }
+                            Button("正常池") { update(track, pool: "NORMAL") }
+                            Button("发现池") { update(track, pool: "DISCOVERY") }
+                            Button("儿童池") { update(track, pool: "CHILD") }
                         }
                     }
                     HStack {
@@ -1139,8 +1137,7 @@ private struct TrackManagementView: View {
                             ) { genre in
                                 Button(genre) {
                                     update(
-                                        track, pool: track.poolType, audience: track.audienceType,
-                                        genre: genre
+                                        track, pool: track.poolType, genre: genre
                                     )
                                 }
                             }
@@ -1153,8 +1150,7 @@ private struct TrackManagementView: View {
                             ) { region, title in
                                 Button(title) {
                                     update(
-                                        track, pool: track.poolType, audience: track.audienceType,
-                                        region: region
+                                        track, pool: track.poolType, region: region
                                     )
                                 }
                             }
@@ -1188,14 +1184,13 @@ private struct TrackManagementView: View {
     }
 
     private func update(
-        _ track: Track, pool: String, audience: String,
+        _ track: Track, pool: String,
         genre: String? = nil, region: String? = nil
     ) {
         Task {
             do {
                 _ = try await APIClient.shared.classifyTrack(
-                    id: track.id, poolType: pool, audienceType: audience,
-                    genre: genre, region: region
+                    id: track.id, poolType: pool, genre: genre, region: region
                 )
                 await load()
             } catch { errorMessage = error.localizedDescription }

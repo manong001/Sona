@@ -311,6 +311,12 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    func prepareForLibraryModeChange() {
+        playlists = []
+        favoriteTracks = []
+        loadCachedPlaylists()
+    }
+
     func applyTrackUpdate(_ track: Track) {
         if let index = favoriteTracks.firstIndex(where: { $0.id == track.id }) {
             favoriteTracks[index] = track
@@ -605,9 +611,10 @@ final class PersonalStore: ObservableObject {
                 in: .userDomainMask
               ).first else { return nil }
         let server = "\(api.serverURL.scheme ?? "http")-\(api.serverURL.host ?? "server")-\(api.serverURL.port ?? 0)"
+        let mode = UserDefaults.standard.bool(forKey: "childMode") ? "child" : "general"
         return caches
             .appendingPathComponent("SonaPlaylistCache", isDirectory: true)
-            .appendingPathComponent("\(server)-\(currentUserID).json")
+            .appendingPathComponent("\(server)-\(currentUserID)-\(mode).json")
     }
 
     func updateDirectoryPlaylist(id: String, name: String, poolType: String) async {

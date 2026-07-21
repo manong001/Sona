@@ -437,6 +437,9 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
       responses:
         "200":
           description: 按收藏时间倒序返回当前用户的收藏歌曲
@@ -447,6 +450,10 @@ paths:
   /me/playlists:
     get:
       operationId: listPlaylists
+      parameters:
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
       responses:
         "200":
           description: 当前用户歌单及按末级音乐目录自动生成的只读共享歌单
@@ -491,7 +498,7 @@ paths:
               required: [name, poolType]
               properties:
                 name: {type: string, maxLength: 80}
-                poolType: {type: string, enum: [NORMAL, DISCOVERY]}
+                poolType: {type: string, enum: [NORMAL, DISCOVERY, CHILD]}
       responses:
         "200":
           description: 目录歌单及其歌曲池已更新
@@ -972,7 +979,7 @@ paths:
       parameters:
         - name: poolType
           in: query
-          schema: {type: string, enum: [NORMAL, DISCOVERY]}
+          schema: {type: string, enum: [NORMAL, DISCOVERY, CHILD]}
       responses:
         "200":
           description: 管理员歌曲列表
@@ -1064,10 +1071,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [poolType, audienceType]
+              required: [poolType]
               properties:
-                poolType: {type: string, enum: [NORMAL, DISCOVERY]}
-                audienceType: {type: string, enum: [GENERAL, CHILD]}
+                poolType: {type: string, enum: [NORMAL, DISCOVERY, CHILD]}
                 genre: {type: string, maxLength: 40}
                 region: {type: string, enum: [CN, KR, US, JP, OTHER]}
       responses:
@@ -1610,7 +1616,7 @@ components:
           description: 末级音乐目录的相对路径；为空表示用户自建歌单
         poolType:
           type: string
-          enum: [NORMAL, DISCOVERY]
+          enum: [NORMAL, DISCOVERY, CHILD]
     History:
       type: object
       required: [items]
@@ -1665,7 +1671,7 @@ components:
           enum: [LOCAL, SCRAPED, NEEDS_REVIEW, MANUAL]
         poolType:
           type: string
-          enum: [NORMAL, DISCOVERY]
+          enum: [NORMAL, DISCOVERY, CHILD]
         audienceType:
           type: string
           enum: [GENERAL, CHILD]

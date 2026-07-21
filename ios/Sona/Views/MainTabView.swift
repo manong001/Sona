@@ -192,6 +192,13 @@ struct MainTabView: View {
         .onChange(of: personal.favoriteIDs) { _, _ in
             player.refreshRemoteFavoriteState()
         }
+        .onChange(of: childMode) { _, _ in
+            personal.prepareForLibraryModeChange()
+            Task {
+                await library.refresh()
+                await personal.refresh()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 Task { await player.flushState() }

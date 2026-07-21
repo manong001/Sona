@@ -42,7 +42,7 @@ class PersonalController {
         "LOCAL_FILES", "FAVORITE_DIRECTORY", "PLAYLIST_DIRECTORY"
     );
     private static final Set<String> IMPORT_STATES = Set.of("RUNNING", "COMPLETED", "FAILED");
-    private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY");
+    private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY", "CHILD");
 
     private final PersonalRepository repository;
     private final DirectoryImportService directoryImportService;
@@ -138,11 +138,14 @@ class PersonalController {
     FavoriteTrackPageResponse favoriteTracks(
         @AuthenticationPrincipal AuthenticatedUser user,
         @RequestParam(required = false) String cursor,
-        @RequestParam(defaultValue = "50") int limit
+        @RequestParam(defaultValue = "50") int limit,
+        @RequestParam(defaultValue = "false") boolean childMode
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 100));
         var offset = parseOffset(cursor);
-        var items = new ArrayList<>(repository.favoriteTracks(user.id(), offset, safeLimit + 1));
+        var items = new ArrayList<>(
+            repository.favoriteTracks(user.id(), offset, safeLimit + 1, childMode)
+        );
         String nextCursor = null;
         if (items.size() > safeLimit) {
             items.remove(items.size() - 1);
@@ -202,8 +205,11 @@ class PersonalController {
     }
 
     @GetMapping("/playlists")
-    List<PersonalRepository.PlaylistData> playlists(@AuthenticationPrincipal AuthenticatedUser user) {
-        return repository.playlists(user.id());
+    List<PersonalRepository.PlaylistData> playlists(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam(defaultValue = "false") boolean childMode
+    ) {
+        return repository.visiblePlaylists(user.id(), childMode);
     }
 
     @PostMapping("/playlists")

@@ -224,7 +224,8 @@ public class DirectoryPlaylistService {
                 .update();
         }
         jdbcClient.sql("""
-                UPDATE tracks SET pool_type = :poolType
+                UPDATE tracks SET pool_type = :poolType,
+                  audience_type = CASE WHEN :poolType = 'CHILD' THEN 'CHILD' ELSE 'GENERAL' END
                 WHERE substr(path, 1, length(:pathPrefix)) = :pathPrefix
                 """)
             .param("poolType", poolType)

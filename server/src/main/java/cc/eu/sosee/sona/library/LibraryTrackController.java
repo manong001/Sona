@@ -32,8 +32,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @RequestMapping("/api/v1/library/tracks")
 class LibraryTrackController {
 
-    private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY");
-    private static final Set<String> AUDIENCE_TYPES = Set.of("GENERAL", "CHILD");
+    private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY", "CHILD");
     private static final Set<String> REGIONS = Set.of("CN", "KR", "US", "JP", "OTHER");
 
     private final TrackStore trackStore;
@@ -76,7 +75,7 @@ class LibraryTrackController {
 
     @PatchMapping("/{id}")
     TrackResponse classify(@PathVariable String id, @Valid @RequestBody ClassificationRequest request) {
-        if (!POOL_TYPES.contains(request.poolType()) || !AUDIENCE_TYPES.contains(request.audienceType())) {
+        if (!POOL_TYPES.contains(request.poolType())) {
             throw new ResponseStatusException(BAD_REQUEST, "Invalid classification");
         }
         var genre = normalizedGenre(request.genre());
@@ -84,7 +83,8 @@ class LibraryTrackController {
             throw new ResponseStatusException(BAD_REQUEST, "Invalid region");
         }
         if (!trackStore.classify(
-            id, request.poolType(), request.audienceType(), genre, request.region()
+            id, request.poolType(), request.poolType().equals("CHILD") ? "CHILD" : "GENERAL",
+            genre, request.region()
         )) {
             throw new ResponseStatusException(NOT_FOUND, "Track not found");
         }
@@ -192,7 +192,6 @@ class LibraryTrackController {
 
     record ClassificationRequest(
         @NotBlank String poolType,
-        @NotBlank String audienceType,
         String genre,
         String region
     ) {

@@ -6,6 +6,8 @@ struct MiniPlayerView: View {
     @AppStorage("miniPlayerSide") private var anchoredSide = "right"
     @AppStorage("miniPlayerY") private var storedY = 0.0
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
+    @AppStorage("childMode") private var childMode = false
+    @AppStorage("childTheme") private var childTheme = "boy"
     @State private var dragState: FloatingMiniPlayerDragState?
     @State private var lyricLines: [LyricLine] = []
     @State private var showsQueue = false
@@ -153,8 +155,7 @@ struct MiniPlayerView: View {
                     if track != nil { open() }
                 } label: {
                     HStack(spacing: 10) {
-                        ArtworkView(path: track?.artworkURL, cornerRadius: 6)
-                            .frame(width: 52, height: 52)
+                        miniArtwork(for: track)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(track?.title ?? "暂无播放")
                                 .font(.subheadline.bold())
@@ -251,36 +252,69 @@ struct MiniPlayerView: View {
         }
     }
 
+    @ViewBuilder
     private func cdArtwork(for track: Track?) -> some View {
-        ZStack {
-            Circle()
-                .fill(.black)
-                .shadow(color: .black.opacity(0.55), radius: 10, y: 5)
+        if childMode {
+            ChildMiniPlayerMascot(
+                kind: childTheme == "girl" ? .rabbit : .cat,
+                artworkPath: track?.artworkURL,
+                progress: track == nil ? 0 : playbackProgress,
+                isPlaying: player.isPlaying,
+                hasTrack: track != nil
+            )
+        } else {
+            ZStack {
+                Circle()
+                    .fill(.black)
+                    .shadow(color: .black.opacity(0.55), radius: 10, y: 5)
 
-            ArtworkView(path: track?.artworkURL, cornerRadius: diameter / 2)
-                .frame(width: diameter - 6, height: diameter - 6)
-                .clipShape(Circle())
+                ArtworkView(path: track?.artworkURL, cornerRadius: diameter / 2)
+                    .frame(width: diameter - 6, height: diameter - 6)
+                    .clipShape(Circle())
 
-            Circle()
-                .stroke(.white.opacity(0.28), lineWidth: 1)
+                Circle()
+                    .stroke(.white.opacity(0.28), lineWidth: 1)
 
-            Circle()
-                .trim(from: 0, to: track == nil ? 0 : playbackProgress)
-                .stroke(Color.sonaGreen, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
+                Circle()
+                    .trim(from: 0, to: track == nil ? 0 : playbackProgress)
+                    .stroke(Color.sonaGreen, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
 
-            Circle()
-                .fill(.black.opacity(0.88))
-                .frame(width: 25, height: 25)
-                .overlay {
-                    Image(systemName: track == nil ? "music.note" : (player.isPlaying ? "waveform" : "play.fill"))
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                .overlay {
-                    Circle().stroke(.white.opacity(0.25), lineWidth: 1)
-                }
+                playbackBadge(hasTrack: track != nil)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func miniArtwork(for track: Track?) -> some View {
+        if childMode {
+            ChildMiniPlayerMascot(
+                kind: childTheme == "girl" ? .rabbit : .cat,
+                artworkPath: track?.artworkURL,
+                progress: track == nil ? 0 : playbackProgress,
+                isPlaying: player.isPlaying,
+                hasTrack: track != nil
+            )
+            .scaleEffect(0.68)
+            .frame(width: 52, height: 52)
+        } else {
+            ArtworkView(path: track?.artworkURL, cornerRadius: 6)
+                .frame(width: 52, height: 52)
+        }
+    }
+
+    private func playbackBadge(hasTrack: Bool) -> some View {
+        Circle()
+            .fill(.black.opacity(0.88))
+            .frame(width: 25, height: 25)
+            .overlay {
+                Image(systemName: hasTrack ? (player.isPlaying ? "waveform" : "play.fill") : "music.note")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .overlay {
+                Circle().stroke(.white.opacity(0.25), lineWidth: 1)
+            }
     }
 
     private var playbackProgress: CGFloat {
@@ -299,5 +333,134 @@ struct MiniPlayerView: View {
 
     private func clamped(_ value: CGFloat, from lower: CGFloat, to upper: CGFloat) -> CGFloat {
         min(max(value, lower), upper)
+    }
+}
+
+private enum ChildMiniPlayerMascotKind {
+    case cat
+    case rabbit
+}
+
+private struct ChildMiniPlayerMascot: View {
+    let kind: ChildMiniPlayerMascotKind
+    let artworkPath: String?
+    let progress: CGFloat
+    let isPlaying: Bool
+    let hasTrack: Bool
+
+    private var color: Color {
+        switch kind {
+        case .cat: .cyan
+        case .rabbit: .pink
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            ears
+
+            RoundedRectangle(cornerRadius: 27, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [color.opacity(0.98), color.opacity(0.62)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 74, height: 62)
+                .offset(y: 7)
+                .shadow(color: color.opacity(0.42), radius: 10, y: 5)
+
+            ArtworkView(path: artworkPath, cornerRadius: 23)
+                .frame(width: 48, height: 48)
+                .clipShape(Circle())
+                .offset(y: 6)
+
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .frame(width: 52, height: 52)
+                .rotationEffect(.degrees(-90))
+                .offset(y: 6)
+
+            faceDetails
+
+            Circle()
+                .fill(.black.opacity(0.82))
+                .frame(width: 23, height: 23)
+                .overlay {
+                    Image(systemName: hasTrack ? (isPlaying ? "waveform" : "play.fill") : "music.note")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                .offset(y: 6)
+        }
+        .frame(width: 76, height: 76)
+    }
+
+    @ViewBuilder
+    private var ears: some View {
+        switch kind {
+        case .cat:
+            HStack(spacing: 25) {
+                CatEarShape()
+                    .fill(color)
+                    .frame(width: 22, height: 25)
+                CatEarShape()
+                    .fill(color)
+                    .frame(width: 22, height: 25)
+                    .scaleEffect(x: -1, y: 1)
+            }
+            .offset(y: -23)
+        case .rabbit:
+            HStack(spacing: 12) {
+                Capsule()
+                    .fill(color)
+                    .overlay(Capsule().fill(.white.opacity(0.45)).padding(5))
+                    .frame(width: 19, height: 38)
+                    .rotationEffect(.degrees(-7))
+                Capsule()
+                    .fill(color)
+                    .overlay(Capsule().fill(.white.opacity(0.45)).padding(5))
+                    .frame(width: 19, height: 38)
+                    .rotationEffect(.degrees(7))
+            }
+            .offset(y: -25)
+        }
+    }
+
+    @ViewBuilder
+    private var faceDetails: some View {
+        HStack(spacing: 48) {
+            Circle().fill(.black.opacity(0.72)).frame(width: 4, height: 6)
+            Circle().fill(.black.opacity(0.72)).frame(width: 4, height: 6)
+        }
+        .offset(y: 5)
+
+        switch kind {
+        case .cat:
+            Image(systemName: "triangle.fill")
+                .font(.system(size: 5))
+                .foregroundStyle(.black.opacity(0.7))
+                .rotationEffect(.degrees(180))
+                .offset(y: 24)
+        case .rabbit:
+            HStack(spacing: 46) {
+                Circle().fill(.white.opacity(0.45)).frame(width: 7, height: 5)
+                Circle().fill(.white.opacity(0.45)).frame(width: 7, height: 5)
+            }
+            .offset(y: 24)
+        }
+    }
+}
+
+private struct CatEarShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }

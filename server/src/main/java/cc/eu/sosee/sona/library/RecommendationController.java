@@ -50,11 +50,23 @@ class RecommendationController {
     ) {
         var today = LocalDate.now(clock.withZone(ZoneId.systemDefault()));
         var seed = Objects.hash(user.id(), today, childMode);
+        if (childMode) {
+            var childTracks = new ArrayList<>(
+                trackStore.findDailyCandidates("CHILD", user.id(), true)
+            );
+            Collections.shuffle(childTracks, new Random(Objects.hash(seed, "child")));
+            var selected = new ArrayList<TrackRecord>();
+            addDailyTracks(
+                childTracks, DAILY_LIMIT, selected, new HashSet<>(), new HashMap<>()
+            );
+            Collections.shuffle(selected, new Random(Objects.hash(seed, "result")));
+            return selected.stream().map(TrackResponse::from).toList();
+        }
         var discovery = new ArrayList<>(
-            trackStore.findDailyCandidates("DISCOVERY", user.id(), childMode)
+            trackStore.findDailyCandidates("DISCOVERY", user.id(), false)
         );
         var normal = new ArrayList<>(
-            trackStore.findDailyCandidates("NORMAL", user.id(), childMode)
+            trackStore.findDailyCandidates("NORMAL", user.id(), false)
         );
         Collections.shuffle(discovery, new Random(Objects.hash(seed, "discovery")));
         Collections.shuffle(normal, new Random(Objects.hash(seed, "normal")));

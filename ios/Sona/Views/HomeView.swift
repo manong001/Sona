@@ -75,7 +75,7 @@ struct HomeView: View {
                 id: "playlist-\(playlist.id)",
                 title: playlist.name,
                 subtitle: playlist.isDirectoryPlaylist
-                    ? "\(playlist.poolType == "DISCOVERY" ? "发现歌曲池" : "正常歌曲池") · Sona"
+                    ? "\(homePlaylistPoolTitle(playlist.poolType)) · Sona"
                     : playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
                 artworkURL: playlist.artworkURLs.first,
                 artworkURLs: playlist.artworkURLs,
@@ -681,6 +681,14 @@ struct HomeView: View {
         }
     }
 
+}
+
+private func homePlaylistPoolTitle(_ poolType: String) -> String {
+    switch poolType {
+    case "DISCOVERY": "发现歌曲池"
+    case "CHILD": "儿童歌池"
+    default: "正常歌曲池"
+    }
 }
 
 private struct HomeRadioCard: View {

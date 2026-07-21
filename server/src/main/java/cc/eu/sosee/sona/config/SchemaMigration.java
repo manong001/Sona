@@ -69,6 +69,14 @@ class SchemaMigration implements ApplicationRunner {
             if (!trackColumns.contains("audience_type")) {
                 jdbcClient.sql("ALTER TABLE tracks ADD COLUMN audience_type TEXT NOT NULL DEFAULT 'GENERAL'").update();
             }
+            jdbcClient.sql("""
+                    UPDATE tracks SET pool_type = 'CHILD'
+                    WHERE audience_type = 'CHILD' AND pool_type IN ('NORMAL', 'DISCOVERY')
+                    """).update();
+            jdbcClient.sql("""
+                    UPDATE tracks SET audience_type =
+                      CASE WHEN pool_type = 'CHILD' THEN 'CHILD' ELSE 'GENERAL' END
+                    """).update();
             if (!trackColumns.contains("genre")) {
                 jdbcClient.sql("ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '未分类'").update();
             }

@@ -169,12 +169,15 @@ class PersonalRepository {
         );
     }
 
-    List<FavoriteTrackData> favoriteTracks(String userId, int offset, int limit) {
+    List<FavoriteTrackData> favoriteTracks(
+        String userId, int offset, int limit, boolean childMode
+    ) {
         return jdbcClient.sql("""
                 SELECT tracks.*
                 FROM favorites
                 JOIN tracks ON tracks.id = favorites.track_id
                  WHERE favorites.user_id = :userId
+                   AND tracks.pool_type = :visiblePool
                    AND NOT EXISTS (
                      SELECT 1 FROM hidden_tracks
                      WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
@@ -183,6 +186,7 @@ class PersonalRepository {
                 LIMIT :limit OFFSET :offset
                 """)
             .param("userId", userId)
+            .param("visiblePool", childMode ? "CHILD" : "NORMAL")
             .param("limit", limit)
             .param("offset", offset)
             .query(PersonalRepository::favoriteTrack)
@@ -192,7 +196,10 @@ class PersonalRepository {
     @Transactional
     void addFavorite(String userId, String trackId) {
         insertFavorite(userId, trackId);
-        jdbcClient.sql("UPDATE tracks SET pool_type = 'NORMAL' WHERE id = :trackId")
+        jdbcClient.sql("""
+                UPDATE tracks SET pool_type = 'NORMAL', audience_type = 'GENERAL'
+                WHERE id = :trackId AND pool_type = 'DISCOVERY'
+                """)
             .param("trackId", trackId)
             .update();
     }
@@ -269,6 +276,14 @@ class PersonalRepository {
                 integer(resultSet, "home_position")
             ))
             .list();
+    }
+
+    List<PlaylistData> visiblePlaylists(String userId, boolean childMode) {
+        return playlists(userId).stream()
+            .filter(playlist -> childMode
+                ? playlist.poolType().equals("CHILD")
+                : !playlist.poolType().equals("CHILD"))
+            .toList();
     }
 
     @Transactional
@@ -439,7 +454,8 @@ class PersonalRepository {
             return Optional.empty();
         }
         jdbcClient.sql("""
-                UPDATE tracks SET pool_type = :poolType
+                UPDATE tracks SET pool_type = :poolType,
+                  audience_type = CASE WHEN :poolType = 'CHILD' THEN 'CHILD' ELSE 'GENERAL' END
                 WHERE id IN (
                     SELECT track_id FROM playlist_tracks WHERE playlist_id = :playlistId
                 )

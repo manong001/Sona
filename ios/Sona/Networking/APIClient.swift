@@ -162,6 +162,7 @@ final class APIClient {
             resolvingAgainstBaseURL: false
         )!
         var queryItems = [URLQueryItem(name: "limit", value: "50")]
+        queryItems.append(URLQueryItem(name: "childMode", value: childModeValue))
         if let cursor {
             queryItems.append(URLQueryItem(name: "cursor", value: cursor))
         }
@@ -202,7 +203,13 @@ final class APIClient {
     }
 
     func playlists() async throws -> [Playlist] {
-        try await request(path: "/api/v1/me/playlists")
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/playlists"), resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
     }
 
     func createPlaylist(name: String) async throws -> Playlist {
@@ -466,19 +473,18 @@ final class APIClient {
     }
 
     func classifyTrack(
-        id: String, poolType: String, audienceType: String,
+        id: String, poolType: String,
         genre: String? = nil, region: String? = nil
     ) async throws -> Track {
         struct Body: Encodable {
             let poolType: String
-            let audienceType: String
             let genre: String?
             let region: String?
         }
         return try await request(
             path: "/api/v1/library/tracks/\(id)", method: "PATCH",
             body: try encoder.encode(Body(
-                poolType: poolType, audienceType: audienceType, genre: genre, region: region
+                poolType: poolType, genre: genre, region: region
             ))
         )
     }

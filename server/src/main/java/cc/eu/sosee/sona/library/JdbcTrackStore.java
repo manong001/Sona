@@ -44,7 +44,7 @@ class JdbcTrackStore implements TrackStore {
     public Optional<TrackRecord> findVisibleById(String id, String userId) {
         return jdbcClient.sql("""
                 SELECT tracks.* FROM tracks
-                WHERE tracks.id = :id AND tracks.pool_type IN ('NORMAL', 'DISCOVERY')
+                WHERE tracks.id = :id AND tracks.pool_type IN ('NORMAL', 'DISCOVERY', 'CHILD')
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
@@ -170,15 +170,12 @@ class JdbcTrackStore implements TrackStore {
 
         var sql = new StringBuilder("""
             SELECT tracks.* FROM tracks
-            WHERE tracks.pool_type = 'NORMAL'
+            WHERE tracks.pool_type = :visiblePool
               AND NOT EXISTS (
                 SELECT 1 FROM hidden_tracks
                 WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
               )
             """);
-        if (childOnly) {
-            sql.append(" AND tracks.audience_type = 'CHILD'");
-        }
         if (!normalizedQuery.isBlank()) {
             sql.append(" AND (title LIKE :query OR artist LIKE :query OR album LIKE :query)");
         }
@@ -200,7 +197,8 @@ class JdbcTrackStore implements TrackStore {
         sql.append(" LIMIT :limit OFFSET :offset");
 
         var statement = jdbcClient.sql(sql.toString())
-            .param("limit", limit + 1).param("offset", offset).param("userId", userId);
+            .param("limit", limit + 1).param("offset", offset).param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly));
         if (!normalizedQuery.isBlank()) {
             statement = statement.param("query", "%" + normalizedQuery + "%");
         }
@@ -236,7 +234,7 @@ class JdbcTrackStore implements TrackStore {
             return List.of();
         }
 
-        var scope = childOnly ? "CHILD" : "ALL";
+        var scope = childOnly ? "CHILD" : "NORMAL";
         var cycle = currentRandomCycle(userId, scope);
         var selections = new ArrayList<RandomSelection>();
         var first = findUnselectedRandom(
@@ -263,17 +261,17 @@ class JdbcTrackStore implements TrackStore {
     }
 
     private int countRandomCandidates(String userId, boolean childOnly) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'" : "";
         return jdbcClient.sql("""
                 SELECT COUNT(*)
                 FROM tracks
-                WHERE tracks.pool_type = 'NORMAL'
+                WHERE tracks.pool_type = :visiblePool
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter)
+                """)
             .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
             .query(Integer.class)
             .single();
     }
@@ -326,7 +324,6 @@ class JdbcTrackStore implements TrackStore {
         int limit, String userId, boolean childOnly, String scope, int cycle,
         List<String> excludedIds
     ) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         var exclusionFilter = excludedIds.isEmpty() ? "" : " AND tracks.id NOT IN (:excludedIds)\n";
         var statement = jdbcClient.sql("""
                 SELECT tracks.*
@@ -336,13 +333,13 @@ class JdbcTrackStore implements TrackStore {
                   ON exposure.user_id = :userId
                  AND exposure.scope = :scope
                  AND exposure.track_id = tracks.id
-                WHERE tracks.pool_type = 'NORMAL'
+                WHERE tracks.pool_type = :visiblePool
                   AND COALESCE(exposure.last_cycle, 0) < :cycle
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter + exclusionFilter + """
+                """ + exclusionFilter + """
                 ORDER BY (ABS(RANDOM() % 1000000) / 1000000.0) / (
                     0.15 + 0.85 * CASE
                         WHEN COALESCE(stats.play_count, 0) > 0
@@ -355,7 +352,8 @@ class JdbcTrackStore implements TrackStore {
             .param("limit", limit)
             .param("userId", userId)
             .param("scope", scope)
-            .param("cycle", cycle);
+            .param("cycle", cycle)
+            .param("visiblePool", libraryPool(childOnly));
         if (!excludedIds.isEmpty()) {
             statement = statement.param("excludedIds", excludedIds);
         }
@@ -384,19 +382,18 @@ class JdbcTrackStore implements TrackStore {
 
     @Override
     public List<TrackRecord> findDiscovery(int limit, String userId, boolean childOnly) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.* FROM tracks
-                WHERE tracks.pool_type = 'DISCOVERY'
+                WHERE tracks.pool_type = :visiblePool
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter + """
                 ORDER BY RANDOM() LIMIT :limit
                 """)
             .param("limit", limit)
             .param("userId", userId)
+            .param("visiblePool", childOnly ? "CHILD" : "DISCOVERY")
             .query(ROW_MAPPER)
             .list();
     }
@@ -415,7 +412,6 @@ class JdbcTrackStore implements TrackStore {
     public List<TrackRecord> findDailyCandidates(
         String poolType, String userId, boolean childOnly
     ) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.*
                 FROM tracks
@@ -424,7 +420,6 @@ class JdbcTrackStore implements TrackStore {
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter + """
                 ORDER BY tracks.id
                 """)
             .param("poolType", poolType)
@@ -435,10 +430,6 @@ class JdbcTrackStore implements TrackStore {
 
     @Override
     public List<TrackRecord> findMadeForYouCandidates(String userId, boolean childOnly) {
-        var historyAudienceFilter = childOnly
-            ? " AND history_tracks.audience_type = 'CHILD'\n" : "\n";
-        var candidateAudienceFilter = childOnly
-            ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 WITH frequent_artists AS (
                     SELECT LOWER(TRIM(history_tracks.artist)) AS artist_key,
@@ -446,14 +437,13 @@ class JdbcTrackStore implements TrackStore {
                     FROM play_history
                     JOIN tracks history_tracks ON history_tracks.id = play_history.track_id
                     WHERE play_history.user_id = :userId
-                      AND history_tracks.pool_type = 'NORMAL'
+                      AND history_tracks.pool_type = :visiblePool
                       AND TRIM(history_tracks.artist) <> ''
                       AND NOT EXISTS (
                         SELECT 1 FROM hidden_tracks
                         WHERE hidden_tracks.user_id = :userId
                           AND hidden_tracks.track_id = history_tracks.id
                       )
-                """ + historyAudienceFilter + """
                     GROUP BY LOWER(TRIM(history_tracks.artist))
                     ORDER BY play_count DESC, last_played DESC, artist_key
                     LIMIT 8
@@ -464,13 +454,12 @@ class JdbcTrackStore implements TrackStore {
                       ) AS artist_position
                     FROM frequent_artists
                     JOIN tracks ON LOWER(TRIM(tracks.artist)) = frequent_artists.artist_key
-                    WHERE tracks.pool_type = 'NORMAL'
+                    WHERE tracks.pool_type = :visiblePool
                       AND NOT EXISTS (
                         SELECT 1 FROM hidden_tracks
                         WHERE hidden_tracks.user_id = :userId
                           AND hidden_tracks.track_id = tracks.id
                       )
-                """ + candidateAudienceFilter + """
                 )
                 SELECT * FROM ranked_tracks
                 WHERE artist_position <= 100
@@ -478,27 +467,27 @@ class JdbcTrackStore implements TrackStore {
                   artist COLLATE NOCASE, id
                 """)
             .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
             .query(ROW_MAPPER)
             .list();
     }
 
     @Override
     public List<String> findGenres(String userId, boolean childOnly) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.genre
                 FROM tracks
-                WHERE tracks.pool_type = 'NORMAL'
+                WHERE tracks.pool_type = :visiblePool
                   AND tracks.genre <> '未分类'
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter + """
                 GROUP BY tracks.genre
                 ORDER BY COUNT(*) DESC, tracks.genre
                 """)
             .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
             .query(String.class)
             .list();
     }
@@ -507,18 +496,16 @@ class JdbcTrackStore implements TrackStore {
     public List<TrackRecord> findByGenre(
         String genre, String userId, boolean childOnly, int limit
     ) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.*
                 FROM tracks
                 LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
-                WHERE tracks.pool_type = 'NORMAL'
+                WHERE tracks.pool_type = :visiblePool
                   AND tracks.genre = :genre
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter + """
                 ORDER BY COALESCE(stats.play_count, 0) DESC,
                   CASE WHEN COALESCE(stats.play_count, 0) > 0
                     THEN stats.completion_percent_sum / stats.play_count ELSE 65 END DESC,
@@ -527,6 +514,7 @@ class JdbcTrackStore implements TrackStore {
                 """)
             .param("genre", genre)
             .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
             .param("limit", limit)
             .query(ROW_MAPPER)
             .list();
@@ -534,22 +522,21 @@ class JdbcTrackStore implements TrackStore {
 
     @Override
     public List<TrackRecord> findSimilarCandidates(String id, String userId, boolean childOnly) {
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
         return jdbcClient.sql("""
                 SELECT tracks.*
                 FROM tracks
                 WHERE tracks.id <> :id
-                  AND tracks.pool_type = 'NORMAL'
+                  AND tracks.pool_type = :visiblePool
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + audienceFilter + """
                 ORDER BY tracks.updated_at DESC, tracks.id
                 LIMIT 1000
                 """)
             .param("id", id)
             .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
             .query(ROW_MAPPER)
             .list();
     }
@@ -558,19 +545,18 @@ class JdbcTrackStore implements TrackStore {
     public List<ChartTrackData> findChart(
         String region, String userId, boolean childOnly, int limit
     ) {
-        var regionFilter = "ALL".equals(region) ? "" : " AND tracks.region = :region";
-        var audienceFilter = childOnly ? " AND tracks.audience_type = 'CHILD'\n" : "\n";
+        var regionFilter = "ALL".equals(region) ? "" : " AND tracks.region = :region\n";
         var statement = jdbcClient.sql("""
                 SELECT tracks.*, COALESCE(stats.play_count, 0) AS chart_play_count
                 FROM tracks
                 LEFT JOIN track_play_stats stats ON stats.track_id = tracks.id
-                WHERE tracks.pool_type = 'NORMAL'
+                WHERE tracks.pool_type = :visiblePool
                   AND COALESCE(stats.play_count, 0) > 0
                   AND NOT EXISTS (
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + regionFilter + audienceFilter + """
+                """ + regionFilter + """
                 ORDER BY COALESCE(stats.play_count, 0) DESC,
                   CASE WHEN COALESCE(stats.play_count, 0) > 0
                     THEN stats.completion_percent_sum / stats.play_count ELSE 0 END DESC,
@@ -578,6 +564,7 @@ class JdbcTrackStore implements TrackStore {
                 LIMIT :limit
                 """)
             .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
             .param("limit", limit);
         if (!"ALL".equals(region)) {
             statement = statement.param("region", region);
@@ -715,6 +702,10 @@ class JdbcTrackStore implements TrackStore {
 
     private static String string(Path path) {
         return path == null ? null : path.toString();
+    }
+
+    private static String libraryPool(boolean childOnly) {
+        return childOnly ? "CHILD" : "NORMAL";
     }
 
     private static String encodeGenres(List<String> genres) {
