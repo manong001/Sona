@@ -285,68 +285,121 @@ private extension View {
 }
 
 struct DiscoveryView: View {
+    @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
-    @EnvironmentObject private var personal: PersonalStore
     let openDrawer: () -> Void
     @State private var tracks: [Track] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var flowStartedAt = Date()
+    @State private var remixID = 0
+
+    private let subtitles = [
+        "在熟悉之外，遇见一首歌",
+        "今天会漂来什么？",
+        "让下一首歌出乎意料",
+        "顺着声音，去往没听过的地方"
+    ]
 
     var body: some View {
         NavigationStack {
-            Group {
-                if isLoading && tracks.isEmpty {
-                    ProgressView("正在挑选新歌…")
-                } else if tracks.isEmpty {
-                    ContentUnavailableView(
-                        "暂无发现歌曲",
-                        systemImage: "sparkles",
-                        description: Text(errorMessage ?? "管理员将歌曲划入发现池后会显示在这里。")
-                    )
-                } else {
-                    List(tracks) { track in
-                        Button {
-                            player.play(
-                                track: track,
-                                queue: tracks,
-                                prioritizedQueueTitle: "发现",
-                                offlineURLProvider: { offline.localURL(for: $0) }
+            ZStack {
+                DiscoveryBackground()
+
+                VStack(spacing: 0) {
+                    discoveryHeader
+
+                    Group {
+                        if isLoading && tracks.isEmpty {
+                            ProgressView("正在挑选新歌…")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if tracks.isEmpty {
+                            ContentUnavailableView(
+                                "暂无发现歌曲",
+                                systemImage: "sparkles",
+                                description: Text(errorMessage ?? "管理员将歌曲划入发现池后会显示在这里。")
                             )
-                        } label: {
-                            TrackRow(track: track, isFavorite: personal.favoriteIDs.contains(track.id))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            DiscoveryRiver(
+                                tracks: tracks,
+                                currentTrackID: player.currentTrack?.id,
+                                startedAt: flowStartedAt,
+                                play: play
+                            )
+                            .id(remixID)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.sonaBackground)
                     }
-                    .listStyle(.plain)
                 }
             }
-            .background(Color.sonaBackground)
-            .navigationTitle("发现")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: openDrawer) { Image(systemName: "person.crop.circle") }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("刷新", systemImage: "arrow.clockwise") {
-                        Task { await load() }
-                    }
-                    .disabled(isLoading)
-                    Button("播放全部", systemImage: "play.fill") {
-                        guard let first = tracks.first else { return }
-                        player.play(
-                            track: first,
-                            queue: tracks,
-                            prioritizedQueueTitle: "发现",
-                            offlineURLProvider: { offline.localURL(for: $0) }
-                        )
-                    }
-                    .disabled(tracks.isEmpty)
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .task { await load() }
-            .refreshable { await load() }
+        }
+    }
+
+    private var discoveryHeader: some View {
+        HStack(spacing: 12) {
+            SonaAvatarButton(
+                username: session.currentUser?.username ?? "Sona",
+                action: openDrawer
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("发现")
+                    .font(.title.bold())
+                    .foregroundStyle(.white)
+                Text(subtitles[remixID % subtitles.count])
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+                    .contentTransition(.numericText())
+            }
+
+            Spacer(minLength: 8)
+
+            Button("换一片", systemImage: "sparkles") { remix() }
+                .font(.caption.bold())
+                .foregroundStyle(.black.opacity(0.86))
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(Color.sonaGreen, in: Capsule())
+                .buttonStyle(.plain)
+                .disabled(tracks.isEmpty)
+
+            Button {
+                Task { await load() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(.white.opacity(0.10), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isLoading)
+            .accessibilityLabel("重新载入发现歌曲")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 14)
+    }
+
+    private func play(_ track: Track) {
+        player.play(
+            track: track,
+            queue: tracks,
+            prioritizedQueueTitle: "发现",
+            offlineURLProvider: { offline.localURL(for: $0) }
+        )
+    }
+
+    private func remix() {
+        guard !tracks.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.28)) {
+            tracks.shuffle()
+            remixID += 1
+            flowStartedAt = Date()
         }
     }
 
@@ -354,10 +407,281 @@ struct DiscoveryView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            tracks = try await APIClient.shared.discoveryTracks(limit: 50)
+            tracks = try await APIClient.shared.discoveryTracks(limit: 50).shuffled()
             errorMessage = nil
+            remixID += 1
+            flowStartedAt = Date()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+private struct DiscoveryBackground: View {
+    var body: some View {
+        ZStack {
+            Color.sonaBackground
+            RadialGradient(
+                colors: [Color.sonaGreen.opacity(0.18), .clear],
+                center: .topLeading,
+                startRadius: 10,
+                endRadius: 420
+            )
+            LinearGradient(
+                colors: [.clear, Color.sonaBackgroundDeep.opacity(0.72)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct DiscoveryRiver: View {
+    let tracks: [Track]
+    let currentTrackID: String?
+    let startedAt: Date
+    let play: (Track) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let availableHeight = max(480, proxy.size.height)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 12) {
+                    DiscoveryFlowLane(
+                        tracks: laneTracks(0),
+                        height: availableHeight * 0.34,
+                        lane: 0,
+                        speed: 8,
+                        direction: -1,
+                        startedAt: startedAt,
+                        currentTrackID: currentTrackID,
+                        play: play
+                    )
+                    DiscoveryFlowLane(
+                        tracks: laneTracks(1),
+                        height: availableHeight * 0.31,
+                        lane: 1,
+                        speed: 6,
+                        direction: 1,
+                        startedAt: startedAt,
+                        currentTrackID: currentTrackID,
+                        play: play
+                    )
+                    DiscoveryFlowLane(
+                        tracks: laneTracks(2),
+                        height: availableHeight * 0.29,
+                        lane: 2,
+                        speed: 7,
+                        direction: -1,
+                        startedAt: startedAt,
+                        currentTrackID: currentTrackID,
+                        play: play
+                    )
+                }
+                .padding(.vertical, 2)
+                .frame(minHeight: proxy.size.height, alignment: .top)
+            }
+        }
+    }
+
+    private func laneTracks(_ lane: Int) -> [Track] {
+        let values = tracks.enumerated().compactMap { index, track in
+            index % 3 == lane ? track : nil
+        }
+        return values.isEmpty ? tracks : values
+    }
+}
+
+private struct DiscoveryFlowLane: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let tracks: [Track]
+    let height: CGFloat
+    let lane: Int
+    let speed: Double
+    let direction: Double
+    let startedAt: Date
+    let currentTrackID: String?
+    let play: (Track) -> Void
+    @GestureState private var dragTranslation: CGFloat = 0
+    @State private var settledTranslation: CGFloat = 0
+
+    private let spacing: CGFloat = 12
+
+    var body: some View {
+        GeometryReader { _ in
+            if reduceMotion {
+                laneContent(at: startedAt)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                    laneContent(at: context.date)
+                }
+            }
+        }
+        .frame(height: height)
+        .clipped()
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .updating($dragTranslation) { value, state, _ in
+                    state = value.translation.width
+                }
+                .onEnded { value in
+                    settledTranslation += value.translation.width
+                }
+        )
+    }
+
+    private func laneContent(at date: Date) -> some View {
+        let cards = repeatedTracks
+        let cycleWidth = widths(for: cards).reduce(0, +) + spacing * CGFloat(cards.count)
+        let elapsed = max(0, date.timeIntervalSince(startedAt))
+        let automatic = reduceMotion ? 0 : CGFloat(elapsed * speed * direction)
+        let offset = wrappedOffset(
+            automatic + settledTranslation + dragTranslation,
+            cycleWidth: cycleWidth
+        )
+
+        return HStack(spacing: spacing) {
+            ForEach(0..<(cards.count * 2), id: \.self) { index in
+                let track = cards[index % cards.count]
+                DiscoveryTrackCard(
+                    track: track,
+                    width: cardWidth(at: index % cards.count),
+                    height: height,
+                    lane: lane,
+                    index: index % cards.count,
+                    isPlaying: track.id == currentTrackID,
+                    play: { play(track) }
+                )
+            }
+        }
+        .offset(x: offset)
+    }
+
+    private var repeatedTracks: [Track] {
+        guard !tracks.isEmpty else { return [] }
+        var values = tracks
+        while values.count < 6 { values.append(contentsOf: tracks) }
+        return values
+    }
+
+    private func widths(for tracks: [Track]) -> [CGFloat] {
+        tracks.indices.map(cardWidth)
+    }
+
+    private func cardWidth(at index: Int) -> CGFloat {
+        let patterns: [[CGFloat]] = [
+            [270, 158, 210, 176],
+            [142, 220, 166, 196],
+            [194, 148, 230, 164]
+        ]
+        let pattern = patterns[lane % patterns.count]
+        return pattern[index % pattern.count]
+    }
+
+    private func wrappedOffset(_ value: CGFloat, cycleWidth: CGFloat) -> CGFloat {
+        guard cycleWidth > 0 else { return 0 }
+        let remainder = value.truncatingRemainder(dividingBy: cycleWidth)
+        return remainder > 0 ? remainder - cycleWidth : remainder
+    }
+}
+
+private struct DiscoveryTrackCard: View {
+    let track: Track
+    let width: CGFloat
+    let height: CGFloat
+    let lane: Int
+    let index: Int
+    let isPlaying: Bool
+    let play: () -> Void
+
+    var body: some View {
+        Button(action: play) {
+            ZStack(alignment: .bottomLeading) {
+                artwork
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.12), .black.opacity(0.90)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    if isPlaying {
+                        Label("正在播放", systemImage: "waveform")
+                            .font(.caption2.bold())
+                            .foregroundStyle(Color.sonaGreen)
+                    } else if width > 175 {
+                        Text(discoveryReason)
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white.opacity(0.74))
+                            .lineLimit(1)
+                    }
+
+                    Text(track.title)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(track.artist)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
+                }
+                .padding(13)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if width > 205 {
+                    Image(systemName: "play.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.black)
+                        .frame(width: 34, height: 34)
+                        .background(Color.sonaGreen, in: Circle())
+                        .padding(12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
+            }
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isPlaying ? Color.sonaGreen.opacity(0.72) : .white.opacity(0.10), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("播放 \(track.title)，\(track.artist)")
+    }
+
+    private var artwork: some View {
+        CachedRemoteImage(url: sonaArtworkURL(path: track.artworkURL, thumbnailSize: 768)) { image in
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } placeholder: {
+            LinearGradient(
+                colors: [placeholderColor.opacity(0.92), Color.sonaBackgroundDeep],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .overlay {
+                Image(systemName: "music.note")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+        }
+        .frame(width: width, height: height)
+        .clipped()
+    }
+
+    private var discoveryReason: String {
+        let values = track.genre == "未分类"
+            ? ["随机漂来的旋律", "来自发现歌曲池", "也许正合此刻"]
+            : ["随机漂来的\(track.genre)", "来自发现歌曲池", "换一种声音"]
+        return values[(lane + index) % values.count]
+    }
+
+    private var placeholderColor: Color {
+        let values: [Color] = [.indigo, .teal, .purple, .orange, .blue]
+        return values[(lane + index) % values.count]
     }
 }
