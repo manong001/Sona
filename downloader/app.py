@@ -54,6 +54,7 @@ SUPPORTED_AUDIO_EXTENSIONS = frozenset(
 PLAYLIST_HOSTS = frozenset({
     "kuwo.cn", "music.migu.cn", "migu.cn", "music.163.com", "163cn.tv",
     "y.qq.com", "music.qq.com", "music.91q.com", "music.taihe.com", "music.baidu.com",
+    "open.spotify.com",
 })
 
 
@@ -176,7 +177,12 @@ class MusicDlBackend:
         return candidates
 
     def parse_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
-        sources = self._allowed_sources
+        hostname = (urlparse(url).hostname or "").lower().strip(".")
+        sources = (
+            ("SpotifyMusicClient",)
+            if hostname == "open.spotify.com"
+            else self._allowed_sources
+        )
         with self._lock_for(sources):
             songs = self._client(sources).parseplaylist(url)
         if not songs:

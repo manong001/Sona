@@ -128,6 +128,16 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual("歌单歌曲", body["items"][0]["title"])
         self.assertTrue(body["items"][0]["candidateId"])
 
+    def test_accepts_spotify_playlist_url(self):
+        status, body = self.request(
+            "POST",
+            "/v1/playlists/parse",
+            {"url": "https://open.spotify.com/playlist/37i9dQZF1E8NWHOpySOxQd"},
+        )
+
+        self.assertEqual(200, status)
+        self.assertEqual("测试歌单", body["name"])
+
     def test_rejects_unknown_source_and_candidate(self):
         with self.assertRaises(HTTPError) as source_error:
             self.request("GET", "/v1/search?q=test&sources=UnknownClient")
@@ -191,6 +201,41 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual("我的歌单", name)
         self.assertEqual("我的歌单", Path(song.work_dir).name)
         self.assertEqual("测试歌曲", candidates[0].title)
+
+    def test_spotify_playlist_uses_spotify_parser_outside_default_sources(self):
+        song = SimpleNamespace(
+            source="SpotifyMusicClient",
+            work_dir="/tmp/SpotifyMusicClient/Spotify 歌单",
+            song_name="Spotify 歌曲",
+            singers="测试歌手",
+            album="测试专辑",
+            ext="mp3",
+            duration_s=180,
+            duration="03:00",
+            file_size_bytes=100,
+            bitrate=320,
+            samplerate=44100,
+            cover_url=None,
+            lyric=None,
+        )
+        selected_sources = []
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("NeteaseMusicClient", "QQMusicClient")
+            backend._output_dir = Path(directory)
+            backend._lock = threading.Lock()
+            backend._source_locks = {}
+            backend._client = lambda sources: (
+                selected_sources.append(sources)
+                or SimpleNamespace(parseplaylist=lambda url: [song])
+            )
+
+            _, candidates = backend.parse_playlist(
+                "https://open.spotify.com/playlist/37i9dQZF1E8NWHOpySOxQd"
+            )
+
+        self.assertEqual([("SpotifyMusicClient",)], selected_sources)
+        self.assertEqual("SpotifyMusicClient", candidates[0].source)
 
     def request(self, method, path, body=None, authenticated=True):
         data = None if body is None else json.dumps(body).encode()

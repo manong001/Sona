@@ -5,10 +5,13 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 @Component
 class MusicDlGateway implements DownloaderGateway {
@@ -87,20 +90,27 @@ class MusicDlGateway implements DownloaderGateway {
     @Override
     public DownloadPlaylistPreview parsePlaylist(String url) {
         requireEnabled();
-        var requestBody = requestBody(new PlaylistBody(url));
-        var response = searchClient.post()
-            .uri("/v1/playlists/parse")
-            .header("X-Sona-Token", token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .contentLength(requestBody.length)
-            .accept(MediaType.APPLICATION_JSON)
-            .body(requestBody)
-            .retrieve()
-            .body(DownloadPlaylistPreview.class);
-        if (response == null || response.items() == null || response.items().isEmpty()) {
-            throw new IllegalStateException("歌单中没有可下载歌曲");
+        try {
+            var requestBody = requestBody(new PlaylistBody(url));
+            var response = searchClient.post()
+                .uri("/v1/playlists/parse")
+                .header("X-Sona-Token", token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .contentLength(requestBody.length)
+                .accept(MediaType.APPLICATION_JSON)
+                .body(requestBody)
+                .retrieve()
+                .body(DownloadPlaylistPreview.class);
+            if (response == null || response.items() == null || response.items().isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "歌单中没有可下载歌曲");
+            }
+            return response;
+        } catch (RestClientResponseException exception) {
+            var status = exception.getStatusCode().is4xxClientError()
+                ? HttpStatus.BAD_REQUEST
+                : HttpStatus.BAD_GATEWAY;
+            throw new ResponseStatusException(status, playlistError(exception), exception);
         }
-        return response;
     }
 
     @Override
@@ -128,6 +138,20 @@ class MusicDlGateway implements DownloaderGateway {
         } catch (JacksonException exception) {
             throw new IllegalStateException("无法创建下载请求", exception);
         }
+    }
+
+    private String playlistError(RestClientResponseException exception) {
+        try {
+            var response = objectMapper.readValue(exception.getResponseBodyAsString(), ErrorEnvelope.class);
+            if (response != null && response.error() != null && !response.error().isBlank()) {
+                return response.error();
+            }
+        } catch (JacksonException ignored) {
+            // Fall through to the stable client-facing message.
+        }
+        return exception.getStatusCode().is4xxClientError()
+            ? "歌单链接无法解析"
+            : "歌单解析服务暂时不可用";
     }
 
     private RestClient client(String baseUrl, Duration readTimeout) {
@@ -168,5 +192,8 @@ class MusicDlGateway implements DownloaderGateway {
     }
 
     private record PlaybackFallbackEnvelope(String url) {
+    }
+
+    private record ErrorEnvelope(String error) {
     }
 }

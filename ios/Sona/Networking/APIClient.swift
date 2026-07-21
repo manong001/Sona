@@ -975,8 +975,28 @@ enum APIError: LocalizedError {
         case .forbidden:
             return "当前账号没有执行此操作的权限"
         case let .server(status, detail):
-            return detail?.isEmpty == false ? "服务器错误 \(status)：\(detail!)" : "服务器错误 \(status)"
+            if let message = Self.readableServerMessage(from: detail) {
+                return message
+            }
+            return "服务器错误 \(status)"
         }
+    }
+
+    private static func readableServerMessage(from detail: String?) -> String? {
+        guard let detail, !detail.isEmpty else { return nil }
+        if let data = detail.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for key in ["detail", "message", "error"] {
+                guard let message = object[key] as? String,
+                      !message.isEmpty,
+                      !["Bad Request", "Internal Server Error", "Not Found"].contains(message) else {
+                    continue
+                }
+                return message
+            }
+            return nil
+        }
+        return detail
     }
 }
 

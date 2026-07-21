@@ -11,12 +11,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @Validated
 @RestController
@@ -64,6 +66,12 @@ class PlaylistSubscriptionController {
         return ResponseEntity.noContent().build();
     }
 
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<ErrorResponse> handleResponseStatus(ResponseStatusException exception) {
+        var message = exception.getReason() == null ? "歌单订阅失败" : exception.getReason();
+        return ResponseEntity.status(exception.getStatusCode()).body(new ErrorResponse(message));
+    }
+
     record CreateRequest(
         @NotBlank @Size(max = 2048) String sourceUrl,
         @Size(max = 80) String name,
@@ -71,5 +79,8 @@ class PlaylistSubscriptionController {
         boolean autoDownload,
         @Min(1) @Max(168) int syncIntervalHours
     ) {
+    }
+
+    record ErrorResponse(String error) {
     }
 }
