@@ -262,6 +262,10 @@ struct MusicLibraryView: View {
             subscriptionErrorMessage = nil
             do {
                 subscriptions = try await APIClient.shared.playlistSubscriptions()
+            } catch is CancellationError {
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                return
             } catch {
                 subscriptionErrorMessage = error.localizedDescription
             }
@@ -531,7 +535,7 @@ struct MusicLibraryView: View {
 
             if selectedFilter != .songs {
               ForEach(visibleCollections) { collection in
-                ZStack(alignment: .trailing) {
+                HStack(spacing: 0) {
                     NavigationLink {
                         if isPlaylistFilter {
                             ManagedPlaylistDetailView(playlistID: collection.id)
@@ -542,6 +546,7 @@ struct MusicLibraryView: View {
                         libraryRow(collection)
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if isPlaylistFilter,
                        let playlist = personal.playlists.first(where: { $0.id == collection.id }),
@@ -551,8 +556,8 @@ struct MusicLibraryView: View {
                             Task { await deletePlaylist(playlist) }
                         }
                         .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .padding(.trailing, 20)
+                        .buttonStyle(.plain)
+                        .frame(width: 52, height: 80)
                     }
                 }
                 .task {
