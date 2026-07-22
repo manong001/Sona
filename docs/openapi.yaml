@@ -979,8 +979,8 @@ paths:
           description: 仅扫描该相对目录及其子目录；留空扫描整个挂载音乐目录
         - name: mode
           in: query
-          schema: {type: string, enum: [MISSING_ONLY, OVERWRITE], default: MISSING_ONLY}
-          description: 仅补全缺失元数据，或覆盖非人工编辑的本地及历史刮削元数据
+          schema: {type: string, enum: [STANDARD, MISSING_ONLY, OVERWRITE], default: STANDARD}
+          description: 默认仅处理新入库或明确待重试的歌曲；也可补全缺失元数据，或覆盖非人工编辑的本地及历史刮削元数据
       responses:
         "202":
           description: 扫描已开始

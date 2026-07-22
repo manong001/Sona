@@ -23,7 +23,7 @@ class ScanController {
     @PostMapping
     ResponseEntity<ScanStatus> start(
         @RequestParam(defaultValue = "") String path,
-        @RequestParam(defaultValue = "MISSING_ONLY") ScrapeMode mode
+        @RequestParam(defaultValue = "STANDARD") ScrapeMode mode
     ) {
         if (mode == ScrapeMode.FORCE_OVERWRITE) {
             throw new ResponseStatusException(BAD_REQUEST, "强制覆盖仅支持歌单刮削");

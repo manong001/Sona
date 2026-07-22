@@ -486,6 +486,9 @@ struct PlaylistSubscriptionsView: View {
                 }
             }
             .task { await load() }
+            .task(id: hasActiveDownloads) {
+                await monitorDownloads()
+            }
             .refreshable { await load() }
             .sheet(isPresented: $showsCreate) {
                 CreatePlaylistSubscriptionView { subscription in
@@ -604,6 +607,30 @@ struct PlaylistSubscriptionsView: View {
             subscriptions = try await APIClient.shared.playlistSubscriptions()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private var hasActiveDownloads: Bool {
+        subscriptions.contains { $0.downloadingCount > 0 }
+    }
+
+    private func monitorDownloads() async {
+        guard hasActiveDownloads else { return }
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(2))
+                let updated = try await APIClient.shared.playlistSubscriptions()
+                let completed = !updated.contains { $0.downloadingCount > 0 }
+                subscriptions = updated
+                if completed {
+                    changed()
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                continue
+            }
         }
     }
 

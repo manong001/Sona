@@ -670,10 +670,10 @@ final class APIClient {
     }
 
     func startScan() async throws -> ScanStatus {
-        try await startScan(directory: "", mode: .missingOnly)
+        try await startScan(directory: "", mode: .standard)
     }
 
-    func startScan(directory: String, mode: ScrapeMode = .missingOnly) async throws -> ScanStatus {
+    func startScan(directory: String, mode: ScrapeMode = .standard) async throws -> ScanStatus {
         var components = URLComponents(
             url: url(for: "/api/v1/library/scan"),
             resolvingAgainstBaseURL: false

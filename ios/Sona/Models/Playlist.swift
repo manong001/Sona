@@ -1,6 +1,7 @@
 import Foundation
 
 enum ScrapeMode: String {
+    case standard = "STANDARD"
     case missingOnly = "MISSING_ONLY"
     case overwrite = "OVERWRITE"
 }

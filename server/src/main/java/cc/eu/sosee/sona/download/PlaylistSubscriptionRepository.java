@@ -156,14 +156,36 @@ class PlaylistSubscriptionRepository {
 
     private JdbcClient.StatementSpec select(String suffix) {
         return jdbcClient.sql("""
+            WITH item_states AS (
+                SELECT items.subscription_id,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM tracks
+                            WHERE trim(tracks.title) COLLATE NOCASE =
+                                  trim(items.title) COLLATE NOCASE
+                              AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
+                                  replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                        ) THEN 'MATCHED'
+                        WHEN EXISTS (
+                            SELECT 1 FROM download_tasks tasks
+                            WHERE trim(tasks.title) COLLATE NOCASE =
+                                  trim(items.title) COLLATE NOCASE
+                              AND replace(trim(tasks.artist), '、', '/') COLLATE NOCASE =
+                                  replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                              AND tasks.state IN ('QUEUED', 'RUNNING')
+                        ) THEN 'DOWNLOADING'
+                        ELSE 'MISSING'
+                    END AS state
+                FROM playlist_subscription_items items
+            )
             SELECT subscriptions.*, users.username,
-                (SELECT COUNT(*) FROM playlist_subscription_items items
+                (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id) AS item_count,
-                (SELECT COUNT(*) FROM playlist_subscription_items items
+                (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'MATCHED') AS matched_count,
-                (SELECT COUNT(*) FROM playlist_subscription_items items
+                (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'MISSING') AS missing_count,
-                (SELECT COUNT(*) FROM playlist_subscription_items items
+                (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'DOWNLOADING') AS downloading_count
             FROM playlist_subscriptions subscriptions
             JOIN users ON users.id = subscriptions.user_id

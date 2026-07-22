@@ -152,7 +152,7 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func scan(directory: String = "", mode: ScrapeMode = .missingOnly) async {
+    func scan(directory: String = "", mode: ScrapeMode = .standard) async {
         errorMessage = nil
         do {
             scanStatus = try await api.startScan(directory: directory, mode: mode)
