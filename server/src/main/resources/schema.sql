@@ -288,6 +288,11 @@ CREATE TABLE IF NOT EXISTS playback_batches (
 CREATE INDEX IF NOT EXISTS idx_tracks_sort ON tracks(normalized_title, id);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
+CREATE INDEX IF NOT EXISTS idx_tracks_subscription_match
+    ON tracks(
+        trim(title) COLLATE NOCASE,
+        replace(trim(artist), '、', '/') COLLATE NOCASE
+    );
 
 CREATE TABLE IF NOT EXISTS track_audio_features (
     track_id TEXT PRIMARY KEY,
@@ -348,6 +353,12 @@ CREATE TABLE IF NOT EXISTS download_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_download_tasks_created ON download_tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_download_tasks_subscription_match
+    ON download_tasks(
+        trim(title) COLLATE NOCASE,
+        replace(trim(artist), '、', '/') COLLATE NOCASE,
+        state
+    );
 
 CREATE TABLE IF NOT EXISTS import_records (
     id TEXT PRIMARY KEY,

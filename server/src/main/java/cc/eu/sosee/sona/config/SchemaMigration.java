@@ -95,6 +95,15 @@ class SchemaMigration implements ApplicationRunner {
                             """).update();
                 }
             }
+            if (trackColumns.contains("title") && trackColumns.contains("artist")) {
+                jdbcClient.sql("""
+                        CREATE INDEX IF NOT EXISTS idx_tracks_subscription_match
+                        ON tracks(
+                            trim(title) COLLATE NOCASE,
+                            replace(trim(artist), '、', '/') COLLATE NOCASE
+                        )
+                        """).update();
+            }
         }
         jdbcClient.sql("""
                 CREATE TABLE IF NOT EXISTS track_audio_features (
@@ -118,8 +127,22 @@ class SchemaMigration implements ApplicationRunner {
         if (tableExists("playback_state") && !columns("playback_state").contains("queue_track_ids")) {
             jdbcClient.sql("ALTER TABLE playback_state ADD COLUMN queue_track_ids TEXT NOT NULL DEFAULT ''").update();
         }
-        if (tableExists("download_tasks") && !columns("download_tasks").contains("target_playlist_id")) {
-            jdbcClient.sql("ALTER TABLE download_tasks ADD COLUMN target_playlist_id TEXT").update();
+        if (tableExists("download_tasks")) {
+            var downloadTaskColumns = columns("download_tasks");
+            if (!downloadTaskColumns.contains("target_playlist_id")) {
+                jdbcClient.sql("ALTER TABLE download_tasks ADD COLUMN target_playlist_id TEXT").update();
+            }
+            if (downloadTaskColumns.contains("title") && downloadTaskColumns.contains("artist")
+                && downloadTaskColumns.contains("state")) {
+                jdbcClient.sql("""
+                        CREATE INDEX IF NOT EXISTS idx_download_tasks_subscription_match
+                        ON download_tasks(
+                            trim(title) COLLATE NOCASE,
+                            replace(trim(artist), '、', '/') COLLATE NOCASE,
+                            state
+                        )
+                        """).update();
+            }
         }
         if (tableExists("playlists")) {
             var playlistColumns = columns("playlists");
