@@ -34,6 +34,7 @@ struct MusicLibraryView: View {
     @State private var pendingForceScrapePlaylist: Playlist?
     @State private var isForceScrapingPlaylist = false
     @State private var forceScrapeMessage: String?
+    @State private var playlistDeletionErrorMessage: String?
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
     var requestedCollectionID: String? = nil
@@ -225,6 +226,14 @@ struct MusicLibraryView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(subscriptionErrorMessage ?? "未知错误")
+        }
+        .alert("删除歌单失败", isPresented: Binding(
+            get: { playlistDeletionErrorMessage != nil },
+            set: { if !$0 { playlistDeletionErrorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text(playlistDeletionErrorMessage ?? "未知错误")
         }
         .overlay(alignment: .bottom) {
             if isForceScrapingPlaylist {
@@ -522,23 +531,24 @@ struct MusicLibraryView: View {
 
             if selectedFilter != .songs {
               ForEach(visibleCollections) { collection in
-                NavigationLink {
-                    if isPlaylistFilter {
-                        ManagedPlaylistDetailView(playlistID: collection.id)
-                    } else {
-                        SonaTrackListView(collection: collection)
+                ZStack(alignment: .trailing) {
+                    NavigationLink {
+                        if isPlaylistFilter {
+                            ManagedPlaylistDetailView(playlistID: collection.id)
+                        } else {
+                            SonaTrackListView(collection: collection)
+                        }
+                    } label: {
+                        libraryRow(collection)
                     }
-                } label: {
-                    libraryRow(collection)
-                }
-                .buttonStyle(.plain)
-                .overlay(alignment: .trailing) {
+                    .buttonStyle(.plain)
+
                     if isPlaylistFilter,
                        let playlist = personal.playlists.first(where: { $0.id == collection.id }),
                        playlist.trackIDs.isEmpty,
                        canDelete(playlist) {
                         Button("删除歌单", systemImage: "trash", role: .destructive) {
-                            Task { await personal.deletePlaylist(id: playlist.id) }
+                            Task { await deletePlaylist(playlist) }
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
@@ -569,7 +579,7 @@ struct MusicLibraryView: View {
                         }
                         if canDelete(playlist) {
                             Button("删除歌单", systemImage: "trash", role: .destructive) {
-                                Task { await personal.deletePlaylist(id: collection.id) }
+                                Task { await deletePlaylist(playlist) }
                             }
                         }
                     }
@@ -669,6 +679,17 @@ struct MusicLibraryView: View {
         guard !subscriptionPlaylistIDs.contains(playlist.id) else { return false }
         return !playlist.isDirectoryPlaylist ||
             (playlist.trackIDs.isEmpty && session.currentUser?.isAdmin == true)
+    }
+
+    private func deletePlaylist(_ playlist: Playlist) async {
+        guard await personal.deletePlaylist(id: playlist.id) else {
+            let message = personal.errorMessage ?? "无法删除该歌单"
+            playlistDeletionErrorMessage = message == "Directory playlist folder is not empty"
+                ? "目录中仍有文件（包括隐藏文件），只有真实空目录可以删除。"
+                : message
+            return
+        }
+        playlistDeletionErrorMessage = nil
     }
 }
 
