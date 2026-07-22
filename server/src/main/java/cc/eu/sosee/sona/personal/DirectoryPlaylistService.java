@@ -100,10 +100,13 @@ public class DirectoryPlaylistService {
     }
 
     @Transactional
-    DeleteResult deleteEmptyDirectoryPlaylist(String userId, String playlistId) throws IOException {
+    DeleteResult deleteEmptyDirectoryPlaylist(
+        String userId, boolean isAdmin, String playlistId
+    ) throws IOException {
         var relativePath = jdbcClient.sql("""
                 SELECT directory_path FROM playlists
-                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NOT NULL
+                WHERE id = :playlistId AND (:isAdmin = TRUE OR user_id = :userId)
+                  AND directory_path IS NOT NULL
                   AND NOT EXISTS (
                       SELECT 1 FROM playlist_tracks
                       WHERE playlist_tracks.playlist_id = playlists.id
@@ -111,6 +114,7 @@ public class DirectoryPlaylistService {
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
+            .param("isAdmin", isAdmin)
             .query(String.class)
             .optional();
         if (relativePath.isEmpty()) {
@@ -137,10 +141,12 @@ public class DirectoryPlaylistService {
 
         var deleted = jdbcClient.sql("""
                 DELETE FROM playlists
-                WHERE id = :playlistId AND user_id = :userId AND directory_path = :directoryPath
+                WHERE id = :playlistId AND (:isAdmin = TRUE OR user_id = :userId)
+                  AND directory_path = :directoryPath
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
+            .param("isAdmin", isAdmin)
             .param("directoryPath", relativePath.get())
             .update() == 1;
         if (!deleted) {

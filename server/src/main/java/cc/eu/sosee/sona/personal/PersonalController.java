@@ -237,7 +237,9 @@ class PersonalController {
             return ResponseEntity.noContent().build();
         }
         try {
-            var result = directoryPlaylistService.deleteEmptyDirectoryPlaylist(user.id(), playlistId);
+            var result = directoryPlaylistService.deleteEmptyDirectoryPlaylist(
+                user.id(), user.role() == UserRole.ADMIN, playlistId
+            );
             return switch (result) {
                 case DELETED -> ResponseEntity.noContent().build();
                 case NOT_EMPTY -> throw new ResponseStatusException(
