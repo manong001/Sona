@@ -104,7 +104,6 @@ public class ScanCoordinator {
                     result = add(result, new ScanResult(
                         0, 0, libraryScanner.removeMissingTracks(), 0, 0
                     ));
-                    directoryPlaylistService.pruneStalePlaylists(directories);
                     status.set(ScanStatus.completed(result, errors, totalDirectories));
                 } else {
                     status.set(ScanStatus.running(

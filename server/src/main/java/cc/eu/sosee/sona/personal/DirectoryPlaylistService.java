@@ -8,7 +8,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,37 +46,10 @@ public class DirectoryPlaylistService {
             return;
         }
 
-        var directoryPaths = new HashSet<String>();
         for (var directory : leafDirectories()) {
             var relativePath = relative(directory);
-            directoryPaths.add(relativePath);
             var playlist = findOrCreate(ownerId.get(), directory, relativePath);
             syncTracks(playlist.id(), playlist.poolType(), directory);
-        }
-
-        pruneStalePlaylists(directoryPaths.stream().toList());
-    }
-
-    @Transactional
-    public void pruneStalePlaylists(List<String> directoryPaths) {
-        if (directoryPaths.isEmpty()) {
-            return;
-        }
-        var currentPaths = new HashSet<>(directoryPaths);
-        var stalePlaylists = jdbcClient.sql("""
-                SELECT id, directory_path FROM playlists
-                WHERE directory_path IS NOT NULL
-                """)
-            .query((resultSet, rowNumber) -> new DirectoryPlaylist(
-                resultSet.getString("id"), resultSet.getString("directory_path"), "NORMAL"
-            ))
-            .list();
-        for (var playlist : stalePlaylists) {
-            if (!currentPaths.contains(playlist.directoryPath())) {
-                jdbcClient.sql("DELETE FROM playlists WHERE id = :id")
-                    .param("id", playlist.id())
-                    .update();
-            }
         }
     }
 
