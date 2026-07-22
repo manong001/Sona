@@ -496,6 +496,23 @@ final class APIClient {
         try await request(path: "/api/v1/tracks/\(id)")
     }
 
+    func tracks(ids: [String]) async throws -> [Track] {
+        struct Body: Encodable { let trackIds: [String] }
+        var seen = Set<String>()
+        let orderedIDs = ids.filter { seen.insert($0).inserted }
+        var tracksByID: [String: Track] = [:]
+        for start in stride(from: 0, to: orderedIDs.count, by: 500) {
+            let end = min(start + 500, orderedIDs.count)
+            let batch: [Track] = try await request(
+                path: "/api/v1/tracks/batch",
+                method: "POST",
+                body: try encoder.encode(Body(trackIds: Array(orderedIDs[start..<end])))
+            )
+            batch.forEach { tracksByID[$0.id] = $0 }
+        }
+        return orderedIDs.compactMap { tracksByID[$0] }
+    }
+
     func managedTracks(poolType: String? = nil) async throws -> [Track] {
         var components = URLComponents(
             url: url(for: "/api/v1/library/tracks"), resolvingAgainstBaseURL: false

@@ -57,6 +57,26 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
+    public List<TrackRecord> findVisibleByIds(List<String> ids, String userId) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbcClient.sql("""
+                SELECT tracks.* FROM tracks
+                WHERE tracks.id IN (:ids)
+                  AND tracks.pool_type IN ('NORMAL', 'DISCOVERY', 'CHILD')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
+                  )
+                """)
+            .param("ids", ids.stream().distinct().toList())
+            .param("userId", userId)
+            .query(ROW_MAPPER)
+            .list();
+    }
+
+    @Override
     public void save(TrackRecord track) {
         save(track, false);
     }

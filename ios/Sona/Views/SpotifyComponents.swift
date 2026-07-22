@@ -1141,13 +1141,14 @@ struct SonaTrackListView: View {
         guard let playlist else { return }
         isLoadingPlaylistTracks = true
         defer { isLoadingPlaylistTracks = false }
-        for id in playlist.trackIDs
-        where library.track(id: id) == nil && loadedPlaylistTracks[id] == nil {
-            guard !Task.isCancelled else { return }
-            if let track = try? await APIClient.shared.track(id: id) {
-                loadedPlaylistTracks[id] = track
-            }
+        let missingIDs = playlist.trackIDs.filter {
+            library.track(id: $0) == nil && loadedPlaylistTracks[$0] == nil
         }
+        guard !missingIDs.isEmpty, !Task.isCancelled,
+              let loaded = try? await APIClient.shared.tracks(ids: missingIDs) else { return }
+        var updated = loadedPlaylistTracks
+        loaded.forEach { updated[$0.id] = $0 }
+        loadedPlaylistTracks = updated
     }
 
     private func playlistArtworkActionTitle(for track: Track) -> String? {

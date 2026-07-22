@@ -1035,7 +1035,7 @@ private struct ManagedPlaylistDetailView: View {
             guard let item else { return }
             Task { await uploadPlaylistArtwork(from: item) }
         }
-        .task { await loadMissingTracks() }
+        .task(id: playlist?.trackIDs) { await loadMissingTracks() }
         .sheet(item: $editingDirectoryPlaylist) { playlist in
             DirectoryPlaylistEditor(playlist: playlist) { name, poolType in
                 guard await personal.updateDirectoryPlaylist(
@@ -1236,7 +1236,7 @@ private struct ManagedPlaylistDetailView: View {
                 Text(session.currentUser?.username ?? "Sona")
                     .font(.subheadline.weight(.semibold))
             }
-            Text("\(tracks.count) 首歌曲")
+            Text("\(playlist?.trackIDs.count ?? 0) 首歌曲")
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.68))
         }
@@ -1280,17 +1280,22 @@ private struct ManagedPlaylistDetailView: View {
                         isSelecting.toggle()
                         if !isSelecting { selectedIDs.removeAll() }
                     } label: {
-                        Label(isSelecting ? "完成" : "多选", systemImage: "checklist")
+                        Label(
+                            isSelecting ? "完成" : "多选",
+                            systemImage: isSelecting ? "checkmark" : "checklist"
+                        )
                             .frame(maxWidth: .infinity)
                     }
                     .disabled(tracks.isEmpty)
                 }
             }
             .buttonStyle(.bordered)
+            .labelStyle(.iconOnly)
 
             if canEditPlaylistArtwork {
                 playlistArtworkMenu
                     .buttonStyle(.bordered)
+                    .labelStyle(.iconOnly)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -1386,11 +1391,14 @@ private struct ManagedPlaylistDetailView: View {
 
     private func loadMissingTracks() async {
         guard let playlist else { return }
-        for id in playlist.trackIDs where library.track(id: id) == nil && loadedTracks[id] == nil {
-            if let track = try? await APIClient.shared.track(id: id) {
-                loadedTracks[id] = track
-            }
+        let missingIDs = playlist.trackIDs.filter {
+            library.track(id: $0) == nil && loadedTracks[$0] == nil
         }
+        guard !missingIDs.isEmpty,
+              let loaded = try? await APIClient.shared.tracks(ids: missingIDs) else { return }
+        var updated = loadedTracks
+        loaded.forEach { updated[$0.id] = $0 }
+        loadedTracks = updated
     }
 
     private func importServerDirectory(_ directory: ServerMusicDirectory) async {

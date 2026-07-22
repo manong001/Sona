@@ -12,6 +12,14 @@ interface TrackStore {
 
     Optional<TrackRecord> findVisibleById(String id, String userId);
 
+    default List<TrackRecord> findVisibleByIds(List<String> ids, String userId) {
+        return ids.stream()
+            .distinct()
+            .map(id -> findVisibleById(id, userId).orElse(null))
+            .filter(java.util.Objects::nonNull)
+            .toList();
+    }
+
     void save(TrackRecord track);
 
     default void save(TrackRecord track, boolean overwriteMetadata) {
