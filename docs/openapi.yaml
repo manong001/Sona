@@ -516,6 +516,29 @@ paths:
         "204":
           description: 歌单已删除
         "409": {description: 目录歌单对应的真实目录并非空目录}
+  /me/playlists/order:
+    put:
+      operationId: reorderPlaylists
+      description: 保存当前用户在指定歌曲池模式下的音乐库歌单顺序
+      parameters:
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [playlistIds]
+              properties:
+                playlistIds:
+                  type: array
+                  maxItems: 500
+                  items: {type: string}
+      responses:
+        "204": {description: 当前用户的歌单顺序已保存}
+        "400": {description: 歌单 ID 重复、不完整或包含当前用户不可见的歌单}
   /me/playlists/{playlistId}/rescrape:
     post:
       operationId: forceRescrapePlaylist

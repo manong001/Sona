@@ -247,6 +247,21 @@ final class APIClient {
         )
     }
 
+    func reorderPlaylists(ids: [String]) async throws {
+        struct Body: Encodable { let playlistIds: [String] }
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/playlists/order"), resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        try await requestVoid(
+            path: components.url!.absoluteString,
+            method: "PUT",
+            body: try encoder.encode(Body(playlistIds: ids))
+        )
+    }
+
     func updateDirectoryPlaylist(
         id: String,
         directoryPath: String?,

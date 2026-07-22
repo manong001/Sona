@@ -262,11 +262,18 @@ class PersonalRepository {
                            SELECT position FROM home_items
                            WHERE home_items.user_id = :userId
                              AND home_items.item_id = playlists.id
-                       ) AS home_position
+                       ) AS home_position,
+                       playlist_order_items.position AS library_position
                 FROM playlists
                 LEFT JOIN tracks pinned_artwork ON pinned_artwork.id = playlists.artwork_track_id
+                LEFT JOIN playlist_order_items
+                  ON playlist_order_items.user_id = :userId
+                 AND playlist_order_items.playlist_id = playlists.id
                 WHERE playlists.user_id = :userId OR playlists.featured = 1
-                ORDER BY playlists.created_at
+                ORDER BY playlist_order_items.position IS NULL,
+                         playlist_order_items.position,
+                         playlists.created_at,
+                         playlists.id
                 """)
             .param("userId", userId)
             .query((resultSet, rowNumber) -> new PlaylistRow(
@@ -328,6 +335,38 @@ class PersonalRepository {
                 ? playlist.poolType().equals("CHILD")
                 : !playlist.poolType().equals("CHILD"))
             .toList();
+    }
+
+    @Transactional
+    boolean reorderPlaylists(String userId, boolean childMode, List<String> playlistIds) {
+        if (playlistIds.size() != new LinkedHashSet<>(playlistIds).size()) {
+            return false;
+        }
+        var visibleIds = jdbcClient.sql("""
+                SELECT id FROM playlists
+                WHERE (user_id = :userId OR featured = 1)
+                  AND ((:childMode = 1 AND pool_type = 'CHILD')
+                    OR (:childMode = 0 AND pool_type <> 'CHILD'))
+                """)
+            .param("userId", userId)
+            .param("childMode", childMode)
+            .query(String.class)
+            .list();
+        if (visibleIds.size() != playlistIds.size() || !visibleIds.containsAll(playlistIds)) {
+            return false;
+        }
+        for (var position = 0; position < playlistIds.size(); position++) {
+            jdbcClient.sql("""
+                    INSERT INTO playlist_order_items(user_id, playlist_id, position)
+                    VALUES (:userId, :playlistId, :position)
+                    ON CONFLICT(user_id, playlist_id) DO UPDATE SET position = excluded.position
+                    """)
+                .param("userId", userId)
+                .param("playlistId", playlistIds.get(position))
+                .param("position", position)
+                .update();
+        }
+        return true;
     }
 
     @Transactional

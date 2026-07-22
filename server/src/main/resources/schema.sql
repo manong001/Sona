@@ -138,6 +138,18 @@ CREATE TABLE IF NOT EXISTS home_items (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS playlist_order_items (
+    user_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (user_id, playlist_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_playlist_order_items_user_position
+    ON playlist_order_items(user_id, position);
+
 CREATE TABLE IF NOT EXISTS playlist_tracks (
     playlist_id TEXT NOT NULL,
     track_id TEXT NOT NULL,

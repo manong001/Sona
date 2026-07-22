@@ -565,6 +565,25 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func reorderPlaylists(ids: [String]) async -> Bool {
+        guard ids.count == playlists.count,
+              Set(ids) == Set(playlists.map(\.id)) else {
+            errorMessage = "歌单顺序不完整，请刷新后重试"
+            return false
+        }
+        do {
+            try await api.reorderPlaylists(ids: ids)
+            let playlistsByID = Dictionary(uniqueKeysWithValues: playlists.map { ($0.id, $0) })
+            playlists = ids.compactMap { playlistsByID[$0] }
+            saveCachedPlaylists()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     private func normalizeHomeItemPositions() {
         var selected: [(id: String, position: Int?)] = playlists.filter(\.shownOnHome).map {
             ($0.id, $0.homePosition)

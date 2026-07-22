@@ -19,6 +19,7 @@ struct MusicLibraryView: View {
     @State private var query = ""
     @State private var showsCreatePlaylist = false
     @State private var showsHomePlaylistPicker = false
+    @State private var showsPlaylistOrder = false
     @State private var showsCreateSubscription = false
     @State private var showsSubscriptionManager = false
     @State private var subscriptions: [PlaylistSubscription] = []
@@ -181,6 +182,10 @@ struct MusicLibraryView: View {
         }
         .sheet(isPresented: $showsHomePlaylistPicker) {
             HomePlaylistSelectionView()
+                .environmentObject(personal)
+        }
+        .sheet(isPresented: $showsPlaylistOrder) {
+            PlaylistOrderView()
                 .environmentObject(personal)
         }
         .sheet(isPresented: $showsCreateSubscription) {
@@ -419,14 +424,23 @@ struct MusicLibraryView: View {
 
     private var sortBar: some View {
         HStack {
-            Menu {
-                sortButton("标题", value: "TITLE")
-                sortButton("艺人", value: "ARTIST")
-                sortButton("专辑", value: "ALBUM")
-                sortButton("最近加入", value: "NEWEST")
-            } label: {
-                Label(sortTitle, systemImage: "arrow.up.arrow.down")
-                    .font(.subheadline.weight(.medium))
+            if selectedFilter == .playlists && query.isEmpty {
+                Button {
+                    showsPlaylistOrder = true
+                } label: {
+                    Label("自定义排序", systemImage: "arrow.up.arrow.down")
+                        .font(.subheadline.weight(.medium))
+                }
+            } else {
+                Menu {
+                    sortButton("标题", value: "TITLE")
+                    sortButton("艺人", value: "ARTIST")
+                    sortButton("专辑", value: "ALBUM")
+                    sortButton("最近加入", value: "NEWEST")
+                } label: {
+                    Label(sortTitle, systemImage: "arrow.up.arrow.down")
+                        .font(.subheadline.weight(.medium))
+                }
             }
             Spacer()
             if isPlaylistFilter {
@@ -773,6 +787,96 @@ struct TrackIdentityEditorView: View {
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct PlaylistOrderView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var personal: PersonalStore
+    @State private var orderedIDs: [String] = []
+    @State private var editMode: EditMode = .active
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var orderedPlaylists: [Playlist] {
+        let playlistsByID = Dictionary(
+            uniqueKeysWithValues: personal.playlists.map { ($0.id, $0) }
+        )
+        return orderedIDs.compactMap { playlistsByID[$0] }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(orderedPlaylists) { playlist in
+                    HStack(spacing: 12) {
+                        ArtworkView(
+                            path: playlist.artworkURLs.first,
+                            cornerRadius: 5,
+                            thumbnailSize: 192
+                        )
+                        .frame(width: 48, height: 48)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(playlist.name)
+                                .font(.body.weight(.medium))
+                            Text("\(playlist.trackIDs.count) 首歌曲")
+                                .font(.caption)
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        }
+                    }
+                    .frame(height: 56)
+                }
+                .onMove { orderedIDs.move(fromOffsets: $0, toOffset: $1) }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.sonaBackground)
+            .environment(\.editMode, $editMode)
+            .navigationTitle("歌单排序")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", role: .cancel) { dismiss() }
+                        .disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { save() }
+                        .disabled(isSaving)
+                }
+            }
+            .overlay {
+                if isSaving {
+                    ProgressView("正在保存…")
+                        .padding(18)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+        .onAppear {
+            orderedIDs = personal.playlists.map(\.id)
+            editMode = .active
+        }
+        .alert("排序保存失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "未知错误")
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        let ids = orderedIDs
+        Task {
+            if await personal.reorderPlaylists(ids: ids) {
+                dismiss()
+            } else {
+                errorMessage = personal.errorMessage ?? "请稍后重试"
+                isSaving = false
+            }
         }
     }
 }

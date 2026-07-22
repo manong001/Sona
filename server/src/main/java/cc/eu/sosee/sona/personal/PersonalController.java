@@ -285,6 +285,18 @@ class PersonalController {
         return ResponseEntity.noContent().build();
     }
 
+    @PutMapping("/playlists/order")
+    ResponseEntity<Void> reorderPlaylists(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @RequestParam(defaultValue = "false") boolean childMode,
+        @Valid @RequestBody PlaylistIdsRequest request
+    ) {
+        if (!repository.reorderPlaylists(user.id(), childMode, request.playlistIds())) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid playlist order");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     @PatchMapping("/playlists/{playlistId}")
     PersonalRepository.PlaylistData updateDirectoryPlaylist(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -522,6 +534,11 @@ class PersonalController {
 
     record HomeItemIdsRequest(
         @NotNull @Size(max = 500) List<@NotBlank String> itemIds
+    ) {
+    }
+
+    record PlaylistIdsRequest(
+        @NotNull @Size(max = 500) List<@NotBlank String> playlistIds
     ) {
     }
 
