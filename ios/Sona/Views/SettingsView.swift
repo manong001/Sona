@@ -1422,10 +1422,14 @@ private struct OfflineManagementView: View {
 }
 
 private struct TrashView: View {
+    @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var tracks: [Track] = []
     @State private var errorMessage: String?
+    @State private var deletingTrack: Track?
 
     var body: some View {
         List {
@@ -1438,9 +1442,17 @@ private struct TrashView: View {
                     allowsMoveToTrash: false,
                     moreActionTitle: "恢复",
                     moreActionSystemImage: "arrow.uturn.backward",
-                    moreAction: { Task { await restore(track) } }
+                    moreAction: { Task { await restore(track) } },
+                    deleteTitle: session.currentUser?.isAdmin == true ? "永久删除" : nil,
+                    deleteAction: session.currentUser?.isAdmin == true
+                        ? { deletingTrack = track } : nil
                 )
                     .swipeActions {
+                        if session.currentUser?.isAdmin == true {
+                            Button("永久删除", role: .destructive) {
+                                deletingTrack = track
+                            }
+                        }
                         Button("恢复") { Task { await restore(track) } }.tint(.green)
                     }
             }
@@ -1467,6 +1479,21 @@ private struct TrashView: View {
         }
         .task { await load() }
         .refreshable { await load() }
+        .alert(
+            "永久删除真实文件？",
+            isPresented: Binding(
+                get: { deletingTrack != nil },
+                set: { if !$0 { deletingTrack = nil } }
+            ),
+            presenting: deletingTrack
+        ) { track in
+            Button("取消", role: .cancel) { deletingTrack = nil }
+            Button("永久删除", role: .destructive) {
+                Task { await permanentlyDelete(track) }
+            }
+        } message: { track in
+            Text("将永久删除“\(track.title)”的服务器音频文件、封面及全部关联记录。此操作不可恢复。")
+        }
     }
 
     private func load() async {
@@ -1482,6 +1509,23 @@ private struct TrashView: View {
             await library.refresh()
             await personal.refresh()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func permanentlyDelete(_ track: Track) async {
+        guard session.currentUser?.isAdmin == true else {
+            errorMessage = "仅管理员可以永久删除文件"
+            return
+        }
+        do {
+            try await APIClient.shared.deleteTrack(id: track.id, isAdmin: true)
+            offline.remove(track)
+            player.removeTrack(id: track.id)
+            library.removeTrack(id: track.id)
+            tracks.removeAll { $0.id == track.id }
+            await personal.refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
