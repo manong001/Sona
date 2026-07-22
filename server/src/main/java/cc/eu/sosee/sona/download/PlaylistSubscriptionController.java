@@ -13,6 +13,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -65,6 +66,15 @@ class PlaylistSubscriptionController {
         return service.downloadMissing(user.id(), id);
     }
 
+    @PatchMapping("/{id}")
+    PlaylistSubscriptionRepository.Subscription rename(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @Valid @RequestBody RenameRequest request
+    ) {
+        return service.rename(user.id(), id, request.name());
+    }
+
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -87,6 +97,9 @@ class PlaylistSubscriptionController {
         boolean autoDownload,
         @Min(1) @Max(168) int syncIntervalHours
     ) {
+    }
+
+    record RenameRequest(@NotBlank @Size(max = 80) String name) {
     }
 
     record ErrorResponse(String error) {

@@ -442,6 +442,7 @@ struct PlaylistSubscriptionsView: View {
     @State private var downloadingMissingIDs: Set<String> = []
     @State private var isLoading = true
     @State private var showsCreate = false
+    @State private var renamingSubscription: PlaylistSubscription?
     @State private var errorMessage: String?
     let changed: () -> Void
 
@@ -490,6 +491,17 @@ struct PlaylistSubscriptionsView: View {
                     changed()
                 }
             }
+            .sheet(item: $renamingSubscription) { subscription in
+                RenamePlaylistSubscriptionView(subscription: subscription) { name in
+                    let updated = try await APIClient.shared.renamePlaylistSubscription(
+                        id: subscription.id, name: name
+                    )
+                    if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                        subscriptions[index] = updated
+                    }
+                    changed()
+                }
+            }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -511,6 +523,12 @@ struct PlaylistSubscriptionsView: View {
                         .foregroundStyle(Color.sonaSecondaryText)
                 }
                 Spacer()
+                Button {
+                    renamingSubscription = subscription
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.plain)
                 Button {
                     Task { await sync(subscription) }
                 } label: {
@@ -564,6 +582,9 @@ struct PlaylistSubscriptionsView: View {
         .padding(.vertical, 6)
         .listRowBackground(Color.sonaBackground)
         .contextMenu {
+            Button("修改名称", systemImage: "pencil") {
+                renamingSubscription = subscription
+            }
             Button("立即同步", systemImage: "arrow.clockwise") {
                 Task { await sync(subscription) }
             }
@@ -630,6 +651,71 @@ struct PlaylistSubscriptionsView: View {
         case "DISCOVERY": "发现歌曲池"
         case "CHILD": "儿童歌池"
         default: "正常歌曲池"
+        }
+    }
+}
+
+private struct RenamePlaylistSubscriptionView: View {
+    @Environment(\.dismiss) private var dismiss
+    let subscription: PlaylistSubscription
+    let saved: (String) async throws -> Void
+    @State private var name: String
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(subscription: PlaylistSubscription, saved: @escaping (String) async throws -> Void) {
+        self.subscription = subscription
+        self.saved = saved
+        _name = State(initialValue: subscription.name)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("歌单名称") {
+                    TextField("歌单名称", text: $name)
+                }
+                Section {
+                    Text("只修改 Sona 中的名称，不会修改来源平台的公开歌单。")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+            }
+            .navigationTitle("修改订阅歌单")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                        .disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { Task { await save() } }
+                        .disabled(isSaving || normalizedName.isEmpty)
+                }
+            }
+            .alert("修改失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "未知错误")
+            }
+        }
+    }
+
+    private var normalizedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            try await saved(normalizedName)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

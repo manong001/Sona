@@ -16,6 +16,7 @@ import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -75,13 +76,23 @@ class PlaylistSubscriptionService {
     PlaylistSubscriptionRepository.Subscription sync(String userId, String id) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
-        return sync(subscription, false, false);
+        return sync(subscription, "订阅歌单".equals(subscription.name()), false);
     }
 
     PlaylistSubscriptionRepository.Subscription downloadMissing(String userId, String id) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
-        return sync(subscription, false, true);
+        return sync(subscription, "订阅歌单".equals(subscription.name()), true);
+    }
+
+    @Transactional
+    PlaylistSubscriptionRepository.Subscription rename(String userId, String id, String name) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var normalizedName = name.strip();
+        playlistImportService.rename(userId, subscription.playlistId(), normalizedName);
+        subscriptions.rename(subscription.id(), normalizedName);
+        return subscriptions.find(userId, id).orElseThrow();
     }
 
     void delete(String userId, String id) {
@@ -94,7 +105,7 @@ class PlaylistSubscriptionService {
     void syncDueSubscriptions() {
         for (var subscription : subscriptions.findDue()) {
             try {
-                sync(subscription, false, false);
+                sync(subscription, "订阅歌单".equals(subscription.name()), false);
             } catch (RuntimeException ignored) {
                 // 单个公开歌单失效时保留上次成功镜像，并继续同步其他订阅。
             }

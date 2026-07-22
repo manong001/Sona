@@ -773,6 +773,15 @@ final class APIClient {
         )
     }
 
+    func renamePlaylistSubscription(id: String, name: String) async throws -> PlaylistSubscription {
+        struct Body: Encodable { let name: String }
+        return try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)",
+            method: "PATCH",
+            body: try encoder.encode(Body(name: name))
+        )
+    }
+
     func deletePlaylistSubscription(id: String) async throws {
         try await requestVoid(path: "/api/v1/me/playlist-subscriptions/\(id)", method: "DELETE")
     }

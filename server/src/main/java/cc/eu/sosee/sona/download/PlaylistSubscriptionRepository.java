@@ -118,8 +118,11 @@ class PlaylistSubscriptionRepository {
     }
 
     void rename(String id, String name) {
-        jdbcClient.sql("UPDATE playlist_subscriptions SET name = :name WHERE id = :id")
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions SET name = :name, updated_at = :now WHERE id = :id
+                """)
             .param("name", name)
+            .param("now", clock.millis())
             .param("id", id)
             .update();
     }

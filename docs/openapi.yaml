@@ -509,6 +509,7 @@ paths:
         "404": {description: 目录歌单不存在}
     delete:
       operationId: deletePlaylist
+      description: 删除用户歌单；目录歌单仅可由其所属管理员在歌单为空时删除
       parameters:
         - $ref: "#/components/parameters/PlaylistId"
       responses:

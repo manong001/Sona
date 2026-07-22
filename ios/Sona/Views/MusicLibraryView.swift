@@ -510,6 +510,19 @@ struct MusicLibraryView: View {
                     libraryRow(collection)
                 }
                 .buttonStyle(.plain)
+                .overlay(alignment: .trailing) {
+                    if isPlaylistFilter,
+                       let playlist = personal.playlists.first(where: { $0.id == collection.id }),
+                       playlist.trackIDs.isEmpty,
+                       canDelete(playlist) {
+                        Button("删除歌单", systemImage: "trash", role: .destructive) {
+                            Task { await personal.deletePlaylist(id: playlist.id) }
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .padding(.trailing, 20)
+                    }
+                }
                 .task {
                     guard !isPlaylistFilter,
                           collection.id == visibleCollections.last?.id else { return }
@@ -532,7 +545,7 @@ struct MusicLibraryView: View {
                             }
                             .disabled(isForceScrapingPlaylist || playlist.trackIDs.isEmpty)
                         }
-                        if !playlist.isDirectoryPlaylist && !subscriptionPlaylistIDs.contains(playlist.id) {
+                        if canDelete(playlist) {
                             Button("删除歌单", systemImage: "trash", role: .destructive) {
                                 Task { await personal.deletePlaylist(id: collection.id) }
                             }
@@ -628,6 +641,12 @@ struct MusicLibraryView: View {
         .padding(.horizontal, 16)
         .frame(height: 80)
         .contentShape(Rectangle())
+    }
+
+    private func canDelete(_ playlist: Playlist) -> Bool {
+        guard !subscriptionPlaylistIDs.contains(playlist.id) else { return false }
+        return !playlist.isDirectoryPlaylist ||
+            (playlist.trackIDs.isEmpty && session.currentUser?.isAdmin == true)
     }
 }
 

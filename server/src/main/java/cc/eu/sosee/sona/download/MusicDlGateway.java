@@ -6,11 +6,11 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
 @Component
@@ -90,34 +90,40 @@ class MusicDlGateway implements DownloaderGateway {
     @Override
     public DownloadPlaylistPreview parsePlaylist(String url) {
         requireEnabled();
-        try {
-            var requestBody = requestBody(new PlaylistBody(url));
-            var responseBody = searchClient.post()
-                .uri("/v1/playlists/parse")
-                .header("X-Sona-Token", token)
-                .contentType(MediaType.APPLICATION_JSON)
-                .contentLength(requestBody.length)
-                .accept(MediaType.APPLICATION_JSON)
-                .body(requestBody)
-                .retrieve()
-                .body(byte[].class);
-            var response = responseBody == null || responseBody.length == 0
-                ? null
-                : objectMapper.readValue(responseBody, DownloadPlaylistPreview.class);
-            if (response == null || response.items() == null || response.items().isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "歌单中没有可下载歌曲");
-            }
-            return response;
-        } catch (RestClientResponseException exception) {
-            var status = exception.getStatusCode().is4xxClientError()
-                ? HttpStatus.BAD_REQUEST
-                : HttpStatus.BAD_GATEWAY;
-            throw new ResponseStatusException(status, playlistError(exception), exception);
-        } catch (JacksonException exception) {
-            throw new ResponseStatusException(
-                HttpStatus.BAD_GATEWAY, "歌单解析服务返回了无效数据", exception
-            );
+        var requestBody = requestBody(new PlaylistBody(url));
+        var response = searchClient.post()
+            .uri("/v1/playlists/parse")
+            .header("X-Sona-Token", token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .contentLength(requestBody.length)
+            .accept(MediaType.APPLICATION_JSON)
+            .body(requestBody)
+            .exchange((request, sidecarResponse) -> {
+                var responseBody = sidecarResponse.getBody().readAllBytes();
+                var statusCode = sidecarResponse.getStatusCode();
+                if (statusCode.isError()) {
+                    var status = statusCode.is4xxClientError()
+                        ? HttpStatus.BAD_REQUEST
+                        : HttpStatus.BAD_GATEWAY;
+                    throw new ResponseStatusException(
+                        status, playlistError(statusCode, responseBody)
+                    );
+                }
+                if (responseBody.length == 0) {
+                    return null;
+                }
+                try {
+                    return objectMapper.readValue(responseBody, DownloadPlaylistPreview.class);
+                } catch (JacksonException exception) {
+                    throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY, "歌单解析服务返回了无效数据", exception
+                    );
+                }
+            });
+        if (response == null || response.items() == null || response.items().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "歌单中没有可下载歌曲");
         }
+        return response;
     }
 
     @Override
@@ -147,16 +153,16 @@ class MusicDlGateway implements DownloaderGateway {
         }
     }
 
-    private String playlistError(RestClientResponseException exception) {
+    private String playlistError(HttpStatusCode statusCode, byte[] responseBody) {
         try {
-            var response = objectMapper.readValue(exception.getResponseBodyAsString(), ErrorEnvelope.class);
+            var response = objectMapper.readValue(responseBody, ErrorEnvelope.class);
             if (response != null && response.error() != null && !response.error().isBlank()) {
                 return response.error();
             }
         } catch (JacksonException ignored) {
             // Fall through to the stable client-facing message.
         }
-        return exception.getStatusCode().is4xxClientError()
+        return statusCode.is4xxClientError()
             ? "歌单链接无法解析"
             : "歌单解析服务暂时不可用";
     }

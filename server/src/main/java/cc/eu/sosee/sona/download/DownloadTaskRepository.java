@@ -92,7 +92,8 @@ class DownloadTaskRepository {
         return jdbcClient.sql("""
                 SELECT COUNT(*) FROM tracks
                 WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
-                  AND trim(artist) COLLATE NOCASE = trim(:artist) COLLATE NOCASE
+                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
+                      replace(trim(:artist), '、', '/') COLLATE NOCASE
                 """)
             .param("title", candidate.title())
             .param("artist", candidate.artist())
@@ -104,7 +105,8 @@ class DownloadTaskRepository {
         return jdbcClient.sql("""
                 SELECT id FROM tracks
                 WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
-                  AND trim(artist) COLLATE NOCASE = trim(:artist) COLLATE NOCASE
+                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
+                      replace(trim(:artist), '、', '/') COLLATE NOCASE
                 ORDER BY updated_at DESC, id
                 LIMIT 1
                 """)
@@ -118,7 +120,8 @@ class DownloadTaskRepository {
         return jdbcClient.sql("""
                 SELECT state FROM download_tasks
                 WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
-                  AND trim(artist) COLLATE NOCASE = trim(:artist) COLLATE NOCASE
+                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
+                      replace(trim(:artist), '、', '/') COLLATE NOCASE
                   AND state IN ('QUEUED', 'RUNNING')
                 ORDER BY CASE state
                     WHEN 'RUNNING' THEN 0
