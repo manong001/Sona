@@ -42,7 +42,8 @@ struct ArtworkView: View {
 }
 
 func sonaArtworkURL(path: String?, thumbnailSize: Int?) -> URL? {
-    guard let path else { return nil }
+    guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !path.isEmpty else { return nil }
     let url = APIClient.shared.url(for: path)
     guard let thumbnailSize,
           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -53,4 +54,17 @@ func sonaArtworkURL(path: String?, thumbnailSize: Int?) -> URL? {
     queryItems.append(URLQueryItem(name: "size", value: String(thumbnailSize)))
     components.queryItems = queryItems
     return components.url
+}
+
+func sonaArtworkPaths(_ paths: [String]) -> [String] {
+    var seen = Set<String>()
+    return paths.compactMap { path in
+        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, seen.insert(value).inserted else { return nil }
+        return value
+    }
+}
+
+func sonaFirstArtworkURL(in tracks: [Track]) -> String? {
+    sonaArtworkPaths(tracks.compactMap(\.artworkURL)).first
 }

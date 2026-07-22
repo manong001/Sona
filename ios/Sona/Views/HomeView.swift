@@ -60,7 +60,7 @@ struct HomeView: View {
             id: "liked-songs",
             title: "收藏的歌曲",
             subtitle: "歌单 · \(username)",
-            artworkURL: favoriteTracks.first?.artworkURL,
+            artworkURL: sonaFirstArtworkURL(in: favoriteTracks),
             tracks: favoriteTracks,
             shape: .square
         )
@@ -77,8 +77,9 @@ struct HomeView: View {
                 subtitle: playlist.isDirectoryPlaylist
                     ? "\(homePlaylistPoolTitle(playlist.poolType)) · Sona"
                     : playlist.featured ? "共享歌单 · Sona" : "歌单 · \(username)",
-                artworkURL: playlist.artworkURLs.first,
-                artworkURLs: playlist.artworkURLs,
+                artworkURL: sonaArtworkPaths(playlist.artworkURLs).first
+                    ?? sonaFirstArtworkURL(in: tracks),
+                artworkURLs: sonaArtworkPaths(playlist.artworkURLs),
                 rotatesArtworkHourly: playlist.artworkTrackID == nil,
                 tracks: tracks,
                 shape: .square
@@ -144,7 +145,7 @@ struct HomeView: View {
             id: "daily-recommendations",
             title: "今日推荐",
             subtitle: "每天为你更新",
-            artworkURL: dailyTracks.first?.artworkURL,
+            artworkURL: sonaFirstArtworkURL(in: dailyTracks),
             tracks: dailyTracks,
             shape: .square
         )
@@ -160,7 +161,7 @@ struct HomeView: View {
                 id: "daily-\(index)",
                 title: "每日推荐 \(index + 1)",
                 subtitle: dailyArtists(from: tracks),
-                artworkURL: tracks.first?.artworkURL,
+                artworkURL: sonaFirstArtworkURL(in: tracks),
                 tracks: tracks,
                 shape: .square
             )
@@ -199,8 +200,8 @@ struct HomeView: View {
                 id: "radio-\(anchor.id)",
                 title: anchor.artist,
                 subtitle: artistSummary(from: tracks, limit: 5),
-                artworkURL: tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
-                artworkURLs: Array(tracks.compactMap(\.artworkURL).prefix(3)),
+                artworkURL: sonaFirstArtworkURL(in: tracks),
+                artworkURLs: Array(sonaArtworkPaths(tracks.compactMap(\.artworkURL)).prefix(3)),
                 tracks: tracks,
                 shape: .square
             )
@@ -214,7 +215,7 @@ struct HomeView: View {
                 id: mix.id,
                 title: "\(mix.artist) 合辑",
                 subtitle: artistSummary(from: mix.tracks, limit: 3),
-                artworkURL: mix.tracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURL: sonaFirstArtworkURL(in: mix.tracks),
                 tracks: mix.tracks,
                 shape: .square
             )

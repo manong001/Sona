@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.library;
 
+import java.nio.file.Files;
 import java.util.List;
 
 record TrackResponse(
@@ -39,7 +40,7 @@ record TrackResponse(
             extension(track),
             track.sampleRate(),
             track.bitDepth(),
-            track.artworkPath() == null ? null : basePath + "/artwork",
+            hasReadableArtwork(track) ? basePath + "/artwork" : null,
             basePath + "/stream",
             track.plainLyrics() != null || track.syncedLyrics() != null,
             track.metadataStatus(),
@@ -50,6 +51,12 @@ record TrackResponse(
             track.region(),
             canonicalArtist.isEmpty() ? List.of() : List.of(canonicalArtist)
         );
+    }
+
+    private static boolean hasReadableArtwork(TrackRecord track) {
+        return track.artworkPath() != null
+            && Files.isRegularFile(track.artworkPath())
+            && Files.isReadable(track.artworkPath());
     }
 
     private static String extension(TrackRecord track) {

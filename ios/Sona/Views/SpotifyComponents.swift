@@ -25,11 +25,15 @@ struct SonaCollection: Identifiable {
         tracks: [Track],
         shape: Shape
     ) {
+        let validArtworkURLs = sonaArtworkPaths(artworkURLs)
+        let preferredArtworkURL = sonaArtworkPaths(artworkURL.map { [$0] } ?? []).first
         self.id = id
         self.title = title
         self.subtitle = subtitle
-        self.artworkURL = artworkURL
-        self.artworkURLs = artworkURLs
+        self.artworkURL = preferredArtworkURL
+            ?? validArtworkURLs.first
+            ?? sonaFirstArtworkURL(in: tracks)
+        self.artworkURLs = validArtworkURLs
         self.rotatesArtworkHourly = rotatesArtworkHourly
         self.tracks = tracks
         self.shape = shape
@@ -43,7 +47,7 @@ func sonaAlbums(from tracks: [Track]) -> [SonaCollection] {
                 id: "album-\(album)",
                 title: album,
                 subtitle: albumTracks.first?.artist ?? "未知艺人",
-                artworkURL: albumTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURL: sonaFirstArtworkURL(in: albumTracks),
                 tracks: albumTracks.sorted {
                     ($0.trackNumber ?? Int.max, $0.title) < ($1.trackNumber ?? Int.max, $1.title)
                 },
@@ -80,7 +84,7 @@ func sonaArtists(from tracks: [Track]) -> [SonaCollection] {
                 id: "artist-\(artist)",
                 title: artist,
                 subtitle: "艺人",
-                artworkURL: uniqueTracks.first(where: { $0.artworkURL != nil })?.artworkURL,
+                artworkURL: sonaFirstArtworkURL(in: uniqueTracks),
                 tracks: uniqueTracks,
                 shape: .circle
             )
@@ -248,7 +252,9 @@ struct SonaCollectionArtwork: View {
     }
 
     private func rotatingArtwork(at date: Date) -> String? {
-        guard !collection.artworkURLs.isEmpty else { return nil }
+        guard !collection.artworkURLs.isEmpty else {
+            return collection.artworkURL
+        }
         let hour = UInt64(date.timeIntervalSince1970 / (60 * 60))
         let offset = collection.id.utf8.reduce(UInt64(0)) { $0 &* 31 &+ UInt64($1) }
         let index = Int((hour &+ offset) % UInt64(collection.artworkURLs.count))
@@ -496,7 +502,8 @@ struct SonaTrackListView: View {
             id: collection.id,
             title: collection.title,
             subtitle: collection.subtitle,
-            artworkURL: playlist.artworkURLs.first,
+            artworkURL: sonaArtworkPaths(playlist.artworkURLs).first
+                ?? sonaFirstArtworkURL(in: tracks),
             artworkURLs: playlist.artworkURLs,
             rotatesArtworkHourly: playlist.artworkTrackID == nil,
             tracks: tracks,
@@ -605,18 +612,10 @@ struct SonaTrackListView: View {
                                 if collection.id == "liked-songs" {
                                     Task {
                                         let allTracks = await personal.loadAllFavoriteTracks()
-                                        guard let first = allTracks.first else { return }
-                                        player.play(
-                                            track: first,
-                                            queue: allTracks,
-                                            prioritizedQueueTitle: prioritizedQueueTitle,
-                                            queueContextID: queueContextID,
-                                            offlineURLProvider: offline.localURL(for:)
-                                        )
+                                        playCollection(allTracks, shuffled: false)
                                     }
                                 } else {
-                                    guard let first = tracks.first else { return }
-                                    play(first)
+                                    playCollection(tracks, shuffled: false)
                                 }
                             } label: {
                                 if collection.id == "liked-songs" {
@@ -857,21 +856,31 @@ struct SonaTrackListView: View {
     private func playRandom() {
         if collection.id == "liked-songs" {
             Task {
-                playRandom(await personal.loadAllFavoriteTracks())
+                playCollection(await personal.loadAllFavoriteTracks(), shuffled: true)
             }
         } else {
-            playRandom(tracks)
+            playCollection(tracks, shuffled: true)
         }
     }
 
-    private func playRandom(_ values: [Track]) {
-        let shuffled = values.shuffled()
-        guard let first = shuffled.first else { return }
+    private func playCollection(_ values: [Track], shuffled: Bool) {
+        let queue = shuffled ? values.shuffled() : values
+        guard let first = queue.first else { return }
+        if !shuffled,
+           let dailyRecommendationQueues,
+           let queueIndex = Int(collection.id.dropFirst("daily-".count)) {
+            player.playDailyRecommendations(
+                track: first,
+                queues: dailyRecommendationQueues,
+                queueIndex: queueIndex,
+                offlineURLProvider: offline.localURL(for:)
+            )
+            return
+        }
         player.play(
-            track: first,
-            queue: shuffled,
-            prioritizedQueueTitle: prioritizedQueueTitle,
-            queueContextID: queueContextID,
+            track: first, queue: queue,
+            prioritizedQueueTitle: collection.title,
+            queueContextID: collection.id,
             offlineURLProvider: offline.localURL(for:)
         )
     }

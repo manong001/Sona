@@ -2,6 +2,7 @@ package cc.eu.sosee.sona.personal;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
@@ -280,7 +281,7 @@ class PersonalRepository {
                 resultSet.getString("id"),
                 resultSet.getString("name"),
                 resultSet.getString("artwork_track_id"),
-                resultSet.getString("pinned_artwork_path") != null,
+                readableArtworkPath(resultSet.getString("pinned_artwork_path")) != null,
                 resultSet.getLong("created_at"),
                 resultSet.getBoolean("featured"),
                 resultSet.getString("directory_path"),
@@ -934,7 +935,8 @@ class PersonalRepository {
             resultSet.getString("album"), nullableInt(resultSet, "track_number"),
             resultSet.getLong("duration_ms"), resultSet.getString("codec"), extension,
             nullableInt(resultSet, "sample_rate"), nullableInt(resultSet, "bit_depth"),
-            resultSet.getString("artwork_path") == null ? null : "/api/v1/tracks/" + id + "/artwork",
+            readableArtworkPath(resultSet.getString("artwork_path")) == null
+                ? null : "/api/v1/tracks/" + id + "/artwork",
             "/api/v1/tracks/" + id + "/stream",
             resultSet.getString("plain_lyrics") != null || resultSet.getString("synced_lyrics") != null,
             resultSet.getString("metadata_status"), resultSet.getString("pool_type"),
@@ -1030,18 +1032,20 @@ class PersonalRepository {
     }
 
     private List<String> playlistArtworkUrls(PlaylistRow playlist, List<PlaylistTrack> tracks) {
-        if (playlist.artworkTrackId() != null) {
-            return !playlist.pinnedArtworkAvailable()
-                ? List.of()
-                : List.of("/api/v1/tracks/" + playlist.artworkTrackId() + "/artwork");
+        if (playlist.artworkTrackId() != null && playlist.pinnedArtworkAvailable()) {
+            return List.of("/api/v1/tracks/" + playlist.artworkTrackId() + "/artwork");
         }
         var seenPaths = new LinkedHashSet<Path>();
         var candidates = new ArrayList<PlaylistArtwork>();
         for (var track : tracks) {
-            if (track.hidden() || track.artworkPath() == null) {
+            if (track.hidden()) {
                 continue;
             }
-            var artwork = new PlaylistArtwork(track.id(), Path.of(track.artworkPath()));
+            var path = readableArtworkPath(track.artworkPath());
+            if (path == null) {
+                continue;
+            }
+            var artwork = new PlaylistArtwork(track.id(), path);
             if (!seenPaths.add(artwork.path())) {
                 continue;
             }
@@ -1055,20 +1059,22 @@ class PersonalRepository {
                 sizes.put(artwork.path(), size);
                 sizeCounts.merge(size, 1, Integer::sum);
             } catch (IOException ignored) {
-                // 保持不可读封面为独立项，与原有内容比较失败时的行为一致。
+                // 文件可能在扫描后被移动，忽略已经不可读的封面。
             }
         }
         var distinct = new ArrayList<PlaylistArtwork>();
         var artworksByContent = new HashMap<ArtworkContent, List<PlaylistArtwork>>();
         for (var artwork : candidates) {
             var size = sizes.get(artwork.path());
-            if (size == null || sizeCounts.get(size) == 1) {
+            if (size == null) {
+                continue;
+            }
+            if (sizeCounts.get(size) == 1) {
                 distinct.add(artwork);
                 continue;
             }
             var digest = artworkDigest(artwork.path());
             if (digest == null) {
-                distinct.add(artwork);
                 continue;
             }
             var sameContent = artworksByContent.computeIfAbsent(
@@ -1085,6 +1091,18 @@ class PersonalRepository {
         return distinct.stream()
             .map(artwork -> "/api/v1/tracks/" + artwork.trackId() + "/artwork")
             .toList();
+    }
+
+    private static Path readableArtworkPath(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            var path = Path.of(value);
+            return Files.isRegularFile(path) && Files.isReadable(path) ? path : null;
+        } catch (InvalidPathException ignored) {
+            return null;
+        }
     }
 
     private static String artworkDigest(Path path) {
@@ -1125,7 +1143,8 @@ class PersonalRepository {
             extension(resultSet.getString("path")),
             integer(resultSet, "sample_rate"),
             integer(resultSet, "bit_depth"),
-            resultSet.getString("artwork_path") == null ? null : "/api/v1/tracks/" + id + "/artwork",
+            readableArtworkPath(resultSet.getString("artwork_path")) == null
+                ? null : "/api/v1/tracks/" + id + "/artwork",
             "/api/v1/tracks/" + id + "/stream",
             resultSet.getString("plain_lyrics") != null || resultSet.getString("synced_lyrics") != null,
             resultSet.getString("metadata_status")

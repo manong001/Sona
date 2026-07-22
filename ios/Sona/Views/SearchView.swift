@@ -244,7 +244,7 @@ struct SearchView: View {
     private func discoveryCard(_ category: Category) -> some View {
         ZStack(alignment: .bottomLeading) {
             category.color
-            if let artworkURL = category.tracks.first?.artworkURL {
+            if let artworkURL = sonaFirstArtworkURL(in: category.tracks) {
                 ArtworkView(path: artworkURL, cornerRadius: 6)
                     .frame(width: 138, height: 138)
                     .opacity(0.72)
@@ -267,7 +267,7 @@ struct SearchView: View {
                 .foregroundStyle(.white)
                 .padding(12)
                 .zIndex(1)
-            if let artworkURL = category.tracks.first?.artworkURL {
+            if let artworkURL = sonaFirstArtworkURL(in: category.tracks) {
                 ArtworkView(path: artworkURL, cornerRadius: 5)
                     .frame(width: 78, height: 78)
                     .rotationEffect(.degrees(24))
@@ -284,7 +284,7 @@ struct SearchView: View {
             id: category.id == "favorites" ? "liked-songs" : "category-\(category.id)",
             title: category.title,
             subtitle: "Sona · \(category.tracks.count) 首歌曲",
-            artworkURL: category.tracks.first?.artworkURL,
+            artworkURL: sonaFirstArtworkURL(in: category.tracks),
             tracks: category.tracks,
             shape: .square
         )

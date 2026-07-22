@@ -65,8 +65,9 @@ struct MusicLibraryView: View {
                     : playlist.isDirectoryPlaylist
                     ? "\(playlistPoolTitle(playlist.poolType)) · Sona"
                     : "歌单 · \(username)",
-                artworkURL: playlist.artworkURLs.first,
-                artworkURLs: playlist.artworkURLs,
+                artworkURL: sonaArtworkPaths(playlist.artworkURLs).first
+                    ?? sonaFirstArtworkURL(in: tracks),
+                artworkURLs: sonaArtworkPaths(playlist.artworkURLs),
                 rotatesArtworkHourly: playlist.artworkTrackID == nil,
                 tracks: tracks,
                 shape: .square
@@ -145,7 +146,7 @@ struct MusicLibraryView: View {
                         id: "liked-songs",
                         title: "收藏的歌曲",
                         subtitle: "歌单 · \(username)",
-                        artworkURL: favoriteTracks.first?.artworkURL,
+                        artworkURL: sonaFirstArtworkURL(in: favoriteTracks),
                         tracks: favoriteTracks,
                         shape: .square
                     ))
@@ -527,7 +528,7 @@ struct MusicLibraryView: View {
                         id: "liked-songs",
                         title: "收藏的歌曲",
                         subtitle: "歌单 · \(username)",
-                        artworkURL: favoriteTracks.first?.artworkURL,
+                        artworkURL: sonaFirstArtworkURL(in: favoriteTracks),
                         tracks: favoriteTracks,
                         shape: .square
                     ))
@@ -793,6 +794,7 @@ struct TrackIdentityEditorView: View {
 
 private struct PlaylistOrderView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var orderedIDs: [String] = []
     @State private var editMode: EditMode = .active
@@ -812,7 +814,7 @@ private struct PlaylistOrderView: View {
                 ForEach(orderedPlaylists) { playlist in
                     HStack(spacing: 12) {
                         ArtworkView(
-                            path: playlist.artworkURLs.first,
+                            path: artworkURL(for: playlist),
                             cornerRadius: 5,
                             thumbnailSize: 192
                         )
@@ -878,6 +880,11 @@ private struct PlaylistOrderView: View {
                 isSaving = false
             }
         }
+    }
+
+    private func artworkURL(for playlist: Playlist) -> String? {
+        sonaArtworkPaths(playlist.artworkURLs).first
+            ?? sonaFirstArtworkURL(in: playlist.trackIDs.compactMap(library.track(id:)))
     }
 }
 
@@ -1344,6 +1351,7 @@ struct ServerDirectoryPicker: View {
 
 private struct HomePlaylistSelectionView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var updatingIDs: Set<String> = []
     @State private var orderedSelectedIDs: [String] = []
@@ -1450,7 +1458,8 @@ private struct HomePlaylistSelectionView: View {
         } label: {
             HStack(spacing: 12) {
                 ArtworkView(
-                    path: playlist.artworkURLs.first,
+                    path: sonaArtworkPaths(playlist.artworkURLs).first
+                        ?? sonaFirstArtworkURL(in: playlist.trackIDs.compactMap(library.track(id:))),
                     cornerRadius: 6,
                     thumbnailSize: 128
                 )

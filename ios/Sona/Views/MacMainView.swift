@@ -302,15 +302,8 @@ private struct MacSidebar: View {
     }
 
     private func artworkURL(for playlist: Playlist) -> String? {
-        if let artworkURL = playlist.artworkURLs.first {
-            return artworkURL
-        }
-        for trackID in playlist.trackIDs {
-            if let artworkURL = library.track(id: trackID)?.artworkURL {
-                return artworkURL
-            }
-        }
-        return nil
+        sonaArtworkPaths(playlist.artworkURLs).first
+            ?? sonaFirstArtworkURL(in: playlist.trackIDs.compactMap(library.track(id:)))
     }
 }
 
