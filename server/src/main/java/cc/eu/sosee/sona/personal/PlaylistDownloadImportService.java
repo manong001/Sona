@@ -73,6 +73,10 @@ public class PlaylistDownloadImportService {
         }
     }
 
+    public void delete(String userId, String playlistId) {
+        repository.deletePlaylist(userId, playlistId);
+    }
+
     private Path resolveFile(String relativeFile) {
         var path = musicDirectory.resolve(relativeFile).normalize();
         if (!path.startsWith(musicDirectory) || !Files.isRegularFile(path)) {

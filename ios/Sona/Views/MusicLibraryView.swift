@@ -134,7 +134,10 @@ struct MusicLibraryView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .task { await loadSubscriptions() }
+            .task {
+                await loadSubscriptions()
+                await personal.refreshPlaylists()
+            }
             .navigationDestination(for: String.self) { collectionID in
                 if collectionID == "liked-songs" {
                     SonaTrackListView(collection: SonaCollection(
@@ -289,6 +292,7 @@ struct MusicLibraryView: View {
         do {
             try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
             subscriptions.removeAll { $0.id == subscription.id }
+            await personal.refreshPlaylists()
         } catch {
             subscriptionErrorMessage = error.localizedDescription
         }

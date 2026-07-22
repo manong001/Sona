@@ -468,6 +468,19 @@ final class PersonalStore: ObservableObject {
             playlists.removeAll { $0.id == playlist.id }
             saveCachedPlaylists()
             return true
+        } catch let error as APIError {
+            if case let .server(status, _) = error, status == 404 {
+                do {
+                    playlists = try await api.playlists()
+                    saveCachedPlaylists()
+                    return !playlists.contains { $0.id == playlist.id }
+                } catch {
+                    errorMessage = error.localizedDescription
+                    return false
+                }
+            }
+            errorMessage = error.localizedDescription
+            return false
         } catch {
             errorMessage = error.localizedDescription
             return false

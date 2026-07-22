@@ -95,10 +95,12 @@ class PlaylistSubscriptionService {
         return subscriptions.find(userId, id).orElseThrow();
     }
 
+    @Transactional
     void delete(String userId, String id) {
-        if (!subscriptions.delete(userId, id)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在");
-        }
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        subscriptions.delete(userId, id);
+        playlistImportService.delete(userId, subscription.playlistId());
     }
 
     @Scheduled(fixedDelay = 900_000, initialDelay = 60_000)
