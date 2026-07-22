@@ -117,6 +117,8 @@ private struct MacSidebar: View {
     let openLibraryCollection: (String) -> Void
     let createPlaylist: () -> Void
     let openProfileMenu: () -> Void
+    @State private var loadedPlaylistTracks: [String: Track] = [:]
+    @State private var playlistPlaybackTask: Task<Void, Never>?
 
     private let primaryItems: [(SonaTab, String, String)] = [
         (.home, "首页", "house.fill"),
@@ -172,13 +174,7 @@ private struct MacSidebar: View {
                         icon: "heart.fill",
                         color: Color(red: 0.43, green: 0.30, blue: 0.78),
                         openAction: { openLibraryCollection("liked-songs") },
-                        playAction: {
-                            playLibraryCollection(
-                                title: "收藏的歌曲",
-                                id: "liked-songs",
-                                tracks: favoriteTracks
-                            )
-                        }
+                        playAction: playFavorites
                     )
                     ForEach(personal.playlists) { playlist in
                         MacSidebarLibraryRow(
@@ -188,13 +184,7 @@ private struct MacSidebar: View {
                             color: .sonaSurface,
                             artworkURL: artworkURL(for: playlist),
                             openAction: { openLibraryCollection(playlist.id) },
-                            playAction: {
-                                playLibraryCollection(
-                                    title: playlist.name,
-                                    id: playlist.id,
-                                    tracks: playlist.trackIDs.compactMap(library.track(id:))
-                                )
-                            }
+                            playAction: { play(playlist) }
                         )
                     }
                 }
@@ -247,16 +237,61 @@ private struct MacSidebar: View {
         .buttonStyle(.plain)
     }
 
-    private var favoriteTracks: [Track] {
-        let tracks = !personal.favoriteTracks.isEmpty || personal.favoriteIDs.isEmpty
-            ? personal.favoriteTracks
-            : library.tracks.filter { personal.favoriteIDs.contains($0.id) }
-        return tracks.filter { !personal.hiddenTrackIDs.contains($0.id) }
+    private func playFavorites() {
+        playlistPlaybackTask?.cancel()
+        playlistPlaybackTask = Task {
+            let tracks = await personal.loadAllFavoriteTracks()
+            guard !Task.isCancelled else { return }
+            playLibraryCollection(
+                title: "收藏的歌曲",
+                id: "liked-songs",
+                tracks: tracks
+            )
+        }
+    }
+
+    private func play(_ playlist: Playlist) {
+        playlistPlaybackTask?.cancel()
+        playlistPlaybackTask = Task {
+            var tracks: [Track] = []
+            for id in playlist.trackIDs where !personal.hiddenTrackIDs.contains(id) {
+                guard !Task.isCancelled else { return }
+                if let track = library.track(id: id) ?? loadedPlaylistTracks[id] {
+                    tracks.append(track)
+                } else if let track = try? await APIClient.shared.track(id: id) {
+                    loadedPlaylistTracks[id] = track
+                    tracks.append(track)
+                }
+                if tracks.count == 1 {
+                    playLibraryCollection(
+                        title: playlist.name,
+                        id: playlist.id,
+                        tracks: tracks
+                    )
+                }
+            }
+            guard !Task.isCancelled else { return }
+            if tracks.count > 1 {
+                playLibraryCollection(
+                    title: playlist.name,
+                    id: playlist.id,
+                    tracks: tracks
+                )
+            }
+        }
     }
 
     private func playLibraryCollection(title: String, id: String, tracks: [Track]) {
         let visibleTracks = tracks.filter { !personal.hiddenTrackIDs.contains($0.id) }
         guard let first = visibleTracks.first else { return }
+        switch player.playbackMode {
+        case .shuffle:
+            player.toggleShuffle()
+        case .repeatOne:
+            player.toggleRepeatOne()
+        case .sequential:
+            break
+        }
         player.play(
             track: first,
             queue: visibleTracks,
