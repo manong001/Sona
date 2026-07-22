@@ -107,10 +107,6 @@ public class DirectoryPlaylistService {
                 SELECT directory_path FROM playlists
                 WHERE id = :playlistId AND (:isAdmin = TRUE OR user_id = :userId)
                   AND directory_path IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM playlist_tracks
-                      WHERE playlist_tracks.playlist_id = playlists.id
-                  )
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
