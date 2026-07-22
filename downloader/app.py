@@ -187,7 +187,7 @@ class MusicDlBackend:
                 )
         return candidates
 
-    def parse_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+    def parse_playlist(self, url: str) -> tuple[str, str | None, list[BackendCandidate]]:
         hostname = (urlparse(url).hostname or "").lower().strip(".")
         public_parser = None
         if hostname == "open.spotify.com":
@@ -232,9 +232,9 @@ class MusicDlBackend:
                 lyrics=_optional_text(song.lyric),
                 opaque=song,
             ))
-        return playlist_name, candidates
+        return playlist_name, None, candidates
 
-    def _parse_spotify_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+    def _parse_spotify_playlist(self, url: str) -> tuple[str, str | None, list[BackendCandidate]]:
         parsed = urlparse(url)
         parts = [part for part in parsed.path.split("/") if part]
         if len(parts) != 2 or parts[0] != "playlist" or not re.fullmatch(r"[A-Za-z0-9]+", parts[1]):
@@ -278,9 +278,9 @@ class MusicDlBackend:
             ))
         if not playlist_name or not candidates:
             raise ValueError("Spotify 公开歌单没有可同步曲目")
-        return playlist_name, candidates
+        return playlist_name, artwork_url, candidates
 
-    def _parse_netease_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+    def _parse_netease_playlist(self, url: str) -> tuple[str, str | None, list[BackendCandidate]]:
         playlist_id = _playlist_id(url, query_keys=("id",))
         if not playlist_id:
             raise ValueError("网易云歌单链接无效")
@@ -348,33 +348,52 @@ class MusicDlBackend:
             ))
         if not name or not candidates:
             raise ValueError("网易云公开歌单没有可同步曲目")
-        return name, candidates
+        return name, cover, candidates
 
-    def _parse_qq_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+    def _parse_qq_playlist(self, url: str) -> tuple[str, str | None, list[BackendCandidate]]:
         playlist_id = _playlist_id(url, query_keys=("id", "disstid"), path_marker="playlist")
         if not playlist_id:
             raise ValueError("QQ 音乐歌单链接无效")
-        response = self._fetch_json(
-            "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?" + urlencode({
-                "type": 1,
-                "json": 1,
-                "utf8": 1,
-                "onlysong": 0,
-                "disstid": playlist_id,
-                "format": "json",
-                "inCharset": "utf8",
-                "outCharset": "utf-8",
-                "notice": 0,
-                "platform": "yqq.json",
-                "needNewCode": 0,
-            }),
-            "https://y.qq.com/",
-        )
-        playlist = response["cdlist"][0]
+        page_size = 100
+        playlist = None
+        songs = []
+        for start in range(0, MAX_CANDIDATES, page_size):
+            response = self._fetch_json(
+                "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?" + urlencode({
+                    "type": 1,
+                    "json": 1,
+                    "utf8": 1,
+                    "onlysong": 0,
+                    "disstid": playlist_id,
+                    "song_begin": start,
+                    "song_num": page_size,
+                    "format": "json",
+                    "inCharset": "utf8",
+                    "outCharset": "utf-8",
+                    "notice": 0,
+                    "platform": "yqq.json",
+                    "needNewCode": 0,
+                }),
+                "https://y.qq.com/",
+            )
+            page = response["cdlist"][0]
+            if playlist is None:
+                playlist = page
+            page_songs = page.get("songlist", [])
+            songs.extend(page_songs)
+            total = _positive_int(page.get("songnum"))
+            if (
+                not page_songs
+                or len(page_songs) < page_size
+                or (total is not None and len(songs) >= min(total, MAX_CANDIDATES))
+            ):
+                break
+        if playlist is None:
+            raise ValueError("QQ 音乐公开歌单没有可同步曲目")
         name = _text(playlist.get("dissname")).strip()[:80]
         cover = _optional_text(playlist.get("logo"))
         candidates = []
-        for song in playlist.get("songlist", [])[:MAX_CANDIDATES]:
+        for song in songs[:MAX_CANDIDATES]:
             if not isinstance(song, dict):
                 continue
             title = _text(song.get("songname") or song.get("songorig")).strip()
@@ -403,7 +422,7 @@ class MusicDlBackend:
             ))
         if not name or not candidates:
             raise ValueError("QQ 音乐公开歌单没有可同步曲目")
-        return name, candidates
+        return name, cover, candidates
 
     def _fetch_text(self, url: str) -> str:
         request = Request(url, headers={
@@ -526,9 +545,10 @@ class AppState:
         return self.backend.download(candidate)
 
     def parse_playlist(self, url: str) -> dict[str, Any]:
-        name, candidates = self.backend.parse_playlist(url)
+        name, artwork_url, candidates = self.backend.parse_playlist(url)
         return {
             "name": name,
+            "artworkUrl": artwork_url,
             "items": [
                 _public_candidate(
                     self.cache.add(candidate, PLAYLIST_CANDIDATE_TTL_SECONDS), candidate

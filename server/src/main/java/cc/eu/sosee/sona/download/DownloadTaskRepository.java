@@ -80,7 +80,11 @@ class DownloadTaskRepository {
         return jdbcClient.sql("""
                 SELECT * FROM download_tasks
                 WHERE requested_by = :requestedBy
-                ORDER BY created_at DESC
+                ORDER BY CASE state
+                    WHEN 'RUNNING' THEN 0
+                    WHEN 'QUEUED' THEN 1
+                    ELSE 2
+                END, updated_at DESC, created_at DESC
                 LIMIT 100
                 """)
             .param("requestedBy", requestedBy)

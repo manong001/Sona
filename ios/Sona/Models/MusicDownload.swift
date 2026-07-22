@@ -46,6 +46,7 @@ struct DownloadSearchResponse: Decodable {
 
 struct DownloadPlaylistPreview: Decodable {
     let name: String
+    let artworkUrl: String?
     let items: [DownloadCandidate]
 }
 

@@ -12,6 +12,7 @@ struct Playlist: Codable, Identifiable, Equatable {
     let trackIDs: [String]
     let artworkURLs: [String]
     let artworkTrackID: String?
+    let sourceArtworkURL: String?
     let createdAt: Int64
     let featured: Bool
     let directoryPath: String?
@@ -24,11 +25,12 @@ struct Playlist: Codable, Identifiable, Equatable {
         case trackIDs = "trackIds"
         case artworkURLs = "artworkUrls"
         case artworkTrackID = "artworkTrackId"
+        case sourceArtworkURL = "sourceArtworkUrl"
     }
 
     init(
         id: String, name: String, trackIDs: [String], artworkURLs: [String] = [],
-        artworkTrackID: String? = nil, createdAt: Int64,
+        artworkTrackID: String? = nil, sourceArtworkURL: String? = nil, createdAt: Int64,
         featured: Bool = false, directoryPath: String? = nil, poolType: String = "NORMAL",
         shownOnHome: Bool = false, homePosition: Int? = nil
     ) {
@@ -37,6 +39,7 @@ struct Playlist: Codable, Identifiable, Equatable {
         self.trackIDs = trackIDs
         self.artworkURLs = artworkURLs
         self.artworkTrackID = artworkTrackID
+        self.sourceArtworkURL = sourceArtworkURL
         self.createdAt = createdAt
         self.featured = featured
         self.directoryPath = directoryPath
@@ -52,6 +55,7 @@ struct Playlist: Codable, Identifiable, Equatable {
         trackIDs = try values.decode([String].self, forKey: .trackIDs)
         artworkURLs = try values.decodeIfPresent([String].self, forKey: .artworkURLs) ?? []
         artworkTrackID = try values.decodeIfPresent(String.self, forKey: .artworkTrackID)
+        sourceArtworkURL = try values.decodeIfPresent(String.self, forKey: .sourceArtworkURL)
         createdAt = try values.decode(Int64.self, forKey: .createdAt)
         featured = try values.decodeIfPresent(Bool.self, forKey: .featured) ?? false
         directoryPath = try values.decodeIfPresent(String.self, forKey: .directoryPath)
@@ -65,7 +69,8 @@ struct Playlist: Codable, Identifiable, Equatable {
     func withShownOnHome(_ shown: Bool) -> Playlist {
         Playlist(
             id: id, name: name, trackIDs: trackIDs, artworkURLs: artworkURLs,
-            artworkTrackID: artworkTrackID, createdAt: createdAt, featured: featured,
+            artworkTrackID: artworkTrackID, sourceArtworkURL: sourceArtworkURL,
+            createdAt: createdAt, featured: featured,
             directoryPath: directoryPath, poolType: poolType, shownOnHome: shown,
             homePosition: shown ? homePosition : nil
         )
@@ -74,7 +79,8 @@ struct Playlist: Codable, Identifiable, Equatable {
     func withHomePosition(_ position: Int) -> Playlist {
         Playlist(
             id: id, name: name, trackIDs: trackIDs, artworkURLs: artworkURLs,
-            artworkTrackID: artworkTrackID, createdAt: createdAt, featured: featured,
+            artworkTrackID: artworkTrackID, sourceArtworkURL: sourceArtworkURL,
+            createdAt: createdAt, featured: featured,
             directoryPath: directoryPath, poolType: poolType, shownOnHome: shownOnHome,
             homePosition: position
         )

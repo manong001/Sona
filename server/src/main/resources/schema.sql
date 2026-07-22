@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS playlist_subscriptions (
     playlist_id TEXT NOT NULL UNIQUE,
     source_url TEXT NOT NULL,
     name TEXT NOT NULL,
+    artwork_url TEXT,
     pool_type TEXT NOT NULL DEFAULT 'NORMAL',
     auto_download INTEGER NOT NULL DEFAULT 0,
     sync_interval_hours INTEGER NOT NULL DEFAULT 24,

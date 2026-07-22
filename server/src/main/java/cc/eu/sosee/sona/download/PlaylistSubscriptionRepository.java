@@ -151,6 +151,18 @@ class PlaylistSubscriptionRepository {
             .update();
     }
 
+    void updateArtwork(String id, String artworkUrl) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET artwork_url = :artworkUrl, updated_at = :now
+                WHERE id = :id
+                """)
+            .param("artworkUrl", artworkUrl)
+            .param("now", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
     void markFailed(String id, String message) {
         jdbcClient.sql("""
                 UPDATE playlist_subscriptions SET last_error = :message, updated_at = :now

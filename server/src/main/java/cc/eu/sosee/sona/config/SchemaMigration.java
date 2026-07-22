@@ -204,6 +204,7 @@ class SchemaMigration implements ApplicationRunner {
                     playlist_id TEXT NOT NULL UNIQUE,
                     source_url TEXT NOT NULL,
                     name TEXT NOT NULL,
+                    artwork_url TEXT,
                     pool_type TEXT NOT NULL DEFAULT 'NORMAL',
                     auto_download INTEGER NOT NULL DEFAULT 0,
                     sync_interval_hours INTEGER NOT NULL DEFAULT 24,
@@ -217,6 +218,9 @@ class SchemaMigration implements ApplicationRunner {
                     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
                 )
                 """).update();
+        if (!columns("playlist_subscriptions").contains("artwork_url")) {
+            jdbcClient.sql("ALTER TABLE playlist_subscriptions ADD COLUMN artwork_url TEXT").update();
+        }
         jdbcClient.sql("""
                 CREATE INDEX IF NOT EXISTS idx_playlist_subscriptions_due
                 ON playlist_subscriptions(enabled, last_synced_at, updated_at)

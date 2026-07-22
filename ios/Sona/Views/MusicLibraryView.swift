@@ -1245,11 +1245,15 @@ private struct ManagedPlaylistDetailView: View {
     private var playlistActions: some View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
+                if canEditPlaylistArtwork {
+                    playlistArtworkMenu
+                }
+
                 Button {
                     Task { await offline.downloadAll(tracks) }
                 } label: {
                     Label("全部离线", systemImage: "arrow.down.circle")
-                        .frame(maxWidth: .infinity)
+                        .frame(width: 24)
                 }
                 .disabled(tracks.isEmpty)
                 if playlist?.isDirectoryPlaylist == true {
@@ -1258,7 +1262,7 @@ private struct ManagedPlaylistDetailView: View {
                             editingDirectoryPlaylist = playlist
                         } label: {
                             Label("编辑歌单", systemImage: "pencil")
-                                .frame(maxWidth: .infinity)
+                                .frame(width: 24)
                         }
                     }
                 } else if session.currentUser?.isAdmin == true {
@@ -1271,7 +1275,7 @@ private struct ManagedPlaylistDetailView: View {
                         }
                     } label: {
                         Label("导入音乐", systemImage: "square.and.arrow.down")
-                            .frame(maxWidth: .infinity)
+                            .frame(width: 24)
                     }
                 }
 
@@ -1284,20 +1288,15 @@ private struct ManagedPlaylistDetailView: View {
                             isSelecting ? "完成" : "多选",
                             systemImage: isSelecting ? "checkmark" : "checklist"
                         )
-                            .frame(maxWidth: .infinity)
+                            .frame(width: 24)
                     }
                     .disabled(tracks.isEmpty)
                 }
+
+                Spacer(minLength: 0)
             }
             .buttonStyle(.bordered)
             .labelStyle(.iconOnly)
-
-            if canEditPlaylistArtwork {
-                playlistArtworkMenu
-                    .buttonStyle(.bordered)
-                    .labelStyle(.iconOnly)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
             if playlist?.isDirectoryPlaylist != true, isSelecting, !selectedIDs.isEmpty {
                 Button("移除选中的 \(selectedIDs.count) 首", role: .destructive) {
@@ -1329,6 +1328,12 @@ private struct ManagedPlaylistDetailView: View {
                 showsArtworkPicker = true
             }
             Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
+            if playlist?.sourceArtworkURL != nil {
+                Divider()
+                Button("使用源订阅封面", systemImage: "photo.on.rectangle") {
+                    Task { await personal.useSourcePlaylistArtwork(playlistID: playlistID) }
+                }
+            }
             if playlist?.artworkTrackID != nil {
                 Divider()
                 Button("恢复自动轮换", systemImage: "arrow.triangle.2.circlepath") {
@@ -1337,6 +1342,7 @@ private struct ManagedPlaylistDetailView: View {
             }
         } label: {
             Label("设置歌单封面", systemImage: "photo")
+                .frame(width: 24)
         }
     }
 

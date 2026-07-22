@@ -235,7 +235,7 @@ struct MusicDownloadView: View {
                     )
                     .padding(.top, 55)
                 } else {
-                    ForEach(tasks) { task in
+                    ForEach(sortedTasks) { task in
                         MusicDownloadTaskRow(task: task) {
                             Task { await retry(task) }
                         }
@@ -254,6 +254,24 @@ struct MusicDownloadView: View {
             .filter { $0.state == .queued || $0.state == .running }
             .map { "\($0.id):\($0.state.rawValue)" }
             .joined(separator: "|")
+    }
+
+    private var sortedTasks: [MusicDownloadTask] {
+        tasks.sorted { left, right in
+            let leftPriority = taskPriority(left.state)
+            let rightPriority = taskPriority(right.state)
+            if leftPriority != rightPriority { return leftPriority < rightPriority }
+            if left.updatedAt != right.updatedAt { return left.updatedAt > right.updatedAt }
+            return left.id < right.id
+        }
+    }
+
+    private func taskPriority(_ state: MusicDownloadState) -> Int {
+        switch state {
+        case .running: 0
+        case .queued: 1
+        case .completed, .failed: 2
+        }
     }
 
     private var filteredCandidates: [DownloadCandidate] {

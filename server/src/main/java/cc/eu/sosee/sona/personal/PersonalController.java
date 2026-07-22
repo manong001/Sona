@@ -359,6 +359,17 @@ class PersonalController {
         return playlistArtworkService.upload(user.id(), playlistId, file);
     }
 
+    @PutMapping("/playlists/{playlistId}/artwork/source")
+    PersonalRepository.PlaylistData useSourcePlaylistArtwork(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId
+    ) {
+        if (user.role() != UserRole.ADMIN) {
+            requireOwnedPlaylist(user.id(), playlistId);
+        }
+        return playlistArtworkService.selectSource(user.id(), playlistId);
+    }
+
     @GetMapping("/playlists/{playlistId}/artwork")
     ResponseEntity<byte[]> playlistArtwork(
         @AuthenticationPrincipal AuthenticatedUser user,

@@ -73,6 +73,14 @@ public class PlaylistDownloadImportService {
         }
     }
 
+    public void setRemoteArtwork(String userId, String playlistId, String artworkUrl) {
+        var normalizedUrl = artworkUrl.strip();
+        if (!normalizedUrl.startsWith("https://") && !normalizedUrl.startsWith("http://")) {
+            return;
+        }
+        repository.setPlaylistRemoteArtwork(userId, playlistId, normalizedUrl);
+    }
+
     public void delete(String userId, String playlistId) {
         repository.deletePlaylist(userId, playlistId);
     }

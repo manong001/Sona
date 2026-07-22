@@ -1184,6 +1184,13 @@ struct SonaTrackListView: View {
                 showsArtworkPicker = true
             }
             Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
+            if playlist?.sourceArtworkURL != nil {
+                Divider()
+                Button("使用源订阅封面", systemImage: "photo.on.rectangle") {
+                    guard let playlist else { return }
+                    Task { await personal.useSourcePlaylistArtwork(playlistID: playlist.id) }
+                }
+            }
             if playlist?.artworkTrackID != nil {
                 Divider()
                 Button("恢复自动轮换", systemImage: "arrow.triangle.2.circlepath") {

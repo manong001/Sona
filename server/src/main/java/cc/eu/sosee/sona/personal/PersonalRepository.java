@@ -254,6 +254,10 @@ class PersonalRepository {
                 SELECT playlists.id, playlists.name, playlists.featured, playlists.directory_path,
                        playlists.pool_type, playlists.artwork_track_id, playlists.created_at,
                        pinned_artwork.artwork_path AS pinned_artwork_path,
+                       (
+                           SELECT artwork_url FROM playlist_subscriptions
+                           WHERE playlist_subscriptions.playlist_id = playlists.id
+                       ) AS source_artwork_url,
                        EXISTS (
                            SELECT 1 FROM home_items
                            WHERE home_items.user_id = :userId
@@ -282,6 +286,7 @@ class PersonalRepository {
                 resultSet.getString("name"),
                 resultSet.getString("artwork_track_id"),
                 readableArtworkPath(resultSet.getString("pinned_artwork_path")) != null,
+                resultSet.getString("source_artwork_url"),
                 resultSet.getLong("created_at"),
                 resultSet.getBoolean("featured"),
                 resultSet.getString("directory_path"),
@@ -297,6 +302,7 @@ class PersonalRepository {
                 playlist.id(), playlist.name(),
                 tracks.stream().filter(track -> !track.hidden()).map(PlaylistTrack::id).toList(),
                 playlistArtworkUrls(playlist, tracks), playlist.artworkTrackId(),
+                playlist.sourceArtworkUrl(),
                 playlist.createdAt(), playlist.featured(), playlist.directoryPath(),
                 playlist.poolType(), playlist.shownOnHome(), playlist.homePosition()
             );
@@ -505,7 +511,8 @@ class PersonalRepository {
             .param("createdAt", createdAt)
             .update();
         return new PlaylistData(
-            id, name, List.of(), List.of(), null, createdAt, false, null, "NORMAL", false, null
+            id, name, List.of(), List.of(), null, null,
+            createdAt, false, null, "NORMAL", false, null
         );
     }
 
@@ -518,7 +525,8 @@ class PersonalRepository {
             .update();
         return new PlaylistData(
             playlist.id(), playlist.name(), playlist.trackIds(), playlist.artworkUrls(),
-            playlist.artworkTrackId(), playlist.createdAt(), playlist.featured(),
+            playlist.artworkTrackId(), playlist.sourceArtworkUrl(),
+            playlist.createdAt(), playlist.featured(),
             playlist.directoryPath(), poolType, playlist.shownOnHome(), playlist.homePosition()
         );
     }
@@ -533,7 +541,8 @@ class PersonalRepository {
             .param("id", id).param("userId", userId).param("name", name).param("createdAt", createdAt)
             .update();
         return new PlaylistData(
-            id, name, List.of(), List.of(), null, createdAt, true, null, "NORMAL", false, null
+            id, name, List.of(), List.of(), null, null,
+            createdAt, true, null, "NORMAL", false, null
         );
     }
 
@@ -661,6 +670,45 @@ class PersonalRepository {
                 WHERE id = :playlistId AND (user_id = :userId OR featured = 1)
                 """)
             .param("marker", marker)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update();
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        return playlists(userId).stream()
+            .filter(playlist -> playlist.id().equals(playlistId))
+            .findFirst();
+    }
+
+    boolean setPlaylistRemoteArtwork(String userId, String playlistId, String artworkUrl) {
+        return jdbcClient.sql("""
+                UPDATE playlists SET artwork_track_id = :marker
+                WHERE id = :playlistId AND user_id = :userId
+                  AND (artwork_track_id IS NULL OR artwork_track_id LIKE 'remote:%')
+                """)
+            .param("marker", "remote:" + artworkUrl)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update() == 1;
+    }
+
+    Optional<PlaylistData> setPlaylistSourceArtwork(String userId, String playlistId) {
+        var updated = jdbcClient.sql("""
+                UPDATE playlists
+                SET artwork_track_id = 'remote:' || (
+                    SELECT artwork_url FROM playlist_subscriptions
+                    WHERE playlist_subscriptions.playlist_id = playlists.id
+                      AND playlist_subscriptions.user_id = :userId
+                )
+                WHERE id = :playlistId AND user_id = :userId
+                  AND EXISTS (
+                    SELECT 1 FROM playlist_subscriptions
+                    WHERE playlist_subscriptions.playlist_id = playlists.id
+                      AND playlist_subscriptions.user_id = :userId
+                      AND artwork_url IS NOT NULL AND trim(artwork_url) <> ''
+                  )
+                """)
             .param("playlistId", playlistId)
             .param("userId", userId)
             .update();
@@ -1079,6 +1127,10 @@ class PersonalRepository {
 
     private List<String> playlistArtworkUrls(PlaylistRow playlist, List<PlaylistTrack> tracks) {
         if (playlist.artworkTrackId() != null
+            && playlist.artworkTrackId().startsWith("remote:")) {
+            return List.of(playlist.artworkTrackId().substring("remote:".length()));
+        }
+        if (playlist.artworkTrackId() != null
             && playlist.artworkTrackId().startsWith("upload:")) {
             return List.of(
                 "/api/v1/me/playlists/" + playlist.id() + "/artwork?v="
@@ -1217,9 +1269,19 @@ class PersonalRepository {
 
     record PlaylistData(
         String id, String name, List<String> trackIds, List<String> artworkUrls,
-        String artworkTrackId, long createdAt, boolean featured,
+        String artworkTrackId, String sourceArtworkUrl, long createdAt, boolean featured,
         String directoryPath, String poolType, boolean shownOnHome, Integer homePosition
     ) {
+        PlaylistData(
+            String id, String name, List<String> trackIds, List<String> artworkUrls,
+            String artworkTrackId, long createdAt, boolean featured,
+            String directoryPath, String poolType, boolean shownOnHome, Integer homePosition
+        ) {
+            this(
+                id, name, trackIds, artworkUrls, artworkTrackId, null, createdAt,
+                featured, directoryPath, poolType, shownOnHome, homePosition
+            );
+        }
     }
 
     record PlaylistScanData(String name, List<String> trackIds) {
@@ -1236,7 +1298,7 @@ class PersonalRepository {
 
     private record PlaylistRow(
         String id, String name, String artworkTrackId, boolean pinnedArtworkAvailable,
-        long createdAt, boolean featured, String directoryPath, String poolType,
+        String sourceArtworkUrl, long createdAt, boolean featured, String directoryPath, String poolType,
         boolean shownOnHome, Integer homePosition
     ) {
     }

@@ -101,6 +101,15 @@ class PlaylistArtworkService {
         return playlist;
     }
 
+    PersonalRepository.PlaylistData selectSource(String userId, String playlistId) {
+        var playlist = repository.setPlaylistSourceArtwork(userId, playlistId)
+            .orElseThrow(() -> new ResponseStatusException(
+                NOT_FOUND, "Playlist subscription artwork not found"
+            ));
+        deleteFile(playlistId);
+        return playlist;
+    }
+
     byte[] read(String userId, String playlistId) {
         if (!repository.canAccessPlaylist(userId, playlistId)) {
             throw new ResponseStatusException(NOT_FOUND, "Playlist not found");

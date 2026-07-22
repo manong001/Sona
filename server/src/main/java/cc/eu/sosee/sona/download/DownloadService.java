@@ -69,6 +69,7 @@ class DownloadService {
         var preview = gateway.parsePlaylist(url.strip());
         return new DownloadPlaylistPreview(
             preview.name(),
+            preview.artworkUrl(),
             preview.items().stream()
                 .map(candidate -> candidate.withDownloadState(
                     existingState(candidate).orElse(null)

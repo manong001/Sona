@@ -373,6 +373,7 @@ final class PersonalStore: ObservableObject {
                     trackIDs: playlist.trackIDs.filter { $0 != trackID },
                     artworkURLs: playlist.artworkURLs,
                     artworkTrackID: playlist.artworkTrackID == trackID ? nil : playlist.artworkTrackID,
+                    sourceArtworkURL: playlist.sourceArtworkURL,
                     createdAt: playlist.createdAt, featured: playlist.featured,
                     directoryPath: playlist.directoryPath, poolType: playlist.poolType,
                     shownOnHome: playlist.shownOnHome, homePosition: playlist.homePosition
@@ -743,6 +744,7 @@ final class PersonalStore: ObservableObject {
                 trackIDs: trackIDs,
                 artworkURLs: playlist.artworkURLs,
                 artworkTrackID: playlist.artworkTrackID,
+                sourceArtworkURL: playlist.sourceArtworkURL,
                 createdAt: playlist.createdAt,
                 featured: playlist.featured,
                 directoryPath: playlist.directoryPath,
@@ -806,6 +808,21 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func useSourcePlaylistArtwork(playlistID: String) async -> Bool {
+        do {
+            let updated = try await api.useSourcePlaylistArtwork(playlistID: playlistID)
+            guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else {
+                return false
+            }
+            playlists[index] = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func removeTracks(_ trackIDs: Set<String>, from playlistID: String) async {
         guard !trackIDs.isEmpty else { return }
         do {
@@ -821,6 +838,7 @@ final class PersonalStore: ObservableObject {
                 trackIDs: playlist.trackIDs.filter { !trackIDs.contains($0) },
                 artworkURLs: playlist.artworkURLs,
                 artworkTrackID: playlist.artworkTrackID,
+                sourceArtworkURL: playlist.sourceArtworkURL,
                 createdAt: playlist.createdAt,
                 featured: playlist.featured,
                 directoryPath: playlist.directoryPath,

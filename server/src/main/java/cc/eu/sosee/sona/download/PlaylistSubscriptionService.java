@@ -139,6 +139,15 @@ class PlaylistSubscriptionService {
                 subscriptions.rename(subscription.id(), remoteName);
                 subscription = subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
             }
+            if (preview.artworkUrl() != null && !preview.artworkUrl().isBlank()) {
+                var artworkUrl = preview.artworkUrl().strip();
+                if (artworkUrl.startsWith("https://") || artworkUrl.startsWith("http://")) {
+                    subscriptions.updateArtwork(subscription.id(), artworkUrl);
+                    playlistImportService.setRemoteArtwork(
+                        subscription.userId(), subscription.playlistId(), artworkUrl
+                    );
+                }
+            }
             var now = clock.millis();
             var items = new ArrayList<PlaylistSubscriptionRepository.Item>();
             var matchedTrackIds = new ArrayList<String>();
