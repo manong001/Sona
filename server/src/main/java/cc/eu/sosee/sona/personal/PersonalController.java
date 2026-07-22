@@ -231,14 +231,15 @@ class PersonalController {
     @DeleteMapping("/playlists/{playlistId}")
     ResponseEntity<Void> deletePlaylist(
         @AuthenticationPrincipal AuthenticatedUser user,
-        @PathVariable String playlistId
+        @PathVariable String playlistId,
+        @RequestParam(required = false) String directoryPath
     ) {
         if (repository.deletePlaylist(user.id(), playlistId)) {
             return ResponseEntity.noContent().build();
         }
         try {
             var result = directoryPlaylistService.deleteEmptyDirectoryPlaylist(
-                user.id(), user.role() == UserRole.ADMIN, playlistId
+                user.id(), user.role() == UserRole.ADMIN, playlistId, directoryPath
             );
             return switch (result) {
                 case DELETED -> ResponseEntity.noContent().build();

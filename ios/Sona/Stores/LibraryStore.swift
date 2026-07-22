@@ -460,10 +460,13 @@ final class PersonalStore: ObservableObject {
     }
 
     @discardableResult
-    func deletePlaylist(id: String) async -> Bool {
+    func deletePlaylist(_ playlist: Playlist) async -> Bool {
         do {
-            try await api.deletePlaylist(id: id)
-            playlists.removeAll { $0.id == id }
+            try await api.deletePlaylist(
+                id: playlist.id, directoryPath: playlist.directoryPath
+            )
+            playlists.removeAll { $0.id == playlist.id }
+            saveCachedPlaylists()
             return true
         } catch {
             errorMessage = error.localizedDescription

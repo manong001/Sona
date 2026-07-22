@@ -687,7 +687,7 @@ struct MusicLibraryView: View {
     }
 
     private func deletePlaylist(_ playlist: Playlist) async {
-        guard await personal.deletePlaylist(id: playlist.id) else {
+        guard await personal.deletePlaylist(playlist) else {
             let message = personal.errorMessage ?? "无法删除该歌单"
             playlistDeletionErrorMessage = message == "Directory playlist folder is not empty"
                 ? "目录中仍有文件（包括隐藏文件），只有真实空目录可以删除。"

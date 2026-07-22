@@ -221,8 +221,14 @@ final class APIClient {
         )
     }
 
-    func deletePlaylist(id: String) async throws {
-        try await requestVoid(path: "/api/v1/me/playlists/\(id)", method: "DELETE")
+    func deletePlaylist(id: String, directoryPath: String? = nil) async throws {
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/playlists/\(id)"), resolvingAgainstBaseURL: false
+        )!
+        if let directoryPath {
+            components.queryItems = [URLQueryItem(name: "directoryPath", value: directoryPath)]
+        }
+        try await requestVoid(path: components.url!.absoluteString, method: "DELETE")
     }
 
     func setPlaylistShownOnHome(id: String, shown: Bool) async throws {

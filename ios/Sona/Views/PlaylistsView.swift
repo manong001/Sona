@@ -40,8 +40,8 @@ struct PlaylistsView: View {
                         }
                         .onDelete { indexes in
                             for index in indexes {
-                                let id = personal.playlists[index].id
-                                Task { await personal.deletePlaylist(id: id) }
+                                let playlist = personal.playlists[index]
+                                Task { await personal.deletePlaylist(playlist) }
                             }
                         }
                     }

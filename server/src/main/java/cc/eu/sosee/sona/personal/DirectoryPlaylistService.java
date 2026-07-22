@@ -76,23 +76,36 @@ public class DirectoryPlaylistService {
 
     @Transactional
     DeleteResult deleteEmptyDirectoryPlaylist(
-        String userId, boolean isAdmin, String playlistId
+        String userId, boolean isAdmin, String playlistId, String requestedDirectoryPath
     ) throws IOException {
-        var relativePath = jdbcClient.sql("""
-                SELECT directory_path FROM playlists
+        var target = jdbcClient.sql("""
+                SELECT id, directory_path FROM playlists
                 WHERE id = :playlistId AND (:isAdmin = TRUE OR user_id = :userId)
                   AND directory_path IS NOT NULL
+                UNION ALL
+                SELECT id, directory_path FROM playlists
+                WHERE directory_path = :requestedDirectoryPath
+                  AND (:isAdmin = TRUE OR user_id = :userId)
+                  AND id <> :playlistId
+                LIMIT 1
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
             .param("isAdmin", isAdmin)
-            .query(String.class)
+            .param("requestedDirectoryPath", requestedDirectoryPath)
+            .query((resultSet, rowNumber) -> new DeleteTarget(
+                resultSet.getString("id"), resultSet.getString("directory_path")
+            ))
             .optional();
-        if (relativePath.isEmpty()) {
+        if (target.isEmpty() && isAdmin && requestedDirectoryPath != null
+            && !requestedDirectoryPath.isBlank()) {
+            target = Optional.of(new DeleteTarget(playlistId, requestedDirectoryPath.strip()));
+        }
+        if (target.isEmpty()) {
             return DeleteResult.NOT_FOUND;
         }
 
-        var directory = musicDirectory.resolve(relativePath.get()).normalize();
+        var directory = musicDirectory.resolve(target.get().directoryPath()).normalize();
         if (directory.equals(musicDirectory) || !directory.startsWith(musicDirectory)
             || containsSymbolicLink(directory)) {
             return DeleteResult.UNSAFE_PATH;
@@ -110,21 +123,19 @@ public class DirectoryPlaylistService {
             return DeleteResult.NOT_EMPTY;
         }
 
-        var deleted = jdbcClient.sql("""
+        jdbcClient.sql("""
                 DELETE FROM playlists
-                WHERE id = :playlistId AND (:isAdmin = TRUE OR user_id = :userId)
+                WHERE (id = :targetPlaylistId OR directory_path = :directoryPath)
+                  AND (:isAdmin = TRUE OR user_id = :userId)
                   AND directory_path = :directoryPath
                 """)
-            .param("playlistId", playlistId)
+            .param("targetPlaylistId", target.get().id())
             .param("userId", userId)
             .param("isAdmin", isAdmin)
-            .param("directoryPath", relativePath.get())
-            .update() == 1;
-        if (!deleted) {
-            return DeleteResult.NOT_FOUND;
-        }
-        jdbcClient.sql("DELETE FROM home_items WHERE item_id = :playlistId")
-            .param("playlistId", playlistId)
+            .param("directoryPath", target.get().directoryPath())
+            .update();
+        jdbcClient.sql("DELETE FROM home_items WHERE item_id IN (:playlistIds)")
+            .param("playlistIds", List.of(playlistId, target.get().id()))
             .update();
         return DeleteResult.DELETED;
     }
@@ -283,6 +294,9 @@ public class DirectoryPlaylistService {
     }
 
     private record DirectoryPlaylist(String id, String directoryPath, String poolType) {
+    }
+
+    private record DeleteTarget(String id, String directoryPath) {
     }
 
     enum DeleteResult {

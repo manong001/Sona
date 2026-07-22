@@ -462,9 +462,12 @@ struct PlaylistSubscriptionsView: View {
                         ForEach(subscriptions) { subscription in
                             subscriptionRow(subscription)
                                 .swipeActions {
-                                    Button("取消订阅", role: .destructive) {
+                                    Button(role: .destructive) {
                                         Task { await delete(subscription) }
+                                    } label: {
+                                        Label("取消订阅", systemImage: "trash")
                                     }
+                                    .tint(.red)
                                 }
                         }
                     }
