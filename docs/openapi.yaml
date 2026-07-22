@@ -690,7 +690,7 @@ paths:
           schema: {type: boolean, default: false}
       responses:
         "200":
-          description: 优先根据当前用户收藏歌曲的声学特征生成相似歌曲合辑，排除已收藏及已隐藏歌曲；声学特征不足时回退到播放历史
+          description: 优先根据当前用户收藏歌曲的声学特征生成相似歌曲合辑，每个合集保持单一语种，并排除已收藏及已隐藏歌曲；声学特征不足时回退到播放历史
           content:
             application/json:
               schema:

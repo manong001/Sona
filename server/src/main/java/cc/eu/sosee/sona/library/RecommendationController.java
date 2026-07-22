@@ -152,17 +152,21 @@ class RecommendationController {
         var remaining = candidates.stream()
             .filter(track -> !assignedTrackIds.contains(track.id()))
             .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        var groupLanguages = groups.stream()
+            .map(group -> TrackLanguage.detect(group.get(0)))
+            .toList();
         var today = LocalDate.now(clock.withZone(ZoneId.systemDefault()));
         Collections.shuffle(remaining, new Random(Objects.hash(user.id(), today, childMode, "made")));
         var groupIndex = 0;
         for (var track : remaining) {
             var attempts = 0;
-            while (groups.get(groupIndex).size() >= MADE_FOR_YOU_TRACK_LIMIT
-                && attempts < groups.size()) {
+            while (attempts < groups.size()
+                && (groups.get(groupIndex).size() >= MADE_FOR_YOU_TRACK_LIMIT
+                    || !groupLanguages.get(groupIndex).equals(TrackLanguage.detect(track)))) {
                 groupIndex = (groupIndex + 1) % groups.size();
                 attempts++;
             }
-            if (attempts == groups.size()) break;
+            if (attempts == groups.size()) continue;
             groups.get(groupIndex).add(track);
             assignedTrackIds.add(track.id());
             groupIndex = (groupIndex + 1) % groups.size();
@@ -192,15 +196,28 @@ class RecommendationController {
         if (recommendations.isEmpty()) return List.of();
 
         var centers = preferenceCenters(favorites);
-        var ranked = centers.stream().map(center -> recommendations.stream()
-            .sorted((left, right) -> {
-                var distance = Double.compare(
-                    distance(left.features().vector(), center),
-                    distance(right.features().vector(), center)
-                );
-                return distance != 0 ? distance : left.track().id().compareTo(right.track().id());
-            })
-            .toList()).toList();
+        var anchors = centers.stream().map(center -> favorites.stream()
+            .min((left, right) -> Double.compare(
+                distance(left.features().vector(), center),
+                distance(right.features().vector(), center)
+            ))
+            .orElseThrow()).toList();
+        var ranked = new ArrayList<List<AcousticTrackData>>();
+        for (var index = 0; index < centers.size(); index++) {
+            var center = centers.get(index);
+            var language = TrackLanguage.detect(anchors.get(index).track());
+            ranked.add(recommendations.stream()
+                .filter(candidate -> TrackLanguage.detect(candidate.track()).equals(language))
+                .sorted((left, right) -> {
+                    var distance = Double.compare(
+                        distance(left.features().vector(), center),
+                        distance(right.features().vector(), center)
+                    );
+                    return distance != 0
+                        ? distance : left.track().id().compareTo(right.track().id());
+                })
+                .toList());
+        }
         var groups = centers.stream().map(ignored -> new ArrayList<AcousticTrackData>()).toList();
         var positions = new int[centers.size()];
         var assignedTrackIds = new HashSet<String>();
@@ -226,13 +243,7 @@ class RecommendationController {
         for (var index = 0; index < groups.size(); index++) {
             var tracks = groups.get(index);
             if (tracks.isEmpty()) continue;
-            var center = centers.get(index);
-            var anchor = favorites.stream()
-                .min((left, right) -> Double.compare(
-                    distance(left.features().vector(), center),
-                    distance(right.features().vector(), center)
-                ))
-                .orElseThrow();
+            var anchor = anchors.get(index);
             result.add(new MadeForYouMixResponse(
                 "made-for-you-acoustic-" + index,
                 ArtistNames.canonical(anchor.track().artist()),
