@@ -196,8 +196,16 @@ class PlaylistSubscriptionRepository {
                                   trim(items.title) COLLATE NOCASE
                               AND replace(trim(tasks.artist), '、', '/') COLLATE NOCASE =
                                   replace(trim(items.artist), '、', '/') COLLATE NOCASE
-                              AND tasks.state IN ('QUEUED', 'RUNNING')
-                        ) THEN 'DOWNLOADING'
+                              AND tasks.state = 'RUNNING'
+                        ) THEN 'RUNNING'
+                        WHEN EXISTS (
+                            SELECT 1 FROM download_tasks tasks
+                            WHERE trim(tasks.title) COLLATE NOCASE =
+                                  trim(items.title) COLLATE NOCASE
+                              AND replace(trim(tasks.artist), '、', '/') COLLATE NOCASE =
+                                  replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                              AND tasks.state = 'QUEUED'
+                        ) THEN 'QUEUED'
                         ELSE 'MISSING'
                     END AS state
                 FROM playlist_subscription_items items
@@ -210,7 +218,12 @@ class PlaylistSubscriptionRepository {
                 (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'MISSING') AS missing_count,
                 (SELECT COUNT(*) FROM item_states items
-                    WHERE items.subscription_id = subscriptions.id AND items.state = 'DOWNLOADING') AS downloading_count
+                    WHERE items.subscription_id = subscriptions.id
+                      AND items.state IN ('QUEUED', 'RUNNING')) AS downloading_count,
+                (SELECT COUNT(*) FROM item_states items
+                    WHERE items.subscription_id = subscriptions.id AND items.state = 'QUEUED') AS queued_count,
+                (SELECT COUNT(*) FROM item_states items
+                    WHERE items.subscription_id = subscriptions.id AND items.state = 'RUNNING') AS running_count
             FROM playlist_subscriptions subscriptions
             JOIN users ON users.id = subscriptions.user_id
             """ + suffix);
@@ -228,7 +241,8 @@ class PlaylistSubscriptionRepository {
             nullableLastSyncedAt, resultSet.getString("last_error"),
             resultSet.getLong("created_at"), resultSet.getLong("updated_at"),
             resultSet.getInt("item_count"), resultSet.getInt("matched_count"),
-            resultSet.getInt("missing_count"), resultSet.getInt("downloading_count")
+            resultSet.getInt("missing_count"), resultSet.getInt("downloading_count"),
+            resultSet.getInt("queued_count"), resultSet.getInt("running_count")
         );
     }
 
@@ -236,8 +250,21 @@ class PlaylistSubscriptionRepository {
         String id, String userId, String username, String playlistId, String sourceUrl,
         String name, String poolType, boolean autoDownload, int syncIntervalHours,
         boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
-        int itemCount, int matchedCount, int missingCount, int downloadingCount
+        int itemCount, int matchedCount, int missingCount, int downloadingCount,
+        int queuedCount, int runningCount
     ) {
+        Subscription(
+            String id, String userId, String username, String playlistId, String sourceUrl,
+            String name, String poolType, boolean autoDownload, int syncIntervalHours,
+            boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
+            int itemCount, int matchedCount, int missingCount, int downloadingCount
+        ) {
+            this(
+                id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
+                syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
+                itemCount, matchedCount, missingCount, downloadingCount, 0, 0
+            );
+        }
     }
 
     record Item(

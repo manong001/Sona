@@ -72,6 +72,8 @@ struct PlaylistSubscription: Decodable, Identifiable {
     let matchedCount: Int
     let missingCount: Int
     let downloadingCount: Int
+    let queuedCount: Int?
+    let runningCount: Int?
 }
 
 enum MusicDownloadState: String, Codable {

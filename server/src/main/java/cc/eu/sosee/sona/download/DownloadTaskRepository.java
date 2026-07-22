@@ -161,6 +161,17 @@ class DownloadTaskRepository {
             .update() == 1;
     }
 
+    int failActiveTasks(String message) {
+        return jdbcClient.sql("""
+                UPDATE download_tasks
+                SET state = 'FAILED', message = :message, updated_at = :updatedAt
+                WHERE state IN ('QUEUED', 'RUNNING')
+                """)
+            .param("message", message)
+            .param("updatedAt", clock.millis())
+            .update();
+    }
+
     void update(String id, DownloadTaskState state, List<String> files, String message) {
         jdbcClient.sql("""
                 UPDATE download_tasks

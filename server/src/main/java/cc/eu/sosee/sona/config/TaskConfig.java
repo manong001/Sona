@@ -23,8 +23,8 @@ class TaskConfig {
     TaskExecutor downloadTaskExecutor() {
         var executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("sona-download-");
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(2);
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(4);
         executor.setQueueCapacity(500);
         executor.initialize();
         return executor;

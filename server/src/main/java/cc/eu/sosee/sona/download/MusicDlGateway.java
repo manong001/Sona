@@ -16,6 +16,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Component
 class MusicDlGateway implements DownloaderGateway {
 
+    private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(15);
+
     private final boolean enabled;
     private final String token;
     private final RestClient searchClient;
@@ -28,7 +30,7 @@ class MusicDlGateway implements DownloaderGateway {
         token = downloader.getToken();
         this.objectMapper = objectMapper;
         searchClient = client(downloader.getBaseUrl(), Duration.ofMinutes(3));
-        downloadClient = client(downloader.getBaseUrl(), Duration.ofHours(2));
+        downloadClient = client(downloader.getBaseUrl(), DOWNLOAD_TIMEOUT);
     }
 
     @Override

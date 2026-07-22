@@ -2,6 +2,7 @@ package cc.eu.sosee.sona.download;
 
 import cc.eu.sosee.sona.library.ScanCoordinator;
 import cc.eu.sosee.sona.personal.PlaylistDownloadImportService;
+import jakarta.annotation.PostConstruct;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
@@ -34,6 +35,11 @@ class DownloadService {
         this.scanCoordinator = scanCoordinator;
         this.playlistImportService = playlistImportService;
         this.taskExecutor = taskExecutor;
+    }
+
+    @PostConstruct
+    void recoverInterruptedTasks() {
+        repository.failActiveTasks("服务重启，下载任务已中断，请重试");
     }
 
     List<DownloadSource> sources() {

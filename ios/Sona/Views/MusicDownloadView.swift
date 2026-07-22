@@ -560,7 +560,7 @@ struct PlaylistSubscriptionsView: View {
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
                 } else if subscription.downloadingCount > 0 {
-                    Label("\(subscription.downloadingCount) 首正在下载", systemImage: "arrow.down.circle")
+                    Label(downloadStatus(subscription), systemImage: "arrow.down.circle")
                         .font(.caption)
                         .foregroundStyle(Color.sonaGreen)
                 } else if subscription.autoDownload {
@@ -702,6 +702,17 @@ struct PlaylistSubscriptionsView: View {
         case "CHILD": "儿童歌池"
         default: "正常歌曲池"
         }
+    }
+
+    private func downloadStatus(_ subscription: PlaylistSubscription) -> String {
+        guard let running = subscription.runningCount,
+              let queued = subscription.queuedCount else {
+            return "\(subscription.downloadingCount) 首正在下载"
+        }
+        var parts: [String] = []
+        if running > 0 { parts.append("\(running) 首下载中") }
+        if queued > 0 { parts.append("\(queued) 首排队中") }
+        return parts.joined(separator: " · ")
     }
 }
 
