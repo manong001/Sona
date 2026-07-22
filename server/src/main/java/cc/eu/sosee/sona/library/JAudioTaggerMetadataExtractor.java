@@ -24,9 +24,7 @@ class JAudioTaggerMetadataExtractor implements AudioMetadataExtractor {
         var artist = first(tag, FieldKey.ARTIST);
         var album = first(tag, FieldKey.ALBUM);
         var genre = first(tag, FieldKey.GENRE);
-        var legacyText = needsRecovery(title, artist, album, genre)
-            ? LegacyId3TextDecoder.read(path)
-            : java.util.Map.<String, String>of();
+        var legacyText = legacyText(path, title, artist, album, genre);
 
         return new AudioMetadata(
             recovered(title, legacyText.get("title")),
@@ -114,6 +112,22 @@ class JAudioTaggerMetadataExtractor implements AudioMetadataExtractor {
             codePoint -> codePoint >= 0x80 && codePoint <= 0xff
         );
         return hasSuspiciousLatin1 ? fallback : value;
+    }
+
+    private java.util.Map<String, String> legacyText(Path path, String... values) {
+        if (!needsRecovery(values)) {
+            return java.util.Map.of();
+        }
+        var id3 = LegacyId3TextDecoder.read(path);
+        if (!id3.isEmpty()) {
+            return id3;
+        }
+        for (var value : values) {
+            if (value != null && value.indexOf('\ufffd') >= 0) {
+                return LegacyWavInfoDecoder.read(path);
+            }
+        }
+        return java.util.Map.of();
     }
 
     private boolean needsRecovery(String... values) {
