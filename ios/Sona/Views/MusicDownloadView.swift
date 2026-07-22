@@ -523,7 +523,11 @@ struct PlaylistSubscriptionsView: View {
             }
             Text("共 \(subscription.itemCount) 首 · 已匹配 \(subscription.matchedCount) · 缺少 \(subscription.missingCount)")
                 .font(.subheadline)
-            if subscription.downloadingCount > 0 {
+            if subscription.lastSyncedAt == nil && subscription.lastError == nil {
+                Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+            } else if subscription.downloadingCount > 0 {
                 Label("\(subscription.downloadingCount) 首正在下载", systemImage: "arrow.down.circle")
                     .font(.caption)
                     .foregroundStyle(Color.sonaGreen)
@@ -644,7 +648,7 @@ struct CreatePlaylistSubscriptionView: View {
             }
             .overlay {
                 if isSaving {
-                    ProgressView("正在解析并首次同步…")
+                    ProgressView("正在创建订阅…")
                         .padding(20)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }

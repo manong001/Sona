@@ -117,6 +117,13 @@ class PlaylistSubscriptionRepository {
             .update();
     }
 
+    void rename(String id, String name) {
+        jdbcClient.sql("UPDATE playlist_subscriptions SET name = :name WHERE id = :id")
+            .param("name", name)
+            .param("id", id)
+            .update();
+    }
+
     void markFailed(String id, String message) {
         jdbcClient.sql("""
                 UPDATE playlist_subscriptions SET last_error = :message, updated_at = :now

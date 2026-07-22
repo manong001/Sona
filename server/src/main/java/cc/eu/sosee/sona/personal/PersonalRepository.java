@@ -453,6 +453,17 @@ class PersonalRepository {
         );
     }
 
+    boolean renamePlaylist(String userId, String playlistId, String name) {
+        return jdbcClient.sql("""
+                UPDATE playlists SET name = :name
+                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NULL
+                """)
+            .param("name", name)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update() == 1;
+    }
+
     @Transactional
     Optional<PlaylistData> updateDirectoryPlaylist(String userId, String playlistId, String name, String poolType) {
         var updated = jdbcClient.sql("""

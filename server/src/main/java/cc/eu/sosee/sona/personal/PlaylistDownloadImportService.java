@@ -67,6 +67,12 @@ public class PlaylistDownloadImportService {
         }
     }
 
+    public void rename(String userId, String playlistId, String name) {
+        if (!repository.renamePlaylist(userId, playlistId, name)) {
+            throw new IllegalArgumentException("订阅目标歌单不存在");
+        }
+    }
+
     private Path resolveFile(String relativeFile) {
         var path = musicDirectory.resolve(relativeFile).normalize();
         if (!path.startsWith(musicDirectory) || !Files.isRegularFile(path)) {

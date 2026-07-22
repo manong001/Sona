@@ -10,6 +10,9 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -25,6 +28,7 @@ class PlaylistSubscriptionService {
     private final DownloadService downloadService;
     private final PlaylistDownloadImportService playlistImportService;
     private final Clock clock;
+    private final TaskExecutor taskExecutor;
     private final Set<String> syncing = ConcurrentHashMap.newKeySet();
 
     PlaylistSubscriptionService(
@@ -32,13 +36,15 @@ class PlaylistSubscriptionService {
         DownloadTaskRepository downloads,
         DownloadService downloadService,
         PlaylistDownloadImportService playlistImportService,
-        Clock clock
+        Clock clock,
+        @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
         this.subscriptions = subscriptions;
         this.downloads = downloads;
         this.downloadService = downloadService;
         this.playlistImportService = playlistImportService;
         this.clock = clock;
+        this.taskExecutor = taskExecutor;
     }
 
     List<PlaylistSubscriptionRepository.Subscription> list(String userId) {
@@ -53,9 +59,8 @@ class PlaylistSubscriptionService {
         if (subscriptions.findAll(userId).stream().anyMatch(item -> item.sourceUrl().equals(sourceUrl.strip()))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "已经订阅过这个歌单");
         }
-        var preview = downloadService.parsePlaylist(sourceUrl);
         var name = requestedName == null || requestedName.isBlank()
-            ? preview.name().strip()
+            ? "订阅歌单"
             : requestedName.strip();
         var target = playlistImportService.create(userId, name, normalizedPoolType);
         var subscription = subscriptions.create(
@@ -63,13 +68,14 @@ class PlaylistSubscriptionService {
             autoDownload, syncIntervalHours
         );
         playlistImportService.addToHome(userId, target.id());
-        return sync(subscription, preview);
+        submitInitialSync(subscription, requestedName == null || requestedName.isBlank());
+        return subscription;
     }
 
     PlaylistSubscriptionRepository.Subscription sync(String userId, String id) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
-        return sync(subscription, null);
+        return sync(subscription, false);
     }
 
     void delete(String userId, String id) {
@@ -82,7 +88,7 @@ class PlaylistSubscriptionService {
     void syncDueSubscriptions() {
         for (var subscription : subscriptions.findDue()) {
             try {
-                sync(subscription, null);
+                sync(subscription, false);
             } catch (RuntimeException ignored) {
                 // 单个公开歌单失效时保留上次成功镜像，并继续同步其他订阅。
             }
@@ -90,16 +96,19 @@ class PlaylistSubscriptionService {
     }
 
     private PlaylistSubscriptionRepository.Subscription sync(
-        PlaylistSubscriptionRepository.Subscription subscription,
-        DownloadPlaylistPreview knownPreview
+        PlaylistSubscriptionRepository.Subscription subscription, boolean useRemoteName
     ) {
         if (!syncing.add(subscription.id())) {
             return subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
         }
         try {
-            var preview = knownPreview == null
-                ? downloadService.parsePlaylist(subscription.sourceUrl())
-                : knownPreview;
+            var preview = downloadService.parsePlaylist(subscription.sourceUrl());
+            if (useRemoteName && preview.name() != null && !preview.name().isBlank()) {
+                var remoteName = preview.name().strip();
+                playlistImportService.rename(subscription.userId(), subscription.playlistId(), remoteName);
+                subscriptions.rename(subscription.id(), remoteName);
+                subscription = subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
+            }
             var now = clock.millis();
             var items = new ArrayList<PlaylistSubscriptionRepository.Item>();
             var matchedTrackIds = new ArrayList<String>();
@@ -135,6 +144,22 @@ class PlaylistSubscriptionService {
             throw exception;
         } finally {
             syncing.remove(subscription.id());
+        }
+    }
+
+    private void submitInitialSync(
+        PlaylistSubscriptionRepository.Subscription subscription, boolean useRemoteName
+    ) {
+        try {
+            taskExecutor.execute(() -> {
+                try {
+                    sync(subscription, useRemoteName);
+                } catch (RuntimeException ignored) {
+                    // 同步错误已记录在订阅中，不能影响创建接口的快速返回。
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            subscriptions.markFailed(subscription.id(), "后台同步任务繁忙，请稍后手动同步");
         }
     }
 

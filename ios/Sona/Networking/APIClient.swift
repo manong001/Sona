@@ -753,7 +753,7 @@ final class APIClient {
                 sourceUrl: sourceURL, name: name, poolType: poolType,
                 autoDownload: autoDownload, syncIntervalHours: syncIntervalHours
             )),
-            timeout: 300
+            timeout: 30
         )
     }
 
