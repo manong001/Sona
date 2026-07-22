@@ -437,6 +437,7 @@ struct MusicDownloadView: View {
 
 struct PlaylistSubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var personal: PersonalStore
     @State private var subscriptions: [PlaylistSubscription] = []
     @State private var syncingIDs: Set<String> = []
     @State private var downloadingMissingIDs: Set<String> = []
@@ -494,6 +495,7 @@ struct PlaylistSubscriptionsView: View {
                 CreatePlaylistSubscriptionView { subscription in
                     subscriptions.removeAll { $0.id == subscription.id }
                     subscriptions.insert(subscription, at: 0)
+                    Task { await personal.refreshPlaylists() }
                     changed()
                 }
             }
@@ -520,69 +522,74 @@ struct PlaylistSubscriptionsView: View {
     }
 
     private func subscriptionRow(_ subscription: PlaylistSubscription) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(subscription.name).font(.headline)
-                    Text("\(poolTitle(subscription.poolType)) · 每 \(subscription.syncIntervalHours) 小时同步")
+        HStack(alignment: .top, spacing: 12) {
+            ArtworkView(path: artworkURL(for: subscription), cornerRadius: 6, thumbnailSize: 256)
+                .frame(width: 72, height: 72)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(subscription.name).font(.headline)
+                        Text("\(poolTitle(subscription.poolType)) · 每 \(subscription.syncIntervalHours) 小时同步")
+                            .font(.caption)
+                            .foregroundStyle(Color.sonaSecondaryText)
+                    }
+                    Spacer()
+                    Button {
+                        renamingSubscription = subscription
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        Task { await sync(subscription) }
+                    } label: {
+                        if syncingIDs.contains(subscription.id) {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(syncingIDs.contains(subscription.id))
+                }
+                Text("共 \(subscription.itemCount) 首 · 已匹配 \(subscription.matchedCount) · 缺少 \(subscription.missingCount)")
+                    .font(.subheadline)
+                if subscription.lastSyncedAt == nil && subscription.lastError == nil {
+                    Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
+                } else if subscription.downloadingCount > 0 {
+                    Label("\(subscription.downloadingCount) 首正在下载", systemImage: "arrow.down.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaGreen)
+                } else if subscription.autoDownload {
+                    Label("缺少音源时自动下载", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaGreen)
                 }
-                Spacer()
-                Button {
-                    renamingSubscription = subscription
-                } label: {
-                    Image(systemName: "pencil")
+                if let error = subscription.lastError, !error.isEmpty {
+                    Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
                 }
-                .buttonStyle(.plain)
-                Button {
-                    Task { await sync(subscription) }
-                } label: {
-                    if syncingIDs.contains(subscription.id) {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
+                if subscription.missingCount > 0 {
+                    Button {
+                        Task { await downloadMissing(subscription) }
+                    } label: {
+                        Label(
+                            downloadingMissingIDs.contains(subscription.id)
+                                ? "正在添加到下载列表…"
+                                : "下载缺少的 \(subscription.missingCount) 首",
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                        .frame(maxWidth: .infinity)
                     }
-                }
-                .buttonStyle(.plain)
-                .disabled(syncingIDs.contains(subscription.id))
-            }
-            Text("共 \(subscription.itemCount) 首 · 已匹配 \(subscription.matchedCount) · 缺少 \(subscription.missingCount)")
-                .font(.subheadline)
-            if subscription.lastSyncedAt == nil && subscription.lastError == nil {
-                Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption)
-                    .foregroundStyle(Color.sonaSecondaryText)
-            } else if subscription.downloadingCount > 0 {
-                Label("\(subscription.downloadingCount) 首正在下载", systemImage: "arrow.down.circle")
-                    .font(.caption)
-                    .foregroundStyle(Color.sonaGreen)
-            } else if subscription.autoDownload {
-                Label("缺少音源时自动下载", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(Color.sonaGreen)
-            }
-            if let error = subscription.lastError, !error.isEmpty {
-                Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
-            }
-            if subscription.missingCount > 0 {
-                Button {
-                    Task { await downloadMissing(subscription) }
-                } label: {
-                    Label(
-                        downloadingMissingIDs.contains(subscription.id)
-                            ? "正在添加到下载列表…"
-                            : "下载缺少的 \(subscription.missingCount) 首",
-                        systemImage: "arrow.down.circle.fill"
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.sonaGreen)
+                    .disabled(
+                        syncingIDs.contains(subscription.id)
+                            || downloadingMissingIDs.contains(subscription.id)
                     )
-                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.sonaGreen)
-                .disabled(
-                    syncingIDs.contains(subscription.id)
-                        || downloadingMissingIDs.contains(subscription.id)
-                )
             }
         }
         .padding(.vertical, 6)
@@ -603,11 +610,20 @@ struct PlaylistSubscriptionsView: View {
     private func load() async {
         isLoading = true
         defer { isLoading = false }
+        async let playlistRefresh: Void = personal.refreshPlaylists()
         do {
             subscriptions = try await APIClient.shared.playlistSubscriptions()
         } catch {
             errorMessage = error.localizedDescription
         }
+        await playlistRefresh
+    }
+
+    private func artworkURL(for subscription: PlaylistSubscription) -> String? {
+        guard let playlist = personal.playlists.first(where: {
+            $0.id == subscription.playlistId
+        }) else { return nil }
+        return sonaArtworkPaths(playlist.artworkURLs).first
     }
 
     private var hasActiveDownloads: Bool {
@@ -623,6 +639,7 @@ struct PlaylistSubscriptionsView: View {
                 let completed = !updated.contains { $0.downloadingCount > 0 }
                 subscriptions = updated
                 if completed {
+                    await personal.refreshPlaylists()
                     changed()
                     return
                 }
@@ -642,6 +659,7 @@ struct PlaylistSubscriptionsView: View {
             if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
                 subscriptions[index] = updated
             }
+            await personal.refreshPlaylists()
             changed()
         } catch {
             errorMessage = error.localizedDescription
@@ -659,6 +677,7 @@ struct PlaylistSubscriptionsView: View {
             if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
                 subscriptions[index] = updated
             }
+            await personal.refreshPlaylists()
             changed()
         } catch {
             errorMessage = error.localizedDescription
@@ -670,6 +689,7 @@ struct PlaylistSubscriptionsView: View {
         do {
             try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
             subscriptions.removeAll { $0.id == subscription.id }
+            await personal.refreshPlaylists()
             changed()
         } catch {
             errorMessage = error.localizedDescription

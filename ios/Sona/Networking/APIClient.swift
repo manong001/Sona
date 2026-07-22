@@ -303,6 +303,20 @@ final class APIClient {
         )
     }
 
+    func uploadPlaylistArtwork(playlistID: String, imageData: Data) async throws -> Playlist {
+        try await uploadAvatar(
+            path: "/api/v1/me/playlists/\(playlistID)/artwork",
+            imageData: imageData
+        )
+    }
+
+    func clearPlaylistArtwork(playlistID: String) async throws -> Playlist {
+        try await request(
+            path: "/api/v1/me/playlists/\(playlistID)/artwork",
+            method: "DELETE"
+        )
+    }
+
     func removePlaylistTracks(playlistID: String, trackIDs: [String]) async throws {
         struct Body: Encodable { let trackIds: [String] }
         try await requestVoid(

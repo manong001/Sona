@@ -1,4 +1,6 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 
 struct SonaCollection: Identifiable {
     enum Shape {
@@ -223,6 +225,7 @@ struct SonaLikedCover: View {
 struct SonaCollectionArtwork: View {
     let collection: SonaCollection
     var size: CGFloat
+    var onColorResolved: ((Color) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -231,19 +234,22 @@ struct SonaCollectionArtwork: View {
                     ArtworkView(
                         path: rotatingArtwork(at: context.date),
                         cornerRadius: collection.shape == .circle ? size / 2 : 6,
-                        thumbnailSize: requestedThumbnailSize
+                        thumbnailSize: requestedThumbnailSize,
+                        onColorResolved: onColorResolved
                     )
                 }
             } else if collection.artworkURLs.count < 2 {
                 ArtworkView(
                     path: collection.artworkURLs.first ?? collection.artworkURL,
                     cornerRadius: collection.shape == .circle ? size / 2 : 6,
-                    thumbnailSize: requestedThumbnailSize
+                    thumbnailSize: requestedThumbnailSize,
+                    onColorResolved: onColorResolved
                 )
             } else {
                 SonaMosaicArtwork(
                     paths: collection.artworkURLs,
-                    thumbnailSize: requestedThumbnailSize / 2
+                    thumbnailSize: requestedThumbnailSize / 2,
+                    onColorResolved: onColorResolved
                 )
             }
         }
@@ -266,9 +272,73 @@ struct SonaCollectionArtwork: View {
     }
 }
 
+struct SonaRadioCover: View {
+    let collection: SonaCollection
+    let color: Color
+    var size: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: size * 0.11, weight: .bold))
+                Spacer()
+                Text("电台")
+                    .font(.system(size: size * 0.07, weight: .black))
+            }
+            .padding(.horizontal, size * 0.06)
+            .padding(.top, size * 0.055)
+
+            Spacer(minLength: size * 0.02)
+            SonaRadioArtworkCluster(paths: collection.artworkURLs, size: size)
+                .frame(height: size * 0.46)
+            Spacer(minLength: size * 0.02)
+
+            Text(collection.title)
+                .font(.system(size: size * 0.13, weight: .black))
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+                .padding(.horizontal, size * 0.06)
+                .padding(.bottom, size * 0.055)
+        }
+        .foregroundStyle(.black)
+        .frame(width: size, height: size)
+        .background(color, in: RoundedRectangle(cornerRadius: size * 0.048))
+    }
+}
+
+private struct SonaRadioArtworkCluster: View {
+    let paths: [String]
+    let size: CGFloat
+
+    var body: some View {
+        HStack(spacing: -size * 0.07) {
+            radioArtwork(index: 1, diameter: size * 0.31)
+                .zIndex(0)
+            radioArtwork(index: 0, diameter: size * 0.50)
+                .zIndex(1)
+            radioArtwork(index: 2, diameter: size * 0.31)
+                .zIndex(0)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func radioArtwork(index: Int, diameter: CGFloat) -> some View {
+        ArtworkView(
+            path: index < paths.count ? paths[index] : paths.first,
+            cornerRadius: diameter / 2,
+            thumbnailSize: 384
+        )
+        .frame(width: diameter, height: diameter)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(.black.opacity(0.06), lineWidth: 1))
+    }
+}
+
 private struct SonaMosaicArtwork: View {
     let paths: [String]
     let thumbnailSize: Int
+    var onColorResolved: ((Color) -> Void)? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -281,7 +351,8 @@ private struct SonaMosaicArtwork: View {
                     ArtworkView(
                         path: index < paths.count ? paths[index] : nil,
                         cornerRadius: 0,
-                        thumbnailSize: thumbnailSize
+                        thumbnailSize: thumbnailSize,
+                        onColorResolved: index == 0 ? onColorResolved : nil
                     )
                     .frame(width: cellSize, height: cellSize)
                 }
@@ -329,9 +400,9 @@ struct SonaMediaCard: View {
     }
 
     private func dailyArtwork(color: Color) -> some View {
-        SonaCollectionArtwork(collection: collection, size: width)
+            SonaCollectionArtwork(collection: collection, size: width)
             .overlay(alignment: .topLeading) {
-                Image(systemName: "music.note")
+                Image(systemName: "waveform")
                     .font(.caption.bold())
                     .foregroundStyle(Color.sonaBackground)
                     .frame(width: 26, height: 26)
@@ -457,6 +528,7 @@ struct SonaMacHoverShortcutCard<Content: View>: View {
 }
 
 struct SonaTrackListView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
@@ -473,21 +545,28 @@ struct SonaTrackListView: View {
     @State private var isLoadingPlaylistTracks = false
     @State private var editedTracks: [String: Track] = [:]
     @State private var editingTrack: Track?
+    @State private var madeForYouHeaderColor = Color(red: 0.24, green: 0.12, blue: 0.18)
+    @State private var playlistHeaderColor = Color(red: 0.08, green: 0.22, blue: 0.16)
+    @State private var showsArtworkPicker = false
+    @State private var artworkPhotoItem: PhotosPickerItem?
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let dailyRecommendationQueues: [[Track]]?
     let loadsMoreFromLibrary: Bool
+    let radioColor: Color?
 
     init(
         collection: SonaCollection,
         playbackQueue: [Track]? = nil,
         dailyRecommendationQueues: [[Track]]? = nil,
-        loadsMoreFromLibrary: Bool = false
+        loadsMoreFromLibrary: Bool = false,
+        radioColor: Color? = nil
     ) {
         self.collection = collection
         self.playbackQueue = playbackQueue
         self.dailyRecommendationQueues = dailyRecommendationQueues
         self.loadsMoreFromLibrary = loadsMoreFromLibrary
+        self.radioColor = radioColor
     }
 
     private var playlist: Playlist? {
@@ -564,10 +643,185 @@ struct SonaTrackListView: View {
             collection.subtitle.hasPrefix("歌单")
     }
 
+    private var isRadio: Bool {
+        collection.id.hasPrefix("radio-")
+    }
+
+    private var isMadeForYou: Bool {
+        collection.id.hasPrefix("made-for-you-")
+    }
+
+    private var dailyRecommendationIndex: Int? {
+        guard collection.id.hasPrefix("daily-") else { return nil }
+        return Int(collection.id.dropFirst("daily-".count))
+    }
+
+    private var dailyRecommendationColor: Color {
+        let colors: [Color] = [
+            Color(red: 0.13, green: 0.91, blue: 0.91),
+            Color(red: 0.91, green: 0.95, blue: 0.18),
+            Color(red: 1.00, green: 0.27, blue: 0.16),
+            Color(red: 0.96, green: 0.48, blue: 0.74),
+            Color(red: 0.35, green: 0.78, blue: 0.58),
+            Color(red: 0.62, green: 0.49, blue: 0.95)
+        ]
+        guard let dailyRecommendationIndex else { return Color.sonaSurface }
+        return colors[dailyRecommendationIndex % colors.count]
+    }
+
+    private var detailHeaderColor: Color {
+        if isRadio { return radioColor ?? Color.sonaSurface }
+        if isMadeForYou { return madeForYouHeaderColor }
+        if dailyRecommendationIndex != nil { return dailyRecommendationColor }
+        if playlist != nil { return playlistHeaderColor }
+        return Color.sonaSurface
+    }
+
+    private var detailPageGradientTopOpacity: Double {
+        #if targetEnvironment(macCatalyst)
+        dailyRecommendationIndex != nil ? 0.40 : 0.78
+        #else
+        dailyRecommendationIndex != nil ? 0.58 : 0.98
+        #endif
+    }
+
+    private var detailNavigationBarColor: Color {
+        detailBackgroundColor(opacity: detailPageGradientTopOpacity)
+    }
+
+    private func detailBackgroundColor(opacity: Double) -> Color {
+        #if targetEnvironment(macCatalyst)
+        sonaOpaqueBlend(detailHeaderColor, opacity: opacity)
+        #else
+        detailHeaderColor.opacity(opacity)
+        #endif
+    }
+
+    private var detailNavigationBarBackgroundVisibility: Visibility {
+        #if targetEnvironment(macCatalyst)
+        .visible
+        #else
+        .hidden
+        #endif
+    }
+
+    private var detailNavigationBarVisibility: Visibility {
+        #if targetEnvironment(macCatalyst)
+        .hidden
+        #else
+        .visible
+        #endif
+    }
+
+    private var detailScrollTopPadding: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        72
+        #else
+        0
+        #endif
+    }
+
+    private var radioCoverSize: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        260
+        #else
+        280
+        #endif
+    }
+
+    @ViewBuilder
+    private var detailArtwork: some View {
+        if isRadio {
+            SonaRadioCover(
+                collection: displayedCollection,
+                color: radioColor ?? Color.sonaGreen,
+                size: radioCoverSize
+            )
+        } else if isMadeForYou {
+            madeForYouCover
+        } else if dailyRecommendationIndex != nil {
+            dailyRecommendationCover
+        } else {
+            SonaCollectionArtwork(
+                collection: displayedCollection,
+                size: 230,
+                onColorResolved: playlist == nil ? nil : { playlistHeaderColor = $0 }
+            )
+        }
+    }
+
+    private var dailyRecommendationCover: some View {
+        SonaCollectionArtwork(collection: displayedCollection, size: 280)
+            .overlay(alignment: .topLeading) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(.black)
+                    .frame(width: 36, height: 36)
+                    .background(dailyRecommendationColor, in: Circle())
+                    .padding(12)
+            }
+            .overlay(alignment: .bottom) {
+                Text(collection.title)
+                    .font(.system(size: 25, weight: .black))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(dailyRecommendationColor.opacity(0.96))
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 12)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var madeForYouCover: some View {
+        ArtworkView(
+            path: displayedCollection.artworkURL,
+            cornerRadius: 6,
+            thumbnailSize: 768,
+            onColorResolved: { madeForYouHeaderColor = $0 }
+        )
+        .frame(width: 280, height: 280)
+        .overlay(alignment: .topLeading) {
+            Image(systemName: "waveform")
+                .font(.system(size: 16, weight: .black))
+                .foregroundStyle(.black)
+                .frame(width: 36, height: 36)
+                .background(Color.sonaGreen, in: Circle())
+                .padding(12)
+        }
+        .overlay(alignment: .bottom) {
+            Text(collection.title)
+                .font(.system(size: 25, weight: .black))
+                .foregroundStyle(.black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(Color.sonaGreen.opacity(0.96))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 12)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
     var body: some View {
         ZStack {
+            Color.sonaBackground
+                .ignoresSafeArea()
+
             LinearGradient(
-                colors: [Color.sonaSurface.opacity(0.95), .sonaBackground, .sonaBackground],
+                colors: [
+                    detailBackgroundColor(opacity: detailPageGradientTopOpacity),
+                    detailBackgroundColor(
+                        opacity: isMadeForYou ? 0.72 : dailyRecommendationIndex != nil ? 0.34 : 0.45
+                    ),
+                    .sonaBackground,
+                    .sonaBackground
+                ],
                 startPoint: .top,
                 endPoint: .center
             )
@@ -576,12 +830,14 @@ struct SonaTrackListView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     VStack(spacing: 18) {
-                        SonaCollectionArtwork(collection: displayedCollection, size: 230)
+                        detailArtwork
                             .shadow(color: .black.opacity(0.45), radius: 20, y: 10)
                         VStack(spacing: 5) {
-                            Text(collection.title)
-                                .font(.title2.bold())
-                                .multilineTextAlignment(.center)
+                            if !isRadio && !isMadeForYou && dailyRecommendationIndex == nil {
+                                Text(collection.title)
+                                    .font(.title2.bold())
+                                    .multilineTextAlignment(.center)
+                            }
                             Text(collection.subtitle)
                                 .font(.subheadline)
                                 .foregroundStyle(Color.sonaSecondaryText)
@@ -590,6 +846,9 @@ struct SonaTrackListView: View {
                             Text("\(trackCount) 首歌曲")
                                 .font(.caption)
                                 .foregroundStyle(Color.sonaSecondaryText)
+                            if canEditPlaylistArtwork {
+                                playlistArtworkMenu
+                            }
                             Spacer()
                             if showsShuffleButton {
                                 Button {
@@ -715,13 +974,18 @@ struct SonaTrackListView: View {
                 }
                 .padding(.bottom, 24)
             }
+            .safeAreaPadding(.top, detailScrollTopPadding)
+
+            #if targetEnvironment(macCatalyst)
+            macDetailToolbar
+            #endif
 
             if isImportingServerDirectory {
                 DirectoryImportProgressOverlay(message: importProgressMessage)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
+        .toolbar(detailNavigationBarVisibility, for: .navigationBar)
         .toolbar {
             Button(
                 tracks.allSatisfy { offline.downloadedIDs.contains($0.id) }
@@ -762,7 +1026,17 @@ struct SonaTrackListView: View {
                 }
             }
         }
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(detailNavigationBarColor, for: .navigationBar)
+        .toolbarBackground(detailNavigationBarBackgroundVisibility, for: .navigationBar)
+        .photosPicker(
+            isPresented: $showsArtworkPicker,
+            selection: $artworkPhotoItem,
+            matching: .images
+        )
+        .onChange(of: artworkPhotoItem) { _, item in
+            guard let item else { return }
+            Task { await uploadPlaylistArtwork(from: item) }
+        }
         .task(id: playlist?.trackIDs) {
             await loadMissingPlaylistTracks()
         }
@@ -798,6 +1072,71 @@ struct SonaTrackListView: View {
         }
     }
 
+    #if targetEnvironment(macCatalyst)
+    private var macDetailToolbar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    dismiss()
+                } label: {
+                    macToolbarIcon("chevron.left")
+                }
+                .accessibilityLabel("返回")
+
+                Spacer()
+
+                Button {
+                    Task {
+                        let values = collection.id == "liked-songs"
+                            ? await personal.loadAllFavoriteTracks() : tracks
+                        await offline.downloadAll(values)
+                    }
+                } label: {
+                    macToolbarIcon("arrow.down.circle")
+                }
+                .accessibilityLabel("全部离线")
+                .disabled(
+                    tracks.isEmpty || tracks.contains { offline.activeDownloads.contains($0.id) }
+                )
+
+                if collection.id == "liked-songs" {
+                    if session.currentUser?.isAdmin == true {
+                        Menu {
+                            Button("扫描服务器音乐目录", systemImage: "externaldrive") {
+                                showsServerDirectoryPicker = true
+                            }
+                            Button("从 App 本地导入", systemImage: "iphone") {
+                                showsImporter = true
+                            }
+                        } label: {
+                            macToolbarIcon("square.and.arrow.down")
+                        }
+                        .accessibilityLabel("导入")
+                    }
+                    Button {
+                        isSelecting.toggle()
+                        if !isSelecting { selectedIDs.removeAll() }
+                    } label: {
+                        macToolbarIcon(isSelecting ? "checkmark" : "checklist")
+                    }
+                    .accessibilityLabel(isSelecting ? "完成" : "多选")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            Spacer()
+        }
+    }
+
+    private func macToolbarIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.title3.bold())
+            .foregroundStyle(.white)
+            .frame(width: 44, height: 44)
+            .background(.black.opacity(0.18), in: Circle())
+    }
+    #endif
+
     private func loadMissingPlaylistTracks() async {
         guard let playlist else { return }
         isLoadingPlaylistTracks = true
@@ -812,14 +1151,13 @@ struct SonaTrackListView: View {
     }
 
     private func playlistArtworkActionTitle(for track: Track) -> String? {
-        guard session.currentUser?.isAdmin == true,
-              playlist != nil,
+        guard canEditPlaylistArtwork,
               track.artworkURL != nil else { return nil }
-        return playlist?.artworkTrackID == track.id ? "当前歌单封面" : "设为歌单封面"
+        return playlist?.artworkTrackID == track.id ? "当前歌单封面" : "用此歌曲图片作为封面"
     }
 
     private func playlistArtworkAction(for track: Track) -> (() -> Void)? {
-        guard session.currentUser?.isAdmin == true,
+        guard canEditPlaylistArtwork,
               let playlist,
               track.artworkURL != nil else { return nil }
         return {
@@ -831,6 +1169,53 @@ struct SonaTrackListView: View {
                 )
             }
         }
+    }
+
+    private var canEditPlaylistArtwork: Bool {
+        guard let playlist else { return false }
+        return session.currentUser?.isAdmin == true ||
+            (!playlist.featured && !playlist.isDirectoryPlaylist)
+    }
+
+    private var playlistArtworkMenu: some View {
+        Menu {
+            Button("上传图片", systemImage: "photo.badge.plus") {
+                showsArtworkPicker = true
+            }
+            Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
+            if playlist?.artworkTrackID != nil {
+                Divider()
+                Button("恢复自动轮换", systemImage: "arrow.triangle.2.circlepath") {
+                    guard let playlist else { return }
+                    Task { await personal.clearPlaylistArtwork(playlistID: playlist.id) }
+                }
+            }
+        } label: {
+            Image(systemName: "photo")
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(.white.opacity(0.1), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("设置歌单封面")
+    }
+
+    private func uploadPlaylistArtwork(from item: PhotosPickerItem) async {
+        defer { artworkPhotoItem = nil }
+        guard let playlist,
+              let data = try? await item.loadTransferable(type: Data.self),
+              let jpeg = playlistArtworkJPEGData(data) else { return }
+        await personal.uploadPlaylistArtwork(playlistID: playlist.id, imageData: jpeg)
+    }
+
+    private func playlistArtworkJPEGData(_ data: Data) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let scale = min(1, 1600 / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let normalized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        return normalized.jpegData(compressionQuality: 0.86)
     }
 
     private func play(_ track: Track) {
@@ -973,6 +1358,38 @@ struct SonaTrackListView: View {
             importMessage = error.localizedDescription
         }
     }
+}
+
+func sonaOpaqueBlend(_ foreground: Color, opacity: Double) -> Color {
+    let foregroundColor = UIColor(foreground)
+    let backgroundColor = UIColor(Color.sonaBackground)
+    var foregroundRed: CGFloat = 0
+    var foregroundGreen: CGFloat = 0
+    var foregroundBlue: CGFloat = 0
+    var foregroundAlpha: CGFloat = 0
+    var backgroundRed: CGFloat = 0
+    var backgroundGreen: CGFloat = 0
+    var backgroundBlue: CGFloat = 0
+    var backgroundAlpha: CGFloat = 0
+    guard foregroundColor.getRed(
+        &foregroundRed,
+        green: &foregroundGreen,
+        blue: &foregroundBlue,
+        alpha: &foregroundAlpha
+    ), backgroundColor.getRed(
+        &backgroundRed,
+        green: &backgroundGreen,
+        blue: &backgroundBlue,
+        alpha: &backgroundAlpha
+    ) else {
+        return foreground.opacity(opacity)
+    }
+    let amount = CGFloat(opacity)
+    return Color(
+        red: Double(foregroundRed * amount + backgroundRed * (1 - amount)),
+        green: Double(foregroundGreen * amount + backgroundGreen * (1 - amount)),
+        blue: Double(foregroundBlue * amount + backgroundBlue * (1 - amount))
+    )
 }
 
 struct DirectoryImportProgressOverlay: View {

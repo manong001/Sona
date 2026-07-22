@@ -1,4 +1,6 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 
 struct MusicLibraryView: View {
     private enum Filter: String, CaseIterable {
@@ -152,6 +154,7 @@ struct MusicLibraryView: View {
                     ))
                 } else {
                     ManagedPlaylistDetailView(playlistID: collectionID)
+                        .id(collectionID)
                 }
             }
             .alert("新建歌单", isPresented: $showsCreatePlaylist) {
@@ -889,6 +892,7 @@ private struct PlaylistOrderView: View {
 }
 
 private struct ManagedPlaylistDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore
@@ -905,6 +909,9 @@ private struct ManagedPlaylistDetailView: View {
     @State private var editingDirectoryPlaylist: Playlist?
     @State private var editingTrack: Track?
     @State private var editingMetadataTrack: Track?
+    @State private var playlistHeaderColor = Color(red: 0.08, green: 0.22, blue: 0.16)
+    @State private var showsArtworkPicker = false
+    @State private var artworkPhotoItem: PhotosPickerItem?
     let playlistID: String
 
     private var playlist: Playlist? {
@@ -915,12 +922,22 @@ private struct ManagedPlaylistDetailView: View {
         playlist?.trackIDs.compactMap { library.track(id: $0) ?? loadedTracks[$0] } ?? []
     }
 
+    private var playlistArtworkURL: String? {
+        guard let playlist else { return nil }
+        return sonaArtworkPaths(playlist.artworkURLs).first
+            ?? sonaFirstArtworkURL(in: tracks)
+    }
+
     var body: some View {
         ZStack {
             Color.sonaBackground.ignoresSafeArea()
+            playlistHeroGradient.ignoresSafeArea()
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    playlistActions
+                    VStack(spacing: 0) {
+                        playlistHero
+                        playlistActions
+                    }
                     ForEach(tracks) { track in
                         HStack {
                             if isSelecting {
@@ -986,15 +1003,21 @@ private struct ManagedPlaylistDetailView: View {
                     }
                 }
             }
+            .safeAreaPadding(.top, detailScrollTopPadding)
+
+            #if targetEnvironment(macCatalyst)
+            macDetailToolbar
+            #endif
 
             if isImportingServerDirectory {
                 DirectoryImportProgressOverlay(message: importProgressMessage)
             }
         }
-        .navigationTitle(playlist?.name ?? "歌单")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(detailNavigationBarVisibility, for: .navigationBar)
+        .toolbarBackground(detailNavigationBarColor, for: .navigationBar)
+        .toolbarBackground(detailNavigationBarBackgroundVisibility, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("随机播放", systemImage: "shuffle") {
@@ -1002,6 +1025,15 @@ private struct ManagedPlaylistDetailView: View {
                 }
                 .disabled(tracks.isEmpty)
             }
+        }
+        .photosPicker(
+            isPresented: $showsArtworkPicker,
+            selection: $artworkPhotoItem,
+            matching: .images
+        )
+        .onChange(of: artworkPhotoItem) { _, item in
+            guard let item else { return }
+            Task { await uploadPlaylistArtwork(from: item) }
         }
         .task { await loadMissingTracks() }
         .sheet(item: $editingDirectoryPlaylist) { playlist in
@@ -1053,6 +1085,163 @@ private struct ManagedPlaylistDetailView: View {
         }
     }
 
+    private var playlistHeroGradient: LinearGradient {
+        LinearGradient(
+            gradient: Gradient(stops: [
+                .init(color: detailBackgroundColor(opacity: detailPageGradientTopOpacity), location: 0),
+                .init(color: detailBackgroundColor(opacity: 0.62), location: 0.52),
+                .init(color: Color.sonaBackground.opacity(0.94), location: 0.84),
+                .init(color: Color.sonaBackground, location: 1)
+            ]),
+            startPoint: .top,
+            endPoint: .center
+        )
+    }
+
+    private var detailPageGradientTopOpacity: Double {
+        #if targetEnvironment(macCatalyst)
+        0.78
+        #else
+        0.98
+        #endif
+    }
+
+    private var detailNavigationBarColor: Color {
+        detailBackgroundColor(opacity: detailPageGradientTopOpacity)
+    }
+
+    private func detailBackgroundColor(opacity: Double) -> Color {
+        #if targetEnvironment(macCatalyst)
+        sonaOpaqueBlend(playlistHeaderColor, opacity: opacity)
+        #else
+        playlistHeaderColor.opacity(opacity)
+        #endif
+    }
+
+    private var detailNavigationBarBackgroundVisibility: Visibility {
+        #if targetEnvironment(macCatalyst)
+        .visible
+        #else
+        .hidden
+        #endif
+    }
+
+    private var detailNavigationBarVisibility: Visibility {
+        #if targetEnvironment(macCatalyst)
+        .hidden
+        #else
+        .visible
+        #endif
+    }
+
+    private var detailScrollTopPadding: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        72
+        #else
+        0
+        #endif
+    }
+
+    #if targetEnvironment(macCatalyst)
+    private var macDetailToolbar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    macToolbarIcon("chevron.left")
+                }
+                .accessibilityLabel("返回")
+
+                Spacer()
+
+                Button {
+                    playRandom()
+                } label: {
+                    macToolbarIcon("shuffle")
+                }
+                .accessibilityLabel("随机播放")
+                .disabled(tracks.isEmpty)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            Spacer()
+        }
+    }
+
+    private func macToolbarIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.title3.bold())
+            .foregroundStyle(.white)
+            .frame(width: 44, height: 44)
+            .background(.black.opacity(0.18), in: Circle())
+    }
+    #endif
+
+    @ViewBuilder
+    private var playlistHero: some View {
+        #if targetEnvironment(macCatalyst)
+        HStack(alignment: .bottom, spacing: 28) {
+            playlistHeroArtwork(size: 210)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("歌单")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+                Text(playlist?.name ?? "歌单")
+                    .font(.system(size: 42, weight: .bold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.72)
+                playlistHeroMetadata
+            }
+            .padding(.bottom, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 28)
+        .padding(.top, 30)
+        .padding(.bottom, 22)
+        #else
+        VStack(alignment: .leading, spacing: 14) {
+            playlistHeroArtwork(size: 280)
+                .frame(maxWidth: .infinity)
+            Text(playlist?.name ?? "歌单")
+                .font(.title.bold())
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+            playlistHeroMetadata
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        #endif
+    }
+
+    private func playlistHeroArtwork(size: CGFloat) -> some View {
+        ArtworkView(
+            path: playlistArtworkURL,
+            cornerRadius: 6,
+            thumbnailSize: 768,
+            onColorResolved: { playlistHeaderColor = $0 }
+        )
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.36), radius: 18, y: 9)
+    }
+
+    private var playlistHeroMetadata: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.sonaGreen)
+                Text(session.currentUser?.username ?? "Sona")
+                    .font(.subheadline.weight(.semibold))
+            }
+            Text("\(tracks.count) 首歌曲")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.68))
+        }
+    }
+
     private var playlistActions: some View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
@@ -1099,6 +1288,12 @@ private struct ManagedPlaylistDetailView: View {
             }
             .buttonStyle(.bordered)
 
+            if canEditPlaylistArtwork {
+                playlistArtworkMenu
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if playlist?.isDirectoryPlaylist != true, isSelecting, !selectedIDs.isEmpty {
                 Button("移除选中的 \(selectedIDs.count) 首", role: .destructive) {
                     let ids = selectedIDs
@@ -1117,6 +1312,29 @@ private struct ManagedPlaylistDetailView: View {
         .padding(.bottom, 10)
     }
 
+    private var canEditPlaylistArtwork: Bool {
+        guard let playlist else { return false }
+        return session.currentUser?.isAdmin == true ||
+            (!playlist.featured && !playlist.isDirectoryPlaylist)
+    }
+
+    private var playlistArtworkMenu: some View {
+        Menu {
+            Button("上传图片", systemImage: "photo.badge.plus") {
+                showsArtworkPicker = true
+            }
+            Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
+            if playlist?.artworkTrackID != nil {
+                Divider()
+                Button("恢复自动轮换", systemImage: "arrow.triangle.2.circlepath") {
+                    Task { await personal.clearPlaylistArtwork(playlistID: playlistID) }
+                }
+            }
+        } label: {
+            Label("设置歌单封面", systemImage: "photo")
+        }
+    }
+
     private func playRandom() {
         let queue = tracks.shuffled()
         guard let first = queue.first else { return }
@@ -1130,14 +1348,13 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private func playlistArtworkActionTitle(for track: Track) -> String? {
-        guard session.currentUser?.isAdmin == true,
-              playlist != nil,
+        guard canEditPlaylistArtwork,
               track.artworkURL != nil else { return nil }
-        return playlist?.artworkTrackID == track.id ? "当前歌单封面" : "设为歌单封面"
+        return playlist?.artworkTrackID == track.id ? "当前歌单封面" : "用此歌曲图片作为封面"
     }
 
     private func playlistArtworkAction(for track: Track) -> (() -> Void)? {
-        guard session.currentUser?.isAdmin == true,
+        guard canEditPlaylistArtwork,
               let playlist,
               track.artworkURL != nil else { return nil }
         return {
@@ -1149,6 +1366,22 @@ private struct ManagedPlaylistDetailView: View {
                 )
             }
         }
+    }
+
+    private func uploadPlaylistArtwork(from item: PhotosPickerItem) async {
+        defer { artworkPhotoItem = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let jpeg = playlistArtworkJPEGData(data) else { return }
+        await personal.uploadPlaylistArtwork(playlistID: playlistID, imageData: jpeg)
+    }
+
+    private func playlistArtworkJPEGData(_ data: Data) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let scale = min(1, 1600 / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let normalized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        return normalized.jpegData(compressionQuality: 0.86)
     }
 
     private func loadMissingTracks() async {

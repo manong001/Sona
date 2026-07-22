@@ -480,7 +480,8 @@ struct HomeView: View {
                                 NavigationLink {
                                     SonaTrackListView(
                                         collection: collection,
-                                        playbackQueue: collection.tracks
+                                        playbackQueue: collection.tracks,
+                                        radioColor: radioColors[index % radioColors.count]
                                     )
                                 } label: {
                                     HomeRadioCard(
@@ -700,32 +701,7 @@ private struct HomeRadioCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Image(systemName: "waveform.circle.fill")
-                        .font(.system(size: 18, weight: .bold))
-                    Spacer()
-                    Text("电台")
-                        .font(.caption.weight(.black))
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 9)
-
-                Spacer(minLength: 4)
-                RadioArtworkCluster(paths: collection.artworkURLs)
-                    .frame(height: 76)
-                Spacer(minLength: 4)
-
-                Text(collection.title)
-                    .font(.system(size: 22, weight: .black))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 9)
-            }
-            .foregroundStyle(.black)
-            .frame(width: cardWidth, height: cardWidth)
-            .background(color, in: RoundedRectangle(cornerRadius: 8))
+            SonaRadioCover(collection: collection, color: color, size: cardWidth)
 
             Text(collection.subtitle)
                 .font(.subheadline)
@@ -733,33 +709,6 @@ private struct HomeRadioCard: View {
                 .lineLimit(2)
                 .frame(width: cardWidth, alignment: .leading)
         }
-    }
-}
-
-private struct RadioArtworkCluster: View {
-    let paths: [String]
-
-    var body: some View {
-        HStack(spacing: -12) {
-            radioArtwork(index: 1, size: 52)
-                .zIndex(0)
-            radioArtwork(index: 0, size: 84)
-                .zIndex(1)
-            radioArtwork(index: 2, size: 52)
-                .zIndex(0)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func radioArtwork(index: Int, size: CGFloat) -> some View {
-        ArtworkView(
-            path: index < paths.count ? paths[index] : paths.first,
-            cornerRadius: size / 2,
-            thumbnailSize: 384
-        )
-        .frame(width: size, height: size)
-        .clipShape(Circle())
-        .overlay(Circle().stroke(.black.opacity(0.06), lineWidth: 1))
     }
 }
 

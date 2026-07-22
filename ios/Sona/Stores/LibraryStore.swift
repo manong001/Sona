@@ -773,6 +773,39 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func uploadPlaylistArtwork(playlistID: String, imageData: Data) async -> Bool {
+        do {
+            let updated = try await api.uploadPlaylistArtwork(
+                playlistID: playlistID,
+                imageData: imageData
+            )
+            guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else {
+                return false
+            }
+            playlists[index] = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func clearPlaylistArtwork(playlistID: String) async -> Bool {
+        do {
+            let updated = try await api.clearPlaylistArtwork(playlistID: playlistID)
+            guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else {
+                return false
+            }
+            playlists[index] = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func removeTracks(_ trackIDs: Set<String>, from playlistID: String) async {
         guard !trackIDs.isEmpty else { return }
         do {

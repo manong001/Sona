@@ -18,6 +18,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
@@ -52,19 +54,22 @@ class PersonalController {
     private final DirectoryPlaylistService directoryPlaylistService;
     private final AchievementService achievementService;
     private final ScanCoordinator scanCoordinator;
+    private final PlaylistArtworkService playlistArtworkService;
 
     PersonalController(
         PersonalRepository repository,
         DirectoryImportService directoryImportService,
         DirectoryPlaylistService directoryPlaylistService,
         AchievementService achievementService,
-        ScanCoordinator scanCoordinator
+        ScanCoordinator scanCoordinator,
+        PlaylistArtworkService playlistArtworkService
     ) {
         this.repository = repository;
         this.directoryImportService = directoryImportService;
         this.directoryPlaylistService = directoryPlaylistService;
         this.achievementService = achievementService;
         this.scanCoordinator = scanCoordinator;
+        this.playlistArtworkService = playlistArtworkService;
     }
 
     @GetMapping("/favorites")
@@ -337,12 +342,42 @@ class PersonalController {
         @PathVariable String trackId
     ) {
         if (user.role() != UserRole.ADMIN) {
-            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+            requireOwnedPlaylist(user.id(), playlistId);
         }
-        return repository.setPlaylistArtwork(user.id(), playlistId, trackId)
-            .orElseThrow(() -> new ResponseStatusException(
-                NOT_FOUND, "Playlist track artwork not found"
-            ));
+        return playlistArtworkService.selectTrack(user.id(), playlistId, trackId);
+    }
+
+    @PostMapping(path = "/playlists/{playlistId}/artwork", consumes = "multipart/form-data")
+    PersonalRepository.PlaylistData uploadPlaylistArtwork(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId,
+        @RequestParam("file") MultipartFile file
+    ) {
+        if (user.role() != UserRole.ADMIN) {
+            requireOwnedPlaylist(user.id(), playlistId);
+        }
+        return playlistArtworkService.upload(user.id(), playlistId, file);
+    }
+
+    @GetMapping("/playlists/{playlistId}/artwork")
+    ResponseEntity<byte[]> playlistArtwork(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId
+    ) {
+        return ResponseEntity.ok()
+            .contentType(MediaType.IMAGE_JPEG)
+            .body(playlistArtworkService.read(user.id(), playlistId));
+    }
+
+    @DeleteMapping("/playlists/{playlistId}/artwork")
+    PersonalRepository.PlaylistData clearPlaylistArtwork(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String playlistId
+    ) {
+        if (user.role() != UserRole.ADMIN) {
+            requireOwnedPlaylist(user.id(), playlistId);
+        }
+        return playlistArtworkService.clear(user.id(), playlistId);
     }
 
     @PutMapping("/playlists/{playlistId}/tracks/{trackId}")

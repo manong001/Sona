@@ -615,6 +615,17 @@ class PersonalRepository {
             .single() == 1;
     }
 
+    boolean canAccessPlaylist(String userId, String playlistId) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM playlists
+                WHERE id = :playlistId AND (user_id = :userId OR featured = 1)
+                """)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .query(Long.class)
+            .single() == 1;
+    }
+
     Optional<PlaylistData> setPlaylistArtwork(String userId, String playlistId, String trackId) {
         var updated = jdbcClient.sql("""
                 UPDATE playlists
@@ -631,6 +642,41 @@ class PersonalRepository {
                   )
                 """)
             .param("trackId", trackId)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update();
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        return playlists(userId).stream()
+            .filter(playlist -> playlist.id().equals(playlistId))
+            .findFirst();
+    }
+
+    Optional<PlaylistData> setPlaylistUploadedArtwork(
+        String userId, String playlistId, String marker
+    ) {
+        var updated = jdbcClient.sql("""
+                UPDATE playlists SET artwork_track_id = :marker
+                WHERE id = :playlistId AND (user_id = :userId OR featured = 1)
+                """)
+            .param("marker", marker)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update();
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        return playlists(userId).stream()
+            .filter(playlist -> playlist.id().equals(playlistId))
+            .findFirst();
+    }
+
+    Optional<PlaylistData> clearPlaylistArtwork(String userId, String playlistId) {
+        var updated = jdbcClient.sql("""
+                UPDATE playlists SET artwork_track_id = NULL
+                WHERE id = :playlistId AND (user_id = :userId OR featured = 1)
+                """)
             .param("playlistId", playlistId)
             .param("userId", userId)
             .update();
@@ -1032,6 +1078,13 @@ class PersonalRepository {
     }
 
     private List<String> playlistArtworkUrls(PlaylistRow playlist, List<PlaylistTrack> tracks) {
+        if (playlist.artworkTrackId() != null
+            && playlist.artworkTrackId().startsWith("upload:")) {
+            return List.of(
+                "/api/v1/me/playlists/" + playlist.id() + "/artwork?v="
+                    + playlist.artworkTrackId().substring("upload:".length())
+            );
+        }
         if (playlist.artworkTrackId() != null && playlist.pinnedArtworkAvailable()) {
             return List.of("/api/v1/tracks/" + playlist.artworkTrackId() + "/artwork");
         }
