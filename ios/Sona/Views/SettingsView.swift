@@ -1429,76 +1429,140 @@ private struct TrashView: View {
     @EnvironmentObject private var personal: PersonalStore
     @State private var tracks: [Track] = []
     @State private var errorMessage: String?
-    @State private var deletingTrack: Track?
+    @State private var isSelecting = false
+    @State private var selectedIDs = Set<String>()
+    @State private var pendingDeletion: [Track] = []
+    @State private var isDeleting = false
+
+    private var allTracksSelected: Bool {
+        !tracks.isEmpty && selectedIDs.count == tracks.count
+    }
 
     var body: some View {
         List {
             if tracks.isEmpty {
                 ContentUnavailableView("垃圾桶为空", systemImage: "trash")
             }
-            ForEach(tracks) { track in
-                TrackRow(
-                    track: track,
-                    allowsMoveToTrash: false,
-                    moreActionTitle: "恢复",
-                    moreActionSystemImage: "arrow.uturn.backward",
-                    moreAction: { Task { await restore(track) } },
-                    deleteTitle: session.currentUser?.isAdmin == true ? "永久删除" : nil,
-                    deleteAction: session.currentUser?.isAdmin == true
-                        ? { deletingTrack = track } : nil
-                )
-                    .swipeActions {
-                        if session.currentUser?.isAdmin == true {
-                            Button("永久删除", role: .destructive) {
-                                deletingTrack = track
-                            }
+            if isSelecting {
+                HStack {
+                    if isDeleting {
+                        ProgressView("正在永久删除…")
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Button(allTracksSelected ? "取消全选" : "全选") {
+                            selectedIDs = allTracksSelected ? [] : Set(tracks.map(\.id))
                         }
-                        Button("恢复") { Task { await restore(track) } }.tint(.green)
+                        Spacer()
+                        Text("已选 \(selectedIDs.count) 首")
+                            .foregroundStyle(Color.sonaSecondaryText)
+                        Button("永久删除选中的 \(selectedIDs.count) 首", role: .destructive) {
+                            let selectedTracks = tracks.filter { selectedIDs.contains($0.id) }
+                            pendingDeletion = selectedTracks
+                        }
+                        .disabled(selectedIDs.isEmpty)
+                    }
+                }
+            }
+            ForEach(tracks) { track in
+                HStack(spacing: 8) {
+                    if isSelecting {
+                        Button {
+                            toggleSelection(track)
+                        } label: {
+                            Image(systemName: selectedIDs.contains(track.id)
+                                  ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(Color.sonaGreen)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(selectedIDs.contains(track.id) ? "取消选择" : "选择")
+                    }
+                    TrackRow(
+                        track: track,
+                        allowsMoveToTrash: false,
+                        moreActionTitle: "恢复",
+                        moreActionSystemImage: "arrow.uturn.backward",
+                        moreAction: { Task { await restore(track) } },
+                        deleteTitle: session.currentUser?.isAdmin == true ? "永久删除" : nil,
+                        deleteAction: session.currentUser?.isAdmin == true
+                            ? { pendingDeletion = [track] } : nil,
+                        tapAction: isSelecting ? { toggleSelection(track) } : nil
+                    )
+                }
+                    .swipeActions {
+                        if !isSelecting {
+                            if session.currentUser?.isAdmin == true {
+                                Button("永久删除", role: .destructive) {
+                                    pendingDeletion = [track]
+                                }
+                            }
+                            Button("恢复") { Task { await restore(track) } }.tint(.green)
+                        }
                     }
             }
             if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
         }
         .navigationTitle("个人垃圾桶")
         .toolbar {
-            Button("全部恢复") {
-                Task {
-                    for track in tracks {
-                        do {
-                            try await APIClient.shared.restoreTrack(id: track.id)
-                            personal.markTrackRestored(track.id)
-                        } catch {
-                            errorMessage = error.localizedDescription
-                        }
-                    }
-                    await load()
-                    await library.refresh()
-                    await personal.refresh()
+            if session.currentUser?.isAdmin == true {
+                Button(isSelecting ? "完成" : "多选") {
+                    isSelecting.toggle()
+                    if !isSelecting { selectedIDs.removeAll() }
                 }
+                .disabled(tracks.isEmpty || isDeleting)
             }
-            .disabled(tracks.isEmpty)
+            if !isSelecting {
+                Button("全部恢复") {
+                    Task {
+                        for track in tracks {
+                            do {
+                                try await APIClient.shared.restoreTrack(id: track.id)
+                                personal.markTrackRestored(track.id)
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                        await load()
+                        await library.refresh()
+                        await personal.refresh()
+                    }
+                }
+                .disabled(tracks.isEmpty || isDeleting)
+            }
         }
         .task { await load() }
         .refreshable { await load() }
         .alert(
-            "永久删除真实文件？",
+            pendingDeletion.count == 1
+                ? "永久删除真实文件？"
+                : "永久删除 \(pendingDeletion.count) 首歌曲？",
             isPresented: Binding(
-                get: { deletingTrack != nil },
-                set: { if !$0 { deletingTrack = nil } }
-            ),
-            presenting: deletingTrack
-        ) { track in
-            Button("取消", role: .cancel) { deletingTrack = nil }
+                get: { !pendingDeletion.isEmpty },
+                set: { if !$0 { pendingDeletion.removeAll() } }
+            )
+        ) {
+            Button("取消", role: .cancel) { pendingDeletion.removeAll() }
             Button("永久删除", role: .destructive) {
-                Task { await permanentlyDelete(track) }
+                let tracksToDelete = pendingDeletion
+                pendingDeletion.removeAll()
+                Task { await permanentlyDelete(tracksToDelete) }
             }
-        } message: { track in
-            Text("将永久删除“\(track.title)”的服务器音频文件、封面及全部关联记录。此操作不可恢复。")
+        } message: {
+            Text("将永久删除服务器音频文件、封面及全部关联记录。此操作不可恢复。")
         }
     }
 
     private func load() async {
-        do { tracks = try await APIClient.shared.trashTracks() }
+        do {
+            tracks = try await APIClient.shared.trashTracks()
+            selectedIDs.formIntersection(tracks.map(\.id))
+        }
         catch { errorMessage = error.localizedDescription }
+    }
+
+    private func toggleSelection(_ track: Track) {
+        if !selectedIDs.insert(track.id).inserted {
+            selectedIDs.remove(track.id)
+        }
     }
 
     private func restore(_ track: Track) async {
@@ -1506,25 +1570,41 @@ private struct TrashView: View {
             try await APIClient.shared.restoreTrack(id: track.id)
             personal.markTrackRestored(track.id)
             tracks.removeAll { $0.id == track.id }
+            selectedIDs.remove(track.id)
             await library.refresh()
             await personal.refresh()
         } catch { errorMessage = error.localizedDescription }
     }
 
-    private func permanentlyDelete(_ track: Track) async {
+    private func permanentlyDelete(_ tracksToDelete: [Track]) async {
         guard session.currentUser?.isAdmin == true else {
             errorMessage = "仅管理员可以永久删除文件"
             return
         }
-        do {
-            try await APIClient.shared.deleteTrack(id: track.id, isAdmin: true)
-            offline.remove(track)
-            player.removeTrack(id: track.id)
-            library.removeTrack(id: track.id)
-            tracks.removeAll { $0.id == track.id }
-            await personal.refresh()
-        } catch {
-            errorMessage = error.localizedDescription
+        isDeleting = true
+        errorMessage = nil
+        var failures: [(Track, Error)] = []
+        for track in tracksToDelete {
+            do {
+                try await APIClient.shared.deleteTrack(id: track.id, isAdmin: true)
+                offline.remove(track)
+                player.removeTrack(id: track.id)
+                library.removeTrack(id: track.id)
+                tracks.removeAll { $0.id == track.id }
+                selectedIDs.remove(track.id)
+            } catch {
+                failures.append((track, error))
+            }
+        }
+        await personal.refresh()
+        isDeleting = false
+        if failures.isEmpty {
+            isSelecting = false
+            selectedIDs.removeAll()
+        } else if tracksToDelete.count == 1, let failure = failures.first {
+            errorMessage = "删除“\(failure.0.title)”失败：\(failure.1.localizedDescription)"
+        } else {
+            errorMessage = "已删除 \(tracksToDelete.count - failures.count) 首，\(failures.count) 首删除失败"
         }
     }
 }
