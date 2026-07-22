@@ -3,14 +3,20 @@ package cc.eu.sosee.sona.personal;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Arrays;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -243,8 +249,10 @@ class PersonalRepository {
     }
 
     List<PlaylistData> playlists(String userId) {
-        return jdbcClient.sql("""
-                SELECT id, name, featured, directory_path, pool_type, artwork_track_id, created_at,
+        var playlistRows = jdbcClient.sql("""
+                SELECT playlists.id, playlists.name, playlists.featured, playlists.directory_path,
+                       playlists.pool_type, playlists.artwork_track_id, playlists.created_at,
+                       pinned_artwork.artwork_path AS pinned_artwork_path,
                        EXISTS (
                            SELECT 1 FROM home_items
                            WHERE home_items.user_id = :userId
@@ -256,18 +264,16 @@ class PersonalRepository {
                              AND home_items.item_id = playlists.id
                        ) AS home_position
                 FROM playlists
-                WHERE user_id = :userId OR featured = 1
-                ORDER BY created_at
+                LEFT JOIN tracks pinned_artwork ON pinned_artwork.id = playlists.artwork_track_id
+                WHERE playlists.user_id = :userId OR playlists.featured = 1
+                ORDER BY playlists.created_at
                 """)
             .param("userId", userId)
-            .query((resultSet, rowNumber) -> new PlaylistData(
+            .query((resultSet, rowNumber) -> new PlaylistRow(
                 resultSet.getString("id"),
                 resultSet.getString("name"),
-                trackIds(userId, resultSet.getString("id")),
-                playlistArtworkUrls(
-                    userId, resultSet.getString("id"), resultSet.getString("artwork_track_id")
-                ),
                 resultSet.getString("artwork_track_id"),
+                resultSet.getString("pinned_artwork_path") != null,
                 resultSet.getLong("created_at"),
                 resultSet.getBoolean("featured"),
                 resultSet.getString("directory_path"),
@@ -276,6 +282,44 @@ class PersonalRepository {
                 integer(resultSet, "home_position")
             ))
             .list();
+        var tracksByPlaylist = playlistTracks(userId);
+        return playlistRows.stream().map(playlist -> {
+            var tracks = tracksByPlaylist.getOrDefault(playlist.id(), List.of());
+            return new PlaylistData(
+                playlist.id(), playlist.name(),
+                tracks.stream().filter(track -> !track.hidden()).map(PlaylistTrack::id).toList(),
+                playlistArtworkUrls(playlist, tracks), playlist.artworkTrackId(),
+                playlist.createdAt(), playlist.featured(), playlist.directoryPath(),
+                playlist.poolType(), playlist.shownOnHome(), playlist.homePosition()
+            );
+        }).toList();
+    }
+
+    private Map<String, List<PlaylistTrack>> playlistTracks(String userId) {
+        var tracks = jdbcClient.sql("""
+                SELECT playlist_tracks.playlist_id, playlist_tracks.track_id, tracks.artwork_path,
+                       EXISTS (
+                           SELECT 1 FROM hidden_tracks
+                           WHERE hidden_tracks.user_id = :userId
+                             AND hidden_tracks.track_id = playlist_tracks.track_id
+                       ) AS hidden
+                FROM playlist_tracks
+                JOIN playlists ON playlists.id = playlist_tracks.playlist_id
+                LEFT JOIN tracks ON tracks.id = playlist_tracks.track_id
+                WHERE playlists.user_id = :userId OR playlists.featured = 1
+                ORDER BY playlist_tracks.playlist_id, playlist_tracks.position
+                """)
+            .param("userId", userId)
+            .query((resultSet, rowNumber) -> new PlaylistTrack(
+                resultSet.getString("playlist_id"), resultSet.getString("track_id"),
+                resultSet.getString("artwork_path"), resultSet.getBoolean("hidden")
+            ))
+            .list();
+        var grouped = new HashMap<String, List<PlaylistTrack>>();
+        tracks.forEach(track -> grouped.computeIfAbsent(
+            track.playlistId(), ignored -> new ArrayList<>()
+        ).add(track));
+        return grouped;
     }
 
     List<PlaylistData> visiblePlaylists(String userId, boolean childMode) {
@@ -465,7 +509,33 @@ class PersonalRepository {
     }
 
     @Transactional
-    Optional<PlaylistData> updateDirectoryPlaylist(String userId, String playlistId, String name, String poolType) {
+    Optional<PlaylistData> updateDirectoryPlaylist(
+        String userId,
+        String playlistId,
+        String directoryPath,
+        String name,
+        String poolType
+    ) {
+        var targetId = jdbcClient.sql("""
+                SELECT id FROM playlists
+                WHERE id = :playlistId AND directory_path IS NOT NULL
+                """)
+            .param("playlistId", playlistId)
+            .query(String.class)
+            .optional();
+        if (targetId.isEmpty() && directoryPath != null && !directoryPath.isBlank()) {
+            targetId = jdbcClient.sql("""
+                    SELECT id FROM playlists
+                    WHERE directory_path = :directoryPath
+                    """)
+                .param("directoryPath", directoryPath)
+                .query(String.class)
+                .optional();
+        }
+        if (targetId.isEmpty()) {
+            return Optional.empty();
+        }
+        var currentPlaylistId = targetId.orElseThrow();
         var updated = jdbcClient.sql("""
                 UPDATE playlists
                 SET name = :name, pool_type = :poolType
@@ -473,7 +543,7 @@ class PersonalRepository {
                 """)
             .param("name", name)
             .param("poolType", poolType)
-            .param("playlistId", playlistId)
+            .param("playlistId", currentPlaylistId)
             .update();
         if (updated == 0) {
             return Optional.empty();
@@ -486,9 +556,11 @@ class PersonalRepository {
                 )
                 """)
             .param("poolType", poolType)
-            .param("playlistId", playlistId)
+            .param("playlistId", currentPlaylistId)
             .update();
-        return playlists(userId).stream().filter(playlist -> playlist.id().equals(playlistId)).findFirst();
+        return playlists(userId).stream()
+            .filter(playlist -> playlist.id().equals(currentPlaylistId))
+            .findFirst();
     }
 
     boolean ownsPlaylist(String userId, String playlistId) {
@@ -918,50 +990,75 @@ class PersonalRepository {
             .list();
     }
 
-    private List<String> playlistArtworkUrls(
-        String userId, String playlistId, String artworkTrackId
-    ) {
-        if (artworkTrackId != null) {
-            var hasArtwork = jdbcClient.sql("""
-                    SELECT COUNT(*) FROM tracks
-                    WHERE id = :trackId AND artwork_path IS NOT NULL
-                    """)
-                .param("trackId", artworkTrackId)
-                .query(Integer.class)
-                .single();
-            return hasArtwork == 0
+    private List<String> playlistArtworkUrls(PlaylistRow playlist, List<PlaylistTrack> tracks) {
+        if (playlist.artworkTrackId() != null) {
+            return !playlist.pinnedArtworkAvailable()
                 ? List.of()
-                : List.of("/api/v1/tracks/" + artworkTrackId + "/artwork");
+                : List.of("/api/v1/tracks/" + playlist.artworkTrackId() + "/artwork");
         }
-        var artworks = jdbcClient.sql("""
-                SELECT playlist_tracks.track_id, tracks.artwork_path
-                FROM playlist_tracks
-                JOIN tracks ON tracks.id = playlist_tracks.track_id
-                WHERE playlist_tracks.playlist_id = :playlistId
-                  AND tracks.artwork_path IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM hidden_tracks
-                    WHERE hidden_tracks.user_id = :userId
-                      AND hidden_tracks.track_id = playlist_tracks.track_id
-                  )
-                ORDER BY playlist_tracks.position
-                """)
-            .param("playlistId", playlistId)
-            .param("userId", userId)
-            .query((resultSet, rowNumber) -> new PlaylistArtwork(
-                resultSet.getString("track_id"),
-                Path.of(resultSet.getString("artwork_path"))
-            ))
-            .list();
-        var distinct = new ArrayList<PlaylistArtwork>();
-        for (var artwork : artworks) {
-            if (distinct.stream().noneMatch(existing -> sameFileContent(existing.path(), artwork.path()))) {
-                distinct.add(artwork);
+        var seenPaths = new LinkedHashSet<Path>();
+        var candidates = new ArrayList<PlaylistArtwork>();
+        for (var track : tracks) {
+            if (track.hidden() || track.artworkPath() == null) {
+                continue;
             }
+            var artwork = new PlaylistArtwork(track.id(), Path.of(track.artworkPath()));
+            if (!seenPaths.add(artwork.path())) {
+                continue;
+            }
+            candidates.add(artwork);
+        }
+        var sizes = new HashMap<Path, Long>();
+        var sizeCounts = new HashMap<Long, Integer>();
+        for (var artwork : candidates) {
+            try {
+                var size = Files.size(artwork.path());
+                sizes.put(artwork.path(), size);
+                sizeCounts.merge(size, 1, Integer::sum);
+            } catch (IOException ignored) {
+                // 保持不可读封面为独立项，与原有内容比较失败时的行为一致。
+            }
+        }
+        var distinct = new ArrayList<PlaylistArtwork>();
+        var artworksByContent = new HashMap<ArtworkContent, List<PlaylistArtwork>>();
+        for (var artwork : candidates) {
+            var size = sizes.get(artwork.path());
+            if (size == null || sizeCounts.get(size) == 1) {
+                distinct.add(artwork);
+                continue;
+            }
+            var digest = artworkDigest(artwork.path());
+            if (digest == null) {
+                distinct.add(artwork);
+                continue;
+            }
+            var sameContent = artworksByContent.computeIfAbsent(
+                new ArtworkContent(size, digest), ignored -> new ArrayList<>()
+            );
+            if (sameContent.stream().anyMatch(existing -> sameFileContent(
+                existing.path(), artwork.path()
+            ))) {
+                continue;
+            }
+            sameContent.add(artwork);
+            distinct.add(artwork);
         }
         return distinct.stream()
             .map(artwork -> "/api/v1/tracks/" + artwork.trackId() + "/artwork")
             .toList();
+    }
+
+    private static String artworkDigest(Path path) {
+        try (var input = new DigestInputStream(
+            Files.newInputStream(path), MessageDigest.getInstance("SHA-256")
+        )) {
+            input.transferTo(java.io.OutputStream.nullOutputStream());
+            return HexFormat.of().formatHex(input.getMessageDigest().digest());
+        } catch (IOException ignored) {
+            return null;
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private static boolean sameFileContent(Path first, Path other) {
@@ -1021,6 +1118,21 @@ class PersonalRepository {
     }
 
     private record PlaylistArtwork(String trackId, Path path) {
+    }
+
+    private record ArtworkContent(long size, String digest) {
+    }
+
+    private record PlaylistRow(
+        String id, String name, String artworkTrackId, boolean pinnedArtworkAvailable,
+        long createdAt, boolean featured, String directoryPath, String poolType,
+        boolean shownOnHome, Integer homePosition
+    ) {
+    }
+
+    private record PlaylistTrack(
+        String playlistId, String id, String artworkPath, boolean hidden
+    ) {
     }
 
     record HistoryData(String trackId, long playedAt) {

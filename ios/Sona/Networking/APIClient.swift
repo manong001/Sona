@@ -209,7 +209,7 @@ final class APIClient {
         components.queryItems = [
             URLQueryItem(name: "childMode", value: childModeValue)
         ]
-        return try await request(url: components.url!)
+        return try await request(url: components.url!, timeout: 60)
     }
 
     func createPlaylist(name: String) async throws -> Playlist {
@@ -247,10 +247,21 @@ final class APIClient {
         )
     }
 
-    func updateDirectoryPlaylist(id: String, name: String, poolType: String) async throws -> Playlist {
+    func updateDirectoryPlaylist(
+        id: String,
+        directoryPath: String?,
+        name: String,
+        poolType: String
+    ) async throws -> Playlist {
         struct Body: Encodable { let name: String; let poolType: String }
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/playlists/\(id)"), resolvingAgainstBaseURL: false
+        )!
+        if let directoryPath {
+            components.queryItems = [URLQueryItem(name: "directoryPath", value: directoryPath)]
+        }
         return try await request(
-            path: "/api/v1/me/playlists/\(id)",
+            url: components.url!,
             method: "PATCH",
             body: try encoder.encode(Body(name: name, poolType: poolType))
         )

@@ -676,15 +676,30 @@ final class PersonalStore: ObservableObject {
             .appendingPathComponent("\(server)-\(currentUserID)-\(mode).json")
     }
 
-    func updateDirectoryPlaylist(id: String, name: String, poolType: String) async {
+    @discardableResult
+    func updateDirectoryPlaylist(_ playlist: Playlist, name: String, poolType: String) async -> Bool {
         do {
             let updated = try await api.updateDirectoryPlaylist(
-                id: id, name: name, poolType: poolType
+                id: playlist.id,
+                directoryPath: playlist.directoryPath,
+                name: name,
+                poolType: poolType
             )
-            guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
-            playlists[index] = updated
+            if let index = playlists.firstIndex(where: {
+                $0.id == playlist.id || (
+                    playlist.directoryPath != nil && $0.directoryPath == playlist.directoryPath
+                )
+            }) {
+                playlists[index] = updated
+            } else {
+                playlists.append(updated)
+            }
+            saveCachedPlaylists()
+            errorMessage = nil
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

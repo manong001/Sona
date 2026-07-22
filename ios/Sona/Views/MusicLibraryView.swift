@@ -895,12 +895,15 @@ private struct ManagedPlaylistDetailView: View {
         .task { await loadMissingTracks() }
         .sheet(item: $editingDirectoryPlaylist) { playlist in
             DirectoryPlaylistEditor(playlist: playlist) { name, poolType in
-                await personal.updateDirectoryPlaylist(
-                    id: playlist.id, name: name, poolType: poolType
-                )
+                guard await personal.updateDirectoryPlaylist(
+                    playlist, name: name, poolType: poolType
+                ) else {
+                    return personal.errorMessage ?? "保存失败，请稍后重试"
+                }
                 await library.refresh()
                 loadedTracks = [:]
                 await loadMissingTracks()
+                return nil
             }
         }
         .sheet(item: $editingTrack) { track in
@@ -1143,12 +1146,13 @@ private struct ManagedPlaylistDetailView: View {
 private struct DirectoryPlaylistEditor: View {
     @Environment(\.dismiss) private var dismiss
     let playlist: Playlist
-    let saved: (String, String) async -> Void
+    let saved: (String, String) async -> String?
     @State private var name: String
     @State private var poolType: String
     @State private var isSaving = false
+    @State private var errorMessage: String?
 
-    init(playlist: Playlist, saved: @escaping (String, String) async -> Void) {
+    init(playlist: Playlist, saved: @escaping (String, String) async -> String?) {
         self.playlist = playlist
         self.saved = saved
         _name = State(initialValue: playlist.name)
@@ -1186,12 +1190,28 @@ private struct DirectoryPlaylistEditor: View {
                 }
             }
         }
+        .alert(
+            "保存歌单失败",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("好") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "保存失败，请稍后重试")
+        }
     }
 
     private func save() async {
         isSaving = true
         defer { isSaving = false }
-        await saved(name.trimmingCharacters(in: .whitespacesAndNewlines), poolType)
+        if let error = await saved(
+            name.trimmingCharacters(in: .whitespacesAndNewlines), poolType
+        ) {
+            errorMessage = error
+            return
+        }
         dismiss()
     }
 }

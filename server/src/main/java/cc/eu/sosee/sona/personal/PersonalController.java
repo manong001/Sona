@@ -289,6 +289,7 @@ class PersonalController {
     PersonalRepository.PlaylistData updateDirectoryPlaylist(
         @AuthenticationPrincipal AuthenticatedUser user,
         @PathVariable String playlistId,
+        @RequestParam(required = false) String directoryPath,
         @Valid @RequestBody UpdateDirectoryPlaylistRequest request
     ) {
         if (user.role() != UserRole.ADMIN) {
@@ -298,7 +299,7 @@ class PersonalController {
             throw new ResponseStatusException(BAD_REQUEST, "Invalid pool type");
         }
         return repository.updateDirectoryPlaylist(
-            user.id(), playlistId, request.name().strip(), request.poolType()
+            user.id(), playlistId, directoryPath, request.name().strip(), request.poolType()
         ).orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Directory playlist not found"));
     }
 
