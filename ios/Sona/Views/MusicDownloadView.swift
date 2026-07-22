@@ -485,6 +485,7 @@ struct PlaylistSubscriptionsView: View {
             .refreshable { await load() }
             .sheet(isPresented: $showsCreate) {
                 CreatePlaylistSubscriptionView { subscription in
+                    subscriptions.removeAll { $0.id == subscription.id }
                     subscriptions.insert(subscription, at: 0)
                     changed()
                 }
@@ -723,8 +724,29 @@ struct CreatePlaylistSubscriptionView: View {
             )
             created(subscription)
             dismiss()
+            Task { await refreshAfterInitialSync(id: subscription.id) }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshAfterInitialSync(id: String) async {
+        for _ in 0..<60 {
+            do {
+                try await Task.sleep(for: .seconds(1))
+                let subscriptions = try await APIClient.shared.playlistSubscriptions()
+                guard let subscription = subscriptions.first(where: { $0.id == id }) else {
+                    return
+                }
+                if subscription.lastSyncedAt != nil || subscription.lastError != nil {
+                    created(subscription)
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                continue
+            }
         }
     }
 }

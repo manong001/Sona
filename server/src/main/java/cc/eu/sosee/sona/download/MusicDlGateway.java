@@ -92,7 +92,7 @@ class MusicDlGateway implements DownloaderGateway {
         requireEnabled();
         try {
             var requestBody = requestBody(new PlaylistBody(url));
-            var response = searchClient.post()
+            var responseBody = searchClient.post()
                 .uri("/v1/playlists/parse")
                 .header("X-Sona-Token", token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -100,7 +100,10 @@ class MusicDlGateway implements DownloaderGateway {
                 .accept(MediaType.APPLICATION_JSON)
                 .body(requestBody)
                 .retrieve()
-                .body(DownloadPlaylistPreview.class);
+                .body(byte[].class);
+            var response = responseBody == null || responseBody.length == 0
+                ? null
+                : objectMapper.readValue(responseBody, DownloadPlaylistPreview.class);
             if (response == null || response.items() == null || response.items().isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "歌单中没有可下载歌曲");
             }
@@ -110,6 +113,10 @@ class MusicDlGateway implements DownloaderGateway {
                 ? HttpStatus.BAD_REQUEST
                 : HttpStatus.BAD_GATEWAY;
             throw new ResponseStatusException(status, playlistError(exception), exception);
+        } catch (JacksonException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY, "歌单解析服务返回了无效数据", exception
+            );
         }
     }
 
