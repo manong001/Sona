@@ -2,6 +2,7 @@ package cc.eu.sosee.sona.library;
 
 import cc.eu.sosee.sona.personal.DirectoryPlaylistService;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -177,6 +178,26 @@ public class ScanCoordinator {
             taskExecutor.execute(() -> {
                 try {
                     var scanResult = libraryScanner.scan(relativeDirectory);
+                    directoryPlaylistService.sync(relativeDirectory);
+                    result.complete(scanResult);
+                } catch (Exception exception) {
+                    result.completeExceptionally(exception);
+                }
+            });
+        } catch (RuntimeException exception) {
+            result.completeExceptionally(exception);
+        }
+        return result;
+    }
+
+    public CompletableFuture<ScanResult> enqueueFiles(
+        String relativeDirectory, List<Path> files
+    ) {
+        var result = new CompletableFuture<ScanResult>();
+        try {
+            taskExecutor.execute(() -> {
+                try {
+                    var scanResult = libraryScanner.scanFiles(files);
                     directoryPlaylistService.sync(relativeDirectory);
                     result.complete(scanResult);
                 } catch (Exception exception) {

@@ -125,6 +125,23 @@ class LibraryScanner {
         return result(counts);
     }
 
+    ScanResult scanFiles(List<Path> paths) {
+        var counts = new int[5];
+        var errors = new ArrayList<String>();
+        paths.stream()
+            .map(path -> path.toAbsolutePath().normalize())
+            .distinct()
+            .filter(Files::isRegularFile)
+            .filter(this::isSupported)
+            .sorted()
+            .forEach(path -> {
+                counts[0]++;
+                scanFile(path, ScrapeMode.STANDARD, counts, errors);
+            });
+        lastErrors.set(List.copyOf(errors));
+        return result(counts);
+    }
+
     List<String> lastErrors() {
         return lastErrors.get();
     }

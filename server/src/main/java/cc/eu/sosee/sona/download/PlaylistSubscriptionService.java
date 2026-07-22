@@ -6,8 +6,11 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
@@ -25,8 +28,8 @@ class PlaylistSubscriptionService {
     private static final Set<String> POOL_TYPES = Set.of("NORMAL", "DISCOVERY", "CHILD");
 
     private final PlaylistSubscriptionRepository subscriptions;
-    private final DownloadTaskRepository downloads;
     private final DownloadService downloadService;
+    private final PlaylistSubscriptionMatcher matcher;
     private final PlaylistDownloadImportService playlistImportService;
     private final Clock clock;
     private final TaskExecutor taskExecutor;
@@ -34,15 +37,14 @@ class PlaylistSubscriptionService {
 
     PlaylistSubscriptionService(
         PlaylistSubscriptionRepository subscriptions,
-        DownloadTaskRepository downloads,
-        DownloadService downloadService,
+        DownloadService downloadService, PlaylistSubscriptionMatcher matcher,
         PlaylistDownloadImportService playlistImportService,
         Clock clock,
         @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
         this.subscriptions = subscriptions;
-        this.downloads = downloads;
         this.downloadService = downloadService;
+        this.matcher = matcher;
         this.playlistImportService = playlistImportService;
         this.clock = clock;
         this.taskExecutor = taskExecutor;
@@ -93,6 +95,63 @@ class PlaylistSubscriptionService {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         return sync(subscription, "订阅歌单".equals(subscription.name()), true);
+    }
+
+    List<ItemDetail> items(String userId, String id) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var session = matcher.open();
+        var storedItems = subscriptions.findItems(subscription.id());
+        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
+        return storedItems.stream()
+            .map(item -> {
+                var excludedTrackIds = new HashSet<>(usedTrackIds);
+                excludedTrackIds.remove(item.matchedTrackId());
+                var suggestions = item.matchedTrackId() == null && "SUGGESTED".equals(item.state())
+                    ? session.match(asCandidate(item), excludedTrackIds).suggestions()
+                    : List.<PlaylistSubscriptionMatcher.Suggestion>of();
+                return new ItemDetail(
+                    item.itemKey(), item.position(), item.title(), item.artist(), item.album(),
+                    item.matchedTrackId(), item.state(), suggestions
+                );
+            })
+            .toList();
+    }
+
+    @Transactional
+    PlaylistSubscriptionRepository.Subscription selectMatch(
+        String userId, String id, String itemKey, String trackId
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        if (!subscriptions.selectMatch(userId, id, itemKey, trackId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "候选歌曲不存在或已被其他歌曲使用");
+        }
+        playlistImportService.replaceTracks(
+            userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
+        );
+        return subscriptions.find(userId, id).orElseThrow();
+    }
+
+    synchronized PlaylistSubscriptionRepository.Subscription downloadItem(
+        String userId, String id, String itemKey
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        subscriptions.findItem(userId, id, itemKey)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌曲不存在"));
+        var candidate = candidatesByKey(downloadService.parsePlaylist(subscription.sourceUrl()))
+            .get(itemKey);
+        if (candidate == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "远端歌单已变化，请先重新同步");
+        }
+        if (downloadService.queueForPlaylist(
+            candidate, subscription.username(), subscription.playlistId()
+        ).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "歌曲已入库或已在下载列表");
+        }
+        subscriptions.updateItemState(id, itemKey, "DOWNLOADING");
+        return subscriptions.find(userId, id).orElseThrow();
     }
 
     @Transactional
@@ -151,13 +210,37 @@ class PlaylistSubscriptionService {
             var now = clock.millis();
             var items = new ArrayList<PlaylistSubscriptionRepository.Item>();
             var matchedTrackIds = new ArrayList<String>();
+            var existingItems = subscriptions.findItems(subscription.id()).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                    PlaylistSubscriptionRepository.Item::itemKey, item -> item,
+                    (left, right) -> left
+                ));
+            var matchSession = matcher.open();
+            var occurrences = new HashMap<String, Integer>();
+            var usedTrackIds = new HashSet<String>();
             for (var position = 0; position < preview.items().size(); position++) {
                 var candidate = preview.items().get(position);
-                var matchedTrackId = downloads.findLibraryTrackId(candidate).orElse(null);
+                var keyBase = itemKeyBase(candidate);
+                var occurrence = occurrences.merge(keyBase, 1, Integer::sum) - 1;
+                var itemKey = itemKey(candidate, occurrence);
+                var existing = existingItems.get(itemKey);
+                String matchedTrackId = null;
+                List<PlaylistSubscriptionMatcher.Suggestion> suggestions = List.of();
+                if (existing != null && matchSession.containsTrack(existing.matchedTrackId())
+                    && !usedTrackIds.contains(existing.matchedTrackId())) {
+                    matchedTrackId = existing.matchedTrackId();
+                } else {
+                    var match = matchSession.match(candidate, usedTrackIds);
+                    matchedTrackId = match.exactTrackId().orElse(null);
+                    suggestions = match.suggestions();
+                }
                 var state = "MISSING";
                 if (matchedTrackId != null) {
                     matchedTrackIds.add(matchedTrackId);
+                    usedTrackIds.add(matchedTrackId);
                     state = "MATCHED";
+                } else if (!suggestions.isEmpty()) {
+                    state = "SUGGESTED";
                 } else if (candidate.downloadState() == DownloadTaskState.QUEUED
                     || candidate.downloadState() == DownloadTaskState.RUNNING) {
                     state = "DOWNLOADING";
@@ -168,7 +251,7 @@ class PlaylistSubscriptionService {
                     state = "DOWNLOADING";
                 }
                 items.add(new PlaylistSubscriptionRepository.Item(
-                    itemKey(candidate, position), position, candidate.title().strip(),
+                    itemKey, position, candidate.title().strip(),
                     candidate.artist().strip(), candidate.album(), matchedTrackId, state, now
                 ));
             }
@@ -210,9 +293,24 @@ class PlaylistSubscriptionService {
         return normalized;
     }
 
-    private String itemKey(DownloadCandidate candidate, int position) {
-        var value = position + "\n" + candidate.title().strip().toLowerCase()
-            + "\n" + candidate.artist().strip().toLowerCase();
+    private Map<String, DownloadCandidate> candidatesByKey(DownloadPlaylistPreview preview) {
+        var result = new HashMap<String, DownloadCandidate>();
+        var occurrences = new HashMap<String, Integer>();
+        for (var candidate : preview.items()) {
+            var keyBase = itemKeyBase(candidate);
+            var occurrence = occurrences.merge(keyBase, 1, Integer::sum) - 1;
+            result.put(itemKey(candidate, occurrence), candidate);
+        }
+        return result;
+    }
+
+    private String itemKeyBase(DownloadCandidate candidate) {
+        return PlaylistSubscriptionMatcher.normalizedText(candidate.title()) + "\n"
+            + PlaylistSubscriptionMatcher.normalizedArtists(candidate.artist());
+    }
+
+    private String itemKey(DownloadCandidate candidate, int occurrence) {
+        var value = itemKeyBase(candidate) + "\n" + occurrence;
         try {
             return HexFormat.of().formatHex(
                 MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))
@@ -220,6 +318,20 @@ class PlaylistSubscriptionService {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    private DownloadCandidate asCandidate(PlaylistSubscriptionRepository.Item item) {
+        return new DownloadCandidate(
+            item.itemKey(), "subscription", "订阅歌单", item.title(), item.artist(),
+            item.album(), null, null, null, null, null, false, null, null
+        );
+    }
+
+    record ItemDetail(
+        String itemKey, int position, String title, String artist, String album,
+        String matchedTrackId, String state,
+        List<PlaylistSubscriptionMatcher.Suggestion> suggestions
+    ) {
     }
 
     private String conciseMessage(RuntimeException exception) {

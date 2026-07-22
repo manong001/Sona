@@ -66,6 +66,33 @@ class PlaylistSubscriptionController {
         return service.downloadMissing(user.id(), id);
     }
 
+    @GetMapping("/{id}/items")
+    List<PlaylistSubscriptionService.ItemDetail> items(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return service.items(user.id(), id);
+    }
+
+    @PostMapping("/{id}/items/{itemKey}/match")
+    PlaylistSubscriptionRepository.Subscription selectMatch(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @PathVariable String itemKey,
+        @Valid @RequestBody MatchRequest request
+    ) {
+        return service.selectMatch(user.id(), id, itemKey, request.trackId());
+    }
+
+    @PostMapping("/{id}/items/{itemKey}/download")
+    PlaylistSubscriptionRepository.Subscription downloadItem(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @PathVariable String itemKey
+    ) {
+        return service.downloadItem(user.id(), id, itemKey);
+    }
+
     @PatchMapping("/{id}")
     PlaylistSubscriptionRepository.Subscription rename(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -100,6 +127,9 @@ class PlaylistSubscriptionController {
     }
 
     record RenameRequest(@NotBlank @Size(max = 80) String name) {
+    }
+
+    record MatchRequest(@NotBlank String trackId) {
     }
 
     record ErrorResponse(String error) {

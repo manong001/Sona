@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import queue
 import re
 import threading
 import time
@@ -48,6 +49,7 @@ MAX_CANDIDATES = 1_000
 CANDIDATE_TTL_SECONDS = 30 * 60
 PLAYLIST_CANDIDATE_TTL_SECONDS = 72 * 60 * 60
 PLAYBACK_URL_TTL_SECONDS = 30 * 60
+DOWNLOAD_CONCURRENCY_PER_SOURCE = 2
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
@@ -154,6 +156,7 @@ class MusicDlBackend:
         self._allowed_sources = allowed_sources
         self._registered_sources = frozenset(MusicClientBuilder.REGISTERED_MODULES)
         self._clients: dict[tuple[str, ...], Any] = {}
+        self._download_client_pools: dict[tuple[str, ...], queue.LifoQueue[Any]] = {}
         self._source_locks: dict[tuple[str, ...], threading.Lock] = {}
         self._lock = threading.Lock()
 
@@ -448,9 +451,13 @@ class MusicDlBackend:
 
     def download(self, candidate: BackendCandidate) -> list[str]:
         if isinstance(candidate.opaque, (SpotifyPlaylistItem, PublicPlaylistItem)):
-            matches = self.search(
-                f"{candidate.title} {candidate.artist}", self._allowed_sources
+            use_original_source = (
+                isinstance(candidate.opaque, PublicPlaylistItem)
+                and candidate.source in self._allowed_sources
             )
+            preferred_sources = (candidate.source,) if use_original_source else self._allowed_sources
+            query = f"{candidate.title} {candidate.artist}"
+            matches = self.search(query, preferred_sources)
             resolved = next((
                 item for item in matches
                 if _matches_track(item, candidate.title, candidate.artist, candidate.duration_ms)
@@ -458,13 +465,31 @@ class MusicDlBackend:
                 item for item in matches
                 if _matches_track(item, candidate.title, candidate.artist, None)
             ), None)
+            if resolved is None and preferred_sources != self._allowed_sources:
+                fallback_sources = tuple(
+                    source for source in self._allowed_sources if source != candidate.source
+                )
+                if fallback_sources:
+                    matches = self.search(query, fallback_sources)
+                    resolved = next((
+                        item for item in matches
+                        if _matches_track(
+                            item, candidate.title, candidate.artist, candidate.duration_ms
+                        )
+                    ), None) or next((
+                        item for item in matches
+                        if _matches_track(item, candidate.title, candidate.artist, None)
+                    ), None)
             if resolved is None:
                 raise RuntimeError("未在已启用音源中找到歌单歌曲")
             return self.download(resolved)
         sources = (candidate.source,)
-        with self._lock_for(sources):
-            client = self._client(sources)
+        pool = self._download_client_pool(sources)
+        client = pool.get()
+        try:
             downloaded = client.download(song_infos=[candidate.opaque])
+        finally:
+            pool.put(client)
         files: list[str] = []
         for song in downloaded:
             # musicdl normally sets _save_path, but a few third-party clients
@@ -489,6 +514,23 @@ class MusicDlBackend:
         client = self._clients.get(key)
         if client is not None:
             return client
+        client = self._build_client(sources)
+        self._clients[key] = client
+        return client
+
+    def _download_client_pool(self, sources: tuple[str, ...]) -> queue.LifoQueue[Any]:
+        key = tuple(sorted(sources))
+        with self._lock:
+            pool = self._download_client_pools.get(key)
+            if pool is not None:
+                return pool
+            pool = queue.LifoQueue(maxsize=DOWNLOAD_CONCURRENCY_PER_SOURCE)
+            for _ in range(DOWNLOAD_CONCURRENCY_PER_SOURCE):
+                pool.put(self._build_client(sources))
+            self._download_client_pools[key] = pool
+            return pool
+
+    def _build_client(self, sources: tuple[str, ...]):
         config = {
             source: {
                 "work_dir": str(self._state_dir),
@@ -504,7 +546,6 @@ class MusicDlBackend:
             init_music_clients_cfg=config,
             clients_threadings={source: 2 for source in sources},
         )
-        self._clients[key] = client
         return client
 
     def _lock_for(self, sources: tuple[str, ...]) -> threading.Lock:
@@ -894,7 +935,7 @@ def _supports_resolver(resolver: str, candidate: BackendCandidate) -> bool:
 
 
 def _matches_track(candidate: BackendCandidate, title: str, artist: str, duration_ms: int | None) -> bool:
-    normalize = lambda value: re.sub(r"[^\\w\\u4e00-\\u9fff]", "", value).casefold()
+    normalize = lambda value: re.sub(r"[^\w\u4e00-\u9fff]", "", value).casefold()
     if normalize(candidate.title) != normalize(title):
         return False
     if normalize(artist) not in normalize(candidate.artist) and normalize(candidate.artist) not in normalize(artist):

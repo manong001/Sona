@@ -843,6 +843,31 @@ final class APIClient {
         )
     }
 
+    func playlistSubscriptionItems(id: String) async throws -> [PlaylistSubscriptionItem] {
+        try await request(path: "/api/v1/me/playlist-subscriptions/\(id)/items")
+    }
+
+    func selectPlaylistSubscriptionMatch(
+        id: String, itemKey: String, trackId: String
+    ) async throws -> PlaylistSubscription {
+        struct Body: Encodable { let trackId: String }
+        return try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/items/\(itemKey)/match",
+            method: "POST",
+            body: try encoder.encode(Body(trackId: trackId))
+        )
+    }
+
+    func downloadPlaylistSubscriptionItem(
+        id: String, itemKey: String
+    ) async throws -> PlaylistSubscription {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/items/\(itemKey)/download",
+            method: "POST",
+            timeout: 300
+        )
+    }
+
     func renamePlaylistSubscription(id: String, name: String) async throws -> PlaylistSubscription {
         struct Body: Encodable { let name: String }
         return try await request(

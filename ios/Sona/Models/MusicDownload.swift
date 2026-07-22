@@ -75,6 +75,36 @@ struct PlaylistSubscription: Decodable, Identifiable {
     let downloadingCount: Int
     let queuedCount: Int?
     let runningCount: Int?
+    let suggestedCount: Int?
+}
+
+struct PlaylistSubscriptionItem: Decodable, Identifiable {
+    let itemKey: String
+    let position: Int
+    let title: String
+    let artist: String
+    let album: String?
+    let matchedTrackId: String?
+    let state: String
+    let suggestions: [PlaylistSubscriptionMatchSuggestion]
+
+    var id: String { itemKey }
+}
+
+struct PlaylistSubscriptionMatchSuggestion: Decodable, Identifiable {
+    let trackId: String
+    let title: String
+    let artist: String
+    let album: String?
+    let durationMs: Int64
+    let score: Int
+
+    var id: String { trackId }
+
+    var durationText: String {
+        let seconds = Int(durationMs / 1_000)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
 }
 
 enum MusicDownloadState: String, Codable {

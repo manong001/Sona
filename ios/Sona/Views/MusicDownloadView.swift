@@ -462,6 +462,7 @@ struct PlaylistSubscriptionsView: View {
     @State private var isLoading = true
     @State private var showsCreate = false
     @State private var renamingSubscription: PlaylistSubscription?
+    @State private var inspectingSubscription: PlaylistSubscription?
     @State private var errorMessage: String?
     let changed: () -> Void
 
@@ -525,6 +526,15 @@ struct PlaylistSubscriptionsView: View {
                     if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
                         subscriptions[index] = updated
                     }
+                    changed()
+                }
+            }
+            .sheet(item: $inspectingSubscription) { subscription in
+                PlaylistSubscriptionItemsView(subscription: subscription) { updated in
+                    if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                        subscriptions[index] = updated
+                    }
+                    Task { await personal.refreshPlaylists() }
                     changed()
                 }
             }
@@ -607,6 +617,18 @@ struct PlaylistSubscriptionsView: View {
                         syncingIDs.contains(subscription.id)
                             || downloadingMissingIDs.contains(subscription.id)
                     )
+                }
+                if (subscription.suggestedCount ?? 0) > 0 {
+                    Button {
+                        inspectingSubscription = subscription
+                    } label: {
+                        Label(
+                            "确认相似歌曲 \(subscription.suggestedCount ?? 0) 首",
+                            systemImage: "questionmark.circle"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
         }
@@ -731,6 +753,143 @@ struct PlaylistSubscriptionsView: View {
         if running > 0 { parts.append("\(running) 首下载中") }
         if queued > 0 { parts.append("\(queued) 首排队中") }
         return parts.joined(separator: " · ")
+    }
+}
+
+private struct PlaylistSubscriptionItemsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let subscription: PlaylistSubscription
+    let updated: (PlaylistSubscription) -> Void
+    @State private var items: [PlaylistSubscriptionItem] = []
+    @State private var workingItemKeys: Set<String> = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && items.isEmpty {
+                    ProgressView("正在查找本地候选…")
+                } else {
+                    List(items) { item in
+                        itemRow(item)
+                            .listRowBackground(Color.sonaBackground)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .background(Color.sonaBackground)
+            .navigationTitle("匹配订阅歌曲")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .task { await load() }
+            .refreshable { await load() }
+            .alert("操作失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "未知错误")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func itemRow(_ item: PlaylistSubscriptionItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title).font(.headline)
+                    Text(item.artist).font(.subheadline).foregroundStyle(Color.sonaSecondaryText)
+                }
+                Spacer()
+                stateLabel(item.state)
+            }
+            if item.state == "SUGGESTED" {
+                ForEach(item.suggestions) { suggestion in
+                    Button {
+                        Task { await select(suggestion, for: item) }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.title).foregroundStyle(.primary)
+                                Text("\(suggestion.artist) · \(suggestion.durationText)")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.sonaSecondaryText)
+                            }
+                            Spacer()
+                            Image(systemName: "checkmark.circle")
+                                .foregroundStyle(Color.sonaGreen)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(workingItemKeys.contains(item.itemKey))
+                }
+                Button(role: .destructive) {
+                    Task { await download(item) }
+                } label: {
+                    Label("都不对，下载原曲", systemImage: "arrow.down.circle")
+                }
+                .disabled(workingItemKeys.contains(item.itemKey))
+            }
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func stateLabel(_ state: String) -> some View {
+        let value: (String, Color) = switch state {
+        case "MATCHED": ("已匹配", Color.sonaGreen)
+        case "SUGGESTED": ("待确认", .orange)
+        case "DOWNLOADING": ("下载中", Color.sonaGreen)
+        default: ("缺少", Color.sonaSecondaryText)
+        }
+        return Text(value.0).font(.caption).foregroundStyle(value.1)
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            items = try await APIClient.shared.playlistSubscriptionItems(id: subscription.id)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func select(
+        _ suggestion: PlaylistSubscriptionMatchSuggestion,
+        for item: PlaylistSubscriptionItem
+    ) async {
+        workingItemKeys.insert(item.itemKey)
+        defer { workingItemKeys.remove(item.itemKey) }
+        do {
+            let subscription = try await APIClient.shared.selectPlaylistSubscriptionMatch(
+                id: subscription.id, itemKey: item.itemKey, trackId: suggestion.trackId
+            )
+            updated(subscription)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func download(_ item: PlaylistSubscriptionItem) async {
+        workingItemKeys.insert(item.itemKey)
+        defer { workingItemKeys.remove(item.itemKey) }
+        do {
+            let subscription = try await APIClient.shared.downloadPlaylistSubscriptionItem(
+                id: subscription.id, itemKey: item.itemKey
+            )
+            updated(subscription)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

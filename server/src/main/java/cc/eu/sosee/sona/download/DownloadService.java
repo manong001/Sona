@@ -1,9 +1,7 @@
 package cc.eu.sosee.sona.download;
 
-import cc.eu.sosee.sona.library.ScanCoordinator;
 import cc.eu.sosee.sona.personal.PlaylistDownloadImportService;
 import jakarta.annotation.PostConstruct;
-import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -19,20 +17,17 @@ class DownloadService {
 
     private final DownloaderGateway gateway;
     private final DownloadTaskRepository repository;
-    private final ScanCoordinator scanCoordinator;
     private final TaskExecutor taskExecutor;
     private final PlaylistDownloadImportService playlistImportService;
 
     DownloadService(
         DownloaderGateway gateway,
         DownloadTaskRepository repository,
-        ScanCoordinator scanCoordinator,
         PlaylistDownloadImportService playlistImportService,
         @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
         this.gateway = gateway;
         this.repository = repository;
-        this.scanCoordinator = scanCoordinator;
         this.playlistImportService = playlistImportService;
         this.taskExecutor = taskExecutor;
     }
@@ -132,14 +127,6 @@ class DownloadService {
         return repository.findExistingState(candidate);
     }
 
-    private void scanDownloadedFiles(List<String> files) {
-        files.stream()
-            .map(Path::of)
-            .map(path -> path.getParent() == null ? "" : path.getParent().toString())
-            .distinct()
-            .forEach(directory -> scanCoordinator.enqueue(directory).join());
-    }
-
     DownloadTask retry(String id, String requestedBy) {
         requireEnabled();
         var task = repository.findById(id, requestedBy)
@@ -176,7 +163,7 @@ class DownloadService {
                 throw new IllegalStateException("下载服务没有返回文件");
             }
             if (task.targetPlaylistId() == null) {
-                scanDownloadedFiles(files);
+                playlistImportService.scanDownloadedFiles(files);
             } else {
                 playlistImportService.addDownloadedFiles(task.targetPlaylistId(), files);
             }

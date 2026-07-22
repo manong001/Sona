@@ -68,12 +68,14 @@ class PlaylistSubscriptionRepository {
         return jdbcClient.sql("""
                 WITH resolved_items AS (
                     SELECT items.position, (
+                        SELECT tracks.id FROM tracks WHERE tracks.id = items.matched_track_id
+                        UNION ALL
                         SELECT tracks.id FROM tracks
-                        WHERE trim(tracks.title) COLLATE NOCASE =
-                              trim(items.title) COLLATE NOCASE
+                        WHERE items.matched_track_id IS NULL
+                          AND trim(tracks.title) COLLATE NOCASE = trim(items.title) COLLATE NOCASE
                           AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
                               replace(trim(items.artist), '、', '/') COLLATE NOCASE
-                        ORDER BY tracks.updated_at DESC, tracks.id
+                        ORDER BY id
                         LIMIT 1
                     ) AS track_id
                     FROM playlist_subscription_items items
@@ -86,6 +88,86 @@ class PlaylistSubscriptionRepository {
             .param("subscriptionId", subscriptionId)
             .query(String.class)
             .list();
+    }
+
+    List<Item> findItems(String subscriptionId) {
+        return jdbcClient.sql("""
+                SELECT items.item_key, items.position, items.title, items.artist, items.album,
+                    items.matched_track_id, items.last_seen_at,
+                    CASE
+                        WHEN EXISTS (SELECT 1 FROM tracks WHERE id = items.matched_track_id)
+                            THEN 'MATCHED'
+                        WHEN EXISTS (
+                            SELECT 1 FROM tracks
+                            WHERE trim(tracks.title) COLLATE NOCASE = trim(items.title) COLLATE NOCASE
+                              AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
+                                  replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                        ) THEN 'MATCHED'
+                        WHEN EXISTS (
+                            SELECT 1 FROM download_tasks
+                            WHERE trim(download_tasks.title) COLLATE NOCASE = trim(items.title) COLLATE NOCASE
+                              AND replace(trim(download_tasks.artist), '、', '/') COLLATE NOCASE =
+                                  replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                              AND download_tasks.state IN ('QUEUED', 'RUNNING')
+                        ) THEN 'DOWNLOADING'
+                        WHEN items.state = 'SUGGESTED' THEN 'SUGGESTED'
+                        ELSE 'MISSING'
+                    END AS state
+                FROM playlist_subscription_items items
+                WHERE items.subscription_id = :subscriptionId
+                ORDER BY items.position
+                """)
+            .param("subscriptionId", subscriptionId)
+            .query(this::mapItem)
+            .list();
+    }
+
+    Optional<Item> findItem(String userId, String subscriptionId, String itemKey) {
+        return jdbcClient.sql("""
+                SELECT items.* FROM playlist_subscription_items items
+                JOIN playlist_subscriptions subscriptions ON subscriptions.id = items.subscription_id
+                WHERE subscriptions.user_id = :userId
+                  AND items.subscription_id = :subscriptionId
+                  AND items.item_key = :itemKey
+                """)
+            .param("userId", userId)
+            .param("subscriptionId", subscriptionId)
+            .param("itemKey", itemKey)
+            .query(this::mapItem)
+            .optional();
+    }
+
+    boolean selectMatch(String userId, String subscriptionId, String itemKey, String trackId) {
+        return jdbcClient.sql("""
+                UPDATE playlist_subscription_items
+                SET matched_track_id = :trackId, state = 'MATCHED'
+                WHERE subscription_id = :subscriptionId AND item_key = :itemKey
+                  AND EXISTS (SELECT 1 FROM playlist_subscriptions
+                      WHERE id = :subscriptionId AND user_id = :userId)
+                  AND EXISTS (SELECT 1 FROM tracks WHERE id = :trackId)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM playlist_subscription_items other
+                      WHERE other.subscription_id = :subscriptionId
+                        AND other.item_key <> :itemKey
+                        AND other.matched_track_id = :trackId
+                  )
+                """)
+            .param("trackId", trackId)
+            .param("subscriptionId", subscriptionId)
+            .param("itemKey", itemKey)
+            .param("userId", userId)
+            .update() == 1;
+    }
+
+    void updateItemState(String subscriptionId, String itemKey, String state) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscription_items SET state = :state
+                WHERE subscription_id = :subscriptionId AND item_key = :itemKey
+                """)
+            .param("state", state)
+            .param("subscriptionId", subscriptionId)
+            .param("itemKey", itemKey)
+            .update();
     }
 
     List<Subscription> findDue() {
@@ -196,6 +278,9 @@ class PlaylistSubscriptionRepository {
                 SELECT items.subscription_id,
                     CASE
                         WHEN EXISTS (
+                            SELECT 1 FROM tracks WHERE tracks.id = items.matched_track_id
+                        ) THEN 'MATCHED'
+                        WHEN EXISTS (
                             SELECT 1 FROM tracks
                             WHERE trim(tracks.title) COLLATE NOCASE =
                                   trim(items.title) COLLATE NOCASE
@@ -218,6 +303,7 @@ class PlaylistSubscriptionRepository {
                                   replace(trim(items.artist), '、', '/') COLLATE NOCASE
                               AND tasks.state = 'QUEUED'
                         ) THEN 'QUEUED'
+                        WHEN items.state = 'SUGGESTED' THEN 'SUGGESTED'
                         ELSE 'MISSING'
                     END AS state
                 FROM playlist_subscription_items items
@@ -229,6 +315,8 @@ class PlaylistSubscriptionRepository {
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'MATCHED') AS matched_count,
                 (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'MISSING') AS missing_count,
+                (SELECT COUNT(*) FROM item_states items
+                    WHERE items.subscription_id = subscriptions.id AND items.state = 'SUGGESTED') AS suggested_count,
                 (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id
                       AND items.state IN ('QUEUED', 'RUNNING')) AS downloading_count,
@@ -254,7 +342,17 @@ class PlaylistSubscriptionRepository {
             resultSet.getLong("created_at"), resultSet.getLong("updated_at"),
             resultSet.getInt("item_count"), resultSet.getInt("matched_count"),
             resultSet.getInt("missing_count"), resultSet.getInt("downloading_count"),
-            resultSet.getInt("queued_count"), resultSet.getInt("running_count")
+            resultSet.getInt("queued_count"), resultSet.getInt("running_count"),
+            resultSet.getInt("suggested_count")
+        );
+    }
+
+    private Item mapItem(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new Item(
+            resultSet.getString("item_key"), resultSet.getInt("position"),
+            resultSet.getString("title"), resultSet.getString("artist"),
+            resultSet.getString("album"), resultSet.getString("matched_track_id"),
+            resultSet.getString("state"), resultSet.getLong("last_seen_at")
         );
     }
 
@@ -263,7 +361,7 @@ class PlaylistSubscriptionRepository {
         String name, String poolType, boolean autoDownload, int syncIntervalHours,
         boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
         int itemCount, int matchedCount, int missingCount, int downloadingCount,
-        int queuedCount, int runningCount
+        int queuedCount, int runningCount, int suggestedCount
     ) {
         Subscription(
             String id, String userId, String username, String playlistId, String sourceUrl,
@@ -274,7 +372,7 @@ class PlaylistSubscriptionRepository {
             this(
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
                 syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
-                itemCount, matchedCount, missingCount, downloadingCount, 0, 0
+                itemCount, matchedCount, missingCount, downloadingCount, 0, 0, 0
             );
         }
     }

@@ -41,17 +41,28 @@ public class PlaylistDownloadImportService {
 
     public void addDownloadedFiles(String playlistId, List<String> relativeFiles) {
         var files = relativeFiles.stream().map(this::resolveFile).distinct().toList();
+        scanFiles(files);
+        if (repository.addPlaylistTracksByPaths(playlistId, files) == 0) {
+            throw new IllegalStateException("歌曲已下载，但扫描后未找到可加入歌单的曲目");
+        }
+    }
+
+    public void scanDownloadedFiles(List<String> relativeFiles) {
+        scanFiles(relativeFiles.stream().map(this::resolveFile).distinct().toList());
+    }
+
+    private void scanFiles(List<Path> files) {
         var directories = files.stream()
             .map(Path::getParent)
             .distinct()
-            .map(musicDirectory::relativize)
-            .map(Path::toString)
             .toList();
         for (var directory : directories) {
-            scanCoordinator.enqueue(directory).join();
-        }
-        if (repository.addPlaylistTracksByPaths(playlistId, files) == 0) {
-            throw new IllegalStateException("歌曲已下载，但扫描后未找到可加入歌单的曲目");
+            var filesInDirectory = files.stream()
+                .filter(path -> path.getParent().equals(directory))
+                .toList();
+            scanCoordinator.enqueueFiles(
+                musicDirectory.relativize(directory).toString(), filesInDirectory
+            ).join();
         }
     }
 

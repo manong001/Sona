@@ -116,12 +116,17 @@ class DownloaderApiTest(unittest.TestCase):
 
     def test_playback_fallback_caches_the_first_valid_url(self):
         calls = 0
+        matching = BackendCandidate(
+            "NeteaseMusicClient", "测试歌曲", "测试歌手", "测试专辑", "flac",
+            180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
+        )
 
         def resolve(candidate):
             nonlocal calls
             calls += 1
             return "https://audio.example.test/song.flac"
 
+        self.backend.search = lambda query, sources: [matching]
         self.server.state._resolvers["ikun"] = resolve
         first = self.server.state.playback_fallback("测试歌曲", "测试歌手", 180_000, ("ikun",))
         second = self.server.state.playback_fallback("测试歌曲", "测试歌手", 180_000, ("ikun",))
@@ -226,6 +231,38 @@ class DownloaderApiTest(unittest.TestCase):
             ]
             for future in futures:
                 future.result()
+
+        self.assertLess(time.monotonic() - started, 0.35)
+
+    def test_same_source_downloads_use_two_independent_clients(self):
+        class SlowClient:
+            def __init__(self, path):
+                self.path = path
+
+            def download(self, song_infos):
+                time.sleep(0.2)
+                return [SimpleNamespace(_save_path=str(self.path))]
+
+        with TemporaryDirectory() as directory:
+            music_dir = Path(directory).resolve()
+            downloaded = music_dir / "download" / "测试歌曲.flac"
+            downloaded.parent.mkdir(parents=True)
+            downloaded.write_bytes(b"audio")
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._music_dir = music_dir
+            backend._lock = threading.Lock()
+            backend._download_client_pools = {}
+            backend._build_client = lambda sources: SlowClient(downloaded)
+            candidate = BackendCandidate(
+                "NeteaseMusicClient", "测试歌曲", "测试歌手", "测试专辑", "flac",
+                180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
+            )
+
+            started = time.monotonic()
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(backend.download, candidate) for _ in range(2)]
+                for future in futures:
+                    future.result()
 
         self.assertLess(time.monotonic() - started, 0.35)
 
@@ -469,6 +506,10 @@ class DownloaderApiTest(unittest.TestCase):
             "NeteaseMusicClient", "测试歌曲", "测试歌手", "测试专辑", "flac",
             180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
         )
+        unrelated = BackendCandidate(
+            "NeteaseMusicClient", "其他歌曲", "其他歌手", "其他专辑", "flac",
+            180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
+        )
         queries = []
         with TemporaryDirectory() as directory:
             music_dir = Path(directory).resolve()
@@ -480,10 +521,11 @@ class DownloaderApiTest(unittest.TestCase):
             backend._music_dir = music_dir
             backend._lock = threading.Lock()
             backend._source_locks = {}
-            backend.search = lambda query, sources: (
-                queries.append((query, sources)) or [resolved]
+            backend._download_client_pools = {}
+            backend.search = lambda query, sources: queries.append((query, sources)) or (
+                [unrelated] if sources == ("NeteaseMusicClient",) else [resolved]
             )
-            backend._client = lambda sources: SimpleNamespace(
+            backend._build_client = lambda sources: SimpleNamespace(
                 download=lambda song_infos: [SimpleNamespace(_save_path=str(downloaded))]
             )
 
@@ -495,7 +537,8 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(
             [
                 ("测试歌曲 测试歌手", ("NeteaseMusicClient", "QQMusicClient")),
-                ("测试歌曲 测试歌手", ("NeteaseMusicClient", "QQMusicClient")),
+                ("测试歌曲 测试歌手", ("NeteaseMusicClient",)),
+                ("测试歌曲 测试歌手", ("QQMusicClient",)),
             ],
             queries,
         )
