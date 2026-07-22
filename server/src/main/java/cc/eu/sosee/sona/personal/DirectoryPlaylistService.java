@@ -60,6 +60,9 @@ public class DirectoryPlaylistService {
 
     @Transactional
     public void pruneStalePlaylists(List<String> directoryPaths) {
+        if (directoryPaths.isEmpty()) {
+            return;
+        }
         var currentPaths = new HashSet<>(directoryPaths);
         var stalePlaylists = jdbcClient.sql("""
                 SELECT id, directory_path FROM playlists
