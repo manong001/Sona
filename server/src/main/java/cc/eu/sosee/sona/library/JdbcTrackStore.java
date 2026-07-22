@@ -473,6 +473,85 @@ class JdbcTrackStore implements TrackStore {
     }
 
     @Override
+    public boolean hasAudioFeatures(
+        String trackId, long fileSize, long modifiedAt, int version
+    ) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM track_audio_features
+                WHERE track_id = :trackId AND file_size = :fileSize
+                  AND modified_at = :modifiedAt AND version = :version
+                """)
+            .param("trackId", trackId)
+            .param("fileSize", fileSize)
+            .param("modifiedAt", modifiedAt)
+            .param("version", version)
+            .query(Integer.class)
+            .single() == 1;
+    }
+
+    @Override
+    public void saveAudioFeatures(
+        String trackId, long fileSize, long modifiedAt, AudioFeatures features
+    ) {
+        var now = System.currentTimeMillis();
+        jdbcClient.sql("""
+                INSERT INTO track_audio_features(
+                    track_id, version, file_size, modified_at, vector, created_at, updated_at
+                ) VALUES (
+                    :trackId, :version, :fileSize, :modifiedAt, :vector, :createdAt, :updatedAt
+                )
+                ON CONFLICT(track_id) DO UPDATE SET
+                    version = excluded.version,
+                    file_size = excluded.file_size,
+                    modified_at = excluded.modified_at,
+                    vector = excluded.vector,
+                    updated_at = excluded.updated_at
+                """)
+            .param("trackId", trackId)
+            .param("version", AudioFeatures.VERSION)
+            .param("fileSize", fileSize)
+            .param("modifiedAt", modifiedAt)
+            .param("vector", encodeVector(features.vector()))
+            .param("createdAt", now)
+            .param("updatedAt", now)
+            .update();
+    }
+
+    @Override
+    public List<AcousticTrackData> findAcousticRecommendationCandidates(
+        String userId, boolean childOnly
+    ) {
+        return jdbcClient.sql("""
+                SELECT tracks.*, track_audio_features.vector AS audio_feature_vector,
+                  EXISTS (
+                    SELECT 1 FROM favorites
+                    WHERE favorites.user_id = :userId AND favorites.track_id = tracks.id
+                  ) AS favorite
+                FROM tracks
+                JOIN track_audio_features ON track_audio_features.track_id = tracks.id
+                WHERE tracks.pool_type = :visiblePool
+                  AND track_audio_features.version = :version
+                  AND track_audio_features.file_size = tracks.file_size
+                  AND track_audio_features.modified_at = tracks.modified_at
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_tracks
+                    WHERE hidden_tracks.user_id = :userId
+                      AND hidden_tracks.track_id = tracks.id
+                  )
+                ORDER BY favorite DESC, tracks.id
+                """)
+            .param("userId", userId)
+            .param("visiblePool", libraryPool(childOnly))
+            .param("version", AudioFeatures.VERSION)
+            .query((resultSet, rowNumber) -> new AcousticTrackData(
+                mapTrack(resultSet, rowNumber),
+                new AudioFeatures(decodeVector(resultSet.getString("audio_feature_vector"))),
+                resultSet.getInt("favorite") == 1
+            ))
+            .list();
+    }
+
+    @Override
     public List<String> findGenres(String userId, boolean childOnly) {
         return jdbcClient.sql("""
                 SELECT tracks.genre
@@ -656,6 +735,8 @@ class JdbcTrackStore implements TrackStore {
         jdbcClient.sql("DELETE FROM track_play_stats WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM favorites WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM playlist_tracks WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM track_audio_features WHERE track_id = :id")
+            .param("id", id).update();
         return jdbcClient.sql("DELETE FROM tracks WHERE id = :id").param("id", id).update() == 1;
     }
 
@@ -714,6 +795,25 @@ class JdbcTrackStore implements TrackStore {
 
     private static List<String> decodeGenres(String value) {
         return value == null || value.isBlank() ? List.of() : value.lines().toList();
+    }
+
+    private static String encodeVector(double[] vector) {
+        var result = new StringBuilder();
+        for (var index = 0; index < vector.length; index++) {
+            if (index > 0) result.append(',');
+            result.append(vector[index]);
+        }
+        return result.toString();
+    }
+
+    private static double[] decodeVector(String value) {
+        if (value == null || value.isBlank()) return new double[0];
+        var parts = value.split(",");
+        var result = new double[parts.length];
+        for (var index = 0; index < parts.length; index++) {
+            result[index] = Double.parseDouble(parts[index]);
+        }
+        return result;
     }
 
     private record RandomSelection(TrackRecord track, int cycle) {

@@ -32,6 +32,7 @@ class LibraryScanner {
     private final ServerMusicDirectoryService directoryService;
     private final TrackStore trackStore;
     private final AudioMetadataExtractor metadataExtractor;
+    private final AudioFeatureExtractor audioFeatureExtractor;
     private final ArtworkStore artworkStore;
     private final MetadataScraper metadataScraper;
     private final FileNameParser fileNameParser;
@@ -42,6 +43,7 @@ class LibraryScanner {
         ServerMusicDirectoryService directoryService,
         TrackStore trackStore,
         AudioMetadataExtractor metadataExtractor,
+        AudioFeatureExtractor audioFeatureExtractor,
         ArtworkStore artworkStore,
         MetadataScraper metadataScraper,
         Clock clock
@@ -49,6 +51,7 @@ class LibraryScanner {
         this.directoryService = directoryService;
         this.trackStore = trackStore;
         this.metadataExtractor = metadataExtractor;
+        this.audioFeatureExtractor = audioFeatureExtractor;
         this.artworkStore = artworkStore;
         this.metadataScraper = metadataScraper;
         this.fileNameParser = new FileNameParser();
@@ -146,15 +149,25 @@ class LibraryScanner {
             var attributes = Files.readAttributes(path, BasicFileAttributes.class);
             var normalizedPath = path.toAbsolutePath().normalize();
             var existing = trackStore.findByPath(normalizedPath);
-            if (existing.isPresent()
+            var metadataUnchanged = existing.isPresent()
                 && existing.get().fileSize() == attributes.size()
                 && existing.get().modifiedAt() == attributes.lastModifiedTime().toMillis()
                 && !needsScrapeRetry(existing.get())
                 && !needsTitleNormalization(existing.get())
                 && !hasEncodingDamage(existing.get())
                 && !shouldRefreshMissing(existing.get(), mode)
-                && !shouldOverwrite(existing.get(), mode)) {
-                counts[3]++;
+                && !shouldOverwrite(existing.get(), mode);
+            if (metadataUnchanged) {
+                var track = existing.orElseThrow();
+                if (trackStore.hasAudioFeatures(
+                    track.id(), track.fileSize(), track.modifiedAt(), AudioFeatures.VERSION
+                )) {
+                    counts[3]++;
+                } else if (trySaveAudioFeatures(track, errors)) {
+                    counts[2]++;
+                } else {
+                    counts[3]++;
+                }
                 return;
             }
 
@@ -288,6 +301,7 @@ class LibraryScanner {
             trackStore.save(
                 track, overwriteExisting.isPresent(), mode == ScrapeMode.FORCE_OVERWRITE
             );
+            trySaveAudioFeatures(track, errors);
             if (existing.isPresent()) {
                 counts[2]++;
             } else {
@@ -301,6 +315,24 @@ class LibraryScanner {
                 ));
             }
             LOGGER.warn("Failed to scan {}: {}", path, exception.getMessage());
+        }
+    }
+
+    private boolean trySaveAudioFeatures(TrackRecord track, List<String> errors) {
+        try {
+            var features = audioFeatureExtractor.extract(track.path());
+            trackStore.saveAudioFeatures(
+                track.id(), track.fileSize(), track.modifiedAt(), features
+            );
+            return true;
+        } catch (Exception exception) {
+            if (errors.size() < 50) {
+                errors.add(track.path().getFileName() + "：声学特征提取失败：" + firstText(
+                    exception.getMessage(), exception.getClass().getSimpleName()
+                ));
+            }
+            LOGGER.warn("Failed to extract audio features from {}: {}", track.path(), exception.getMessage());
+            return false;
         }
     }
 

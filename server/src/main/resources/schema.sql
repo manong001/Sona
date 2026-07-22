@@ -277,6 +277,17 @@ CREATE INDEX IF NOT EXISTS idx_tracks_sort ON tracks(normalized_title, id);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 
+CREATE TABLE IF NOT EXISTS track_audio_features (
+    track_id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL,
+    file_size INTEGER NOT NULL,
+    modified_at INTEGER NOT NULL,
+    vector TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS track_play_stats (
     track_id TEXT PRIMARY KEY,
     play_count INTEGER NOT NULL DEFAULT 0,

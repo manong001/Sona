@@ -9,6 +9,9 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked \
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /music /data && chown -R 10001:10001 /app /music /data
 COPY --from=build --chown=10001:10001 /workspace/target/sona-server-*.jar /app/sona-server.jar
 USER 10001:10001

@@ -667,7 +667,7 @@ paths:
           schema: {type: boolean, default: false}
       responses:
         "200":
-          description: 根据当前用户播放历史生成、同一用户当天稳定的常听歌手合辑
+          description: 优先根据当前用户收藏歌曲的声学特征生成相似歌曲合辑，排除已收藏及已隐藏歌曲；声学特征不足时回退到播放历史
           content:
             application/json:
               schema:

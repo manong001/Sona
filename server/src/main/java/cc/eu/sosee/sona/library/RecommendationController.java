@@ -119,6 +119,13 @@ class RecommendationController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @RequestParam(defaultValue = "false") boolean childMode
     ) {
+        var acousticCandidates = trackStore.findAcousticRecommendationCandidates(
+            user.id(), childMode
+        );
+        if (acousticCandidates.stream().anyMatch(AcousticTrackData::favorite)) {
+            return acousticMixes(acousticCandidates);
+        }
+
         var candidates = trackStore.findMadeForYouCandidates(user.id(), childMode);
         var anchors = new ArrayList<String>();
         for (var candidate : candidates) {
@@ -173,6 +180,127 @@ class RecommendationController {
             }
         }
         return result;
+    }
+
+    private List<MadeForYouMixResponse> acousticMixes(
+        List<AcousticTrackData> candidates
+    ) {
+        var favorites = candidates.stream().filter(AcousticTrackData::favorite).toList();
+        var recommendations = candidates.stream()
+            .filter(candidate -> !candidate.favorite())
+            .toList();
+        if (recommendations.isEmpty()) return List.of();
+
+        var centers = preferenceCenters(favorites);
+        var ranked = centers.stream().map(center -> recommendations.stream()
+            .sorted((left, right) -> {
+                var distance = Double.compare(
+                    distance(left.features().vector(), center),
+                    distance(right.features().vector(), center)
+                );
+                return distance != 0 ? distance : left.track().id().compareTo(right.track().id());
+            })
+            .toList()).toList();
+        var groups = centers.stream().map(ignored -> new ArrayList<AcousticTrackData>()).toList();
+        var positions = new int[centers.size()];
+        var assignedTrackIds = new HashSet<String>();
+        var madeProgress = true;
+        while (madeProgress) {
+            madeProgress = false;
+            for (var index = 0; index < groups.size(); index++) {
+                var group = groups.get(index);
+                var choices = ranked.get(index);
+                while (group.size() < MADE_FOR_YOU_TRACK_LIMIT
+                    && positions[index] < choices.size()) {
+                    var choice = choices.get(positions[index]++);
+                    if (assignedTrackIds.add(choice.track().id())) {
+                        group.add(choice);
+                        madeProgress = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        var result = new ArrayList<MadeForYouMixResponse>();
+        for (var index = 0; index < groups.size(); index++) {
+            var tracks = groups.get(index);
+            if (tracks.isEmpty()) continue;
+            var center = centers.get(index);
+            var anchor = favorites.stream()
+                .min((left, right) -> Double.compare(
+                    distance(left.features().vector(), center),
+                    distance(right.features().vector(), center)
+                ))
+                .orElseThrow();
+            result.add(new MadeForYouMixResponse(
+                "made-for-you-acoustic-" + index,
+                ArtistNames.canonical(anchor.track().artist()),
+                tracks.stream().map(AcousticTrackData::track).map(TrackResponse::from).toList()
+            ));
+        }
+        return result;
+    }
+
+    private List<double[]> preferenceCenters(List<AcousticTrackData> favorites) {
+        var centerCount = Math.min(MADE_FOR_YOU_MIX_LIMIT, favorites.size());
+        var centers = new ArrayList<double[]>();
+        centers.add(favorites.get(0).features().vector());
+        if (centerCount == 2) {
+            var secondCenter = favorites.stream()
+                .max((left, right) -> Double.compare(
+                    distance(left.features().vector(), centers.get(0)),
+                    distance(right.features().vector(), centers.get(0))
+                ))
+                .orElseThrow().features().vector();
+            if (distance(secondCenter, centers.get(0)) > 0.01) centers.add(secondCenter);
+        }
+        for (var iteration = 0; iteration < 4; iteration++) {
+            var assignments = centers.stream()
+                .map(ignored -> new ArrayList<double[]>())
+                .toList();
+            for (var favorite : favorites) {
+                var vector = favorite.features().vector();
+                var nearest = 0;
+                for (var index = 1; index < centers.size(); index++) {
+                    if (distance(vector, centers.get(index))
+                        < distance(vector, centers.get(nearest))) {
+                        nearest = index;
+                    }
+                }
+                assignments.get(nearest).add(vector);
+            }
+            for (var index = 0; index < centers.size(); index++) {
+                if (!assignments.get(index).isEmpty()) {
+                    centers.set(index, mean(assignments.get(index)));
+                }
+            }
+        }
+        return centers;
+    }
+
+    private double[] mean(List<double[]> vectors) {
+        var result = new double[vectors.get(0).length];
+        for (var vector : vectors) {
+            for (var index = 0; index < result.length; index++) result[index] += vector[index];
+        }
+        var length = 0.0;
+        for (var index = 0; index < result.length; index++) {
+            result[index] /= vectors.size();
+            length += result[index] * result[index];
+        }
+        length = Math.sqrt(length);
+        if (length > 0) {
+            for (var index = 0; index < result.length; index++) result[index] /= length;
+        }
+        return result;
+    }
+
+    private double distance(double[] left, double[] right) {
+        if (left.length == 0 || left.length != right.length) return Double.POSITIVE_INFINITY;
+        var similarity = 0.0;
+        for (var index = 0; index < left.length; index++) similarity += left[index] * right[index];
+        return 1 - similarity;
     }
 
     @GetMapping("/recommendations/genres")

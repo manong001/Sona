@@ -530,7 +530,7 @@ struct SonaTrackListView: View {
     }
 
     private var queue: [Track] {
-        if collection.id == "liked-songs" {
+        if prioritizedQueueTitle != nil {
             return tracks
         }
         guard let playbackQueue, !playbackQueue.isEmpty else { return tracks }

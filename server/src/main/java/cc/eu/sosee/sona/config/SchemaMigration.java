@@ -96,6 +96,18 @@ class SchemaMigration implements ApplicationRunner {
                 }
             }
         }
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS track_audio_features (
+                    track_id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    modified_at INTEGER NOT NULL,
+                    vector TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                )
+                """).update();
         if (tableExists("track_play_stats")) {
             var statColumns = columns("track_play_stats");
             if (!statColumns.contains("completion_percent_sum")) {

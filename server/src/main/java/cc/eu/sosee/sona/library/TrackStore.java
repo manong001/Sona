@@ -41,6 +41,23 @@ interface TrackStore {
         return List.of();
     }
 
+    default boolean hasAudioFeatures(
+        String trackId, long fileSize, long modifiedAt, int version
+    ) {
+        return true;
+    }
+
+    default void saveAudioFeatures(
+        String trackId, long fileSize, long modifiedAt, AudioFeatures features
+    ) {
+    }
+
+    default List<AcousticTrackData> findAcousticRecommendationCandidates(
+        String userId, boolean childOnly
+    ) {
+        return List.of();
+    }
+
     List<String> findGenres(String userId, boolean childOnly);
 
     List<TrackRecord> findByGenre(String genre, String userId, boolean childOnly, int limit);
