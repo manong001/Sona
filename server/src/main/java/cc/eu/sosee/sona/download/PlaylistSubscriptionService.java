@@ -48,8 +48,18 @@ class PlaylistSubscriptionService {
         this.taskExecutor = taskExecutor;
     }
 
+    @Transactional
     List<PlaylistSubscriptionRepository.Subscription> list(String userId) {
-        return subscriptions.findAll(userId);
+        var values = subscriptions.findAll(userId);
+        for (var subscription : values) {
+            if (!syncing.contains(subscription.id())) {
+                playlistImportService.replaceTracks(
+                    userId, subscription.playlistId(),
+                    subscriptions.matchedTrackIds(subscription.id())
+                );
+            }
+        }
+        return values;
     }
 
     synchronized PlaylistSubscriptionRepository.Subscription create(

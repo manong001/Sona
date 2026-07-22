@@ -64,6 +64,30 @@ class PlaylistSubscriptionRepository {
             .optional();
     }
 
+    List<String> matchedTrackIds(String subscriptionId) {
+        return jdbcClient.sql("""
+                WITH resolved_items AS (
+                    SELECT items.position, (
+                        SELECT tracks.id FROM tracks
+                        WHERE trim(tracks.title) COLLATE NOCASE =
+                              trim(items.title) COLLATE NOCASE
+                          AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
+                              replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                        ORDER BY tracks.updated_at DESC, tracks.id
+                        LIMIT 1
+                    ) AS track_id
+                    FROM playlist_subscription_items items
+                    WHERE items.subscription_id = :subscriptionId
+                )
+                SELECT track_id FROM resolved_items
+                WHERE track_id IS NOT NULL
+                ORDER BY position
+                """)
+            .param("subscriptionId", subscriptionId)
+            .query(String.class)
+            .list();
+    }
+
     List<Subscription> findDue() {
         var now = clock.millis();
         return select("""
