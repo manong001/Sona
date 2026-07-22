@@ -22,6 +22,8 @@ struct MusicLibraryView: View {
     @State private var showsCreateSubscription = false
     @State private var showsSubscriptionManager = false
     @State private var subscriptions: [PlaylistSubscription] = []
+    @State private var isLoadingSubscriptions = false
+    @State private var needsSubscriptionRefresh = false
     @State private var subscriptionErrorMessage: String?
     @State private var playlistName = ""
     @State private var selectedSort = "TITLE"
@@ -32,6 +34,7 @@ struct MusicLibraryView: View {
     @State private var pendingForceScrapePlaylist: Playlist?
     @State private var isForceScrapingPlaylist = false
     @State private var forceScrapeMessage: String?
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
     var requestedCollectionID: String? = nil
     var libraryNavigationRequestID = 0
@@ -98,6 +101,14 @@ struct MusicLibraryView: View {
         selectedFilter == .playlists || selectedFilter == .subscriptions
     }
 
+    private var libraryBottomPadding: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24
+#else
+        miniPlayerMode == "fixed" ? 92 : 24
+#endif
+    }
+
     var body: some View {
         NavigationStack(path: $navigationPath) {
             ZStack {
@@ -113,10 +124,11 @@ struct MusicLibraryView: View {
                         sortBar
                         libraryRows
                     }
-                    .padding(.bottom, 24)
+                    .padding(.bottom, libraryBottomPadding)
                 }
                 .refreshable {
                     await library.refresh()
+                    await loadSubscriptions()
                     await personal.refresh()
                 }
             }
@@ -230,11 +242,21 @@ struct MusicLibraryView: View {
     }
 
     private func loadSubscriptions() async {
-        do {
-            subscriptions = try await APIClient.shared.playlistSubscriptions()
-        } catch {
-            subscriptionErrorMessage = error.localizedDescription
+        guard !isLoadingSubscriptions else {
+            needsSubscriptionRefresh = true
+            return
         }
+        isLoadingSubscriptions = true
+        defer { isLoadingSubscriptions = false }
+        repeat {
+            needsSubscriptionRefresh = false
+            subscriptionErrorMessage = nil
+            do {
+                subscriptions = try await APIClient.shared.playlistSubscriptions()
+            } catch {
+                subscriptionErrorMessage = error.localizedDescription
+            }
+        } while needsSubscriptionRefresh
     }
 
     private func syncSubscription(_ subscription: PlaylistSubscription) async {

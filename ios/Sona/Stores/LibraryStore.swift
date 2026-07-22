@@ -252,6 +252,7 @@ final class PersonalStore: ObservableObject {
     private var favoriteNextCursor: String?
     private var currentUserID: String?
     private var serverSupportsHomeItems: Bool?
+    private var needsPlaylistRefresh = false
 
     init(api: APIClient = .shared) {
         self.api = api
@@ -320,19 +321,25 @@ final class PersonalStore: ObservableObject {
     }
 
     func refreshPlaylists() async {
-        guard !isLoadingPlaylists else { return }
-        isLoadingPlaylists = true
-        playlistErrorMessage = nil
-        defer { isLoadingPlaylists = false }
-        do {
-            playlists = try await api.playlists()
-            if serverSupportsHomeItems == false {
-                applyLocalHomeItems()
-            }
-            saveCachedPlaylists()
-        } catch {
-            playlistErrorMessage = error.localizedDescription
+        guard !isLoadingPlaylists else {
+            needsPlaylistRefresh = true
+            return
         }
+        isLoadingPlaylists = true
+        defer { isLoadingPlaylists = false }
+        repeat {
+            needsPlaylistRefresh = false
+            playlistErrorMessage = nil
+            do {
+                playlists = try await api.playlists()
+                if serverSupportsHomeItems == false {
+                    applyLocalHomeItems()
+                }
+                saveCachedPlaylists()
+            } catch {
+                playlistErrorMessage = error.localizedDescription
+            }
+        } while needsPlaylistRefresh
     }
 
     func prepareForLibraryModeChange(from oldValue: Bool, to newValue: Bool) {
