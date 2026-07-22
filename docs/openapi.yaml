@@ -509,12 +509,13 @@ paths:
         "404": {description: 目录歌单不存在}
     delete:
       operationId: deletePlaylist
-      description: 删除用户歌单；目录歌单仅可由其所属管理员在歌单为空时删除
+      description: 删除用户歌单；空目录歌单会同时删除音乐根目录下对应的真实空目录
       parameters:
         - $ref: "#/components/parameters/PlaylistId"
       responses:
         "204":
           description: 歌单已删除
+        "409": {description: 目录歌单对应的真实目录并非空目录}
   /me/playlists/{playlistId}/rescrape:
     post:
       operationId: forceRescrapePlaylist

@@ -11,6 +11,7 @@ import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.PositiveOrZero;
+import java.io.IOException;
 import java.net.URI;
 import java.time.DateTimeException;
 import java.time.ZoneId;
@@ -32,6 +33,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @RestController
@@ -46,17 +49,20 @@ class PersonalController {
 
     private final PersonalRepository repository;
     private final DirectoryImportService directoryImportService;
+    private final DirectoryPlaylistService directoryPlaylistService;
     private final AchievementService achievementService;
     private final ScanCoordinator scanCoordinator;
 
     PersonalController(
         PersonalRepository repository,
         DirectoryImportService directoryImportService,
+        DirectoryPlaylistService directoryPlaylistService,
         AchievementService achievementService,
         ScanCoordinator scanCoordinator
     ) {
         this.repository = repository;
         this.directoryImportService = directoryImportService;
+        this.directoryPlaylistService = directoryPlaylistService;
         this.achievementService = achievementService;
         this.scanCoordinator = scanCoordinator;
     }
@@ -227,10 +233,26 @@ class PersonalController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @PathVariable String playlistId
     ) {
-        if (!repository.deletePlaylist(user.id(), playlistId)) {
-            throw new ResponseStatusException(NOT_FOUND, "Playlist not found");
+        if (repository.deletePlaylist(user.id(), playlistId)) {
+            return ResponseEntity.noContent().build();
         }
-        return ResponseEntity.noContent().build();
+        try {
+            var result = directoryPlaylistService.deleteEmptyDirectoryPlaylist(user.id(), playlistId);
+            return switch (result) {
+                case DELETED -> ResponseEntity.noContent().build();
+                case NOT_EMPTY -> throw new ResponseStatusException(
+                    CONFLICT, "Directory playlist folder is not empty"
+                );
+                case UNSAFE_PATH -> throw new ResponseStatusException(
+                    BAD_REQUEST, "Directory playlist path is unsafe"
+                );
+                case NOT_FOUND -> throw new ResponseStatusException(NOT_FOUND, "Playlist not found");
+            };
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                INTERNAL_SERVER_ERROR, "Failed to delete directory playlist folder", exception
+            );
+        }
     }
 
     @PutMapping("/playlists/{playlistId}/home")

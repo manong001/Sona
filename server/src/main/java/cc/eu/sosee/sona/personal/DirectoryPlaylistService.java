@@ -2,8 +2,10 @@ package cc.eu.sosee.sona.personal;
 
 import cc.eu.sosee.sona.config.SonaProperties;
 import java.io.IOException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.HashSet;
@@ -95,6 +97,70 @@ public class DirectoryPlaylistService {
         }
         var playlist = findOrCreate(ownerId.get(), directory, relative(directory));
         syncTracks(playlist.id(), playlist.poolType(), directory);
+    }
+
+    @Transactional
+    DeleteResult deleteEmptyDirectoryPlaylist(String userId, String playlistId) throws IOException {
+        var relativePath = jdbcClient.sql("""
+                SELECT directory_path FROM playlists
+                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM playlist_tracks
+                      WHERE playlist_tracks.playlist_id = playlists.id
+                  )
+                """)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .query(String.class)
+            .optional();
+        if (relativePath.isEmpty()) {
+            return DeleteResult.NOT_FOUND;
+        }
+
+        var directory = musicDirectory.resolve(relativePath.get()).normalize();
+        if (directory.equals(musicDirectory) || !directory.startsWith(musicDirectory)
+            || containsSymbolicLink(directory)) {
+            return DeleteResult.UNSAFE_PATH;
+        }
+        try (var children = Files.list(directory)) {
+            if (children.findAny().isPresent()) {
+                return DeleteResult.NOT_EMPTY;
+            }
+        } catch (NoSuchFileException ignored) {
+            // The backing directory is already gone; remove its stale playlist record.
+        }
+        try {
+            Files.deleteIfExists(directory);
+        } catch (DirectoryNotEmptyException exception) {
+            return DeleteResult.NOT_EMPTY;
+        }
+
+        var deleted = jdbcClient.sql("""
+                DELETE FROM playlists
+                WHERE id = :playlistId AND user_id = :userId AND directory_path = :directoryPath
+                """)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .param("directoryPath", relativePath.get())
+            .update() == 1;
+        if (!deleted) {
+            return DeleteResult.NOT_FOUND;
+        }
+        jdbcClient.sql("DELETE FROM home_items WHERE item_id = :playlistId")
+            .param("playlistId", playlistId)
+            .update();
+        return DeleteResult.DELETED;
+    }
+
+    private boolean containsSymbolicLink(Path directory) {
+        var current = musicDirectory;
+        for (var part : musicDirectory.relativize(directory)) {
+            current = current.resolve(part);
+            if (Files.isSymbolicLink(current)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Optional<String> ownerId() {
@@ -240,5 +306,12 @@ public class DirectoryPlaylistService {
     }
 
     private record DirectoryPlaylist(String id, String directoryPath, String poolType) {
+    }
+
+    enum DeleteResult {
+        DELETED,
+        NOT_FOUND,
+        NOT_EMPTY,
+        UNSAFE_PATH
     }
 }

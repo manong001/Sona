@@ -680,14 +680,7 @@ class PersonalRepository {
     boolean deletePlaylist(String userId, String playlistId) {
         var deleted = jdbcClient.sql("""
                 DELETE FROM playlists
-                WHERE id = :playlistId AND user_id = :userId
-                  AND (
-                      directory_path IS NULL
-                      OR NOT EXISTS (
-                          SELECT 1 FROM playlist_tracks
-                          WHERE playlist_tracks.playlist_id = playlists.id
-                      )
-                  )
+                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NULL
                 """)
             .param("playlistId", playlistId)
             .param("userId", userId)
