@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 DEFAULT_SOURCES = (
@@ -82,6 +82,11 @@ class BackendCandidate:
     artwork_url: str | None
     lyrics: str | None
     opaque: Any
+
+
+@dataclass(frozen=True)
+class SpotifyPlaylistItem:
+    uri: str
 
 
 @dataclass
@@ -178,6 +183,11 @@ class MusicDlBackend:
 
     def parse_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
         hostname = (urlparse(url).hostname or "").lower().strip(".")
+        if hostname == "open.spotify.com":
+            try:
+                return self._parse_spotify_playlist(url)
+            except (KeyError, OSError, TypeError, ValueError):
+                pass
         sources = (
             ("SpotifyMusicClient",)
             if hostname == "open.spotify.com"
@@ -211,7 +221,75 @@ class MusicDlBackend:
             ))
         return playlist_name, candidates
 
+    def _parse_spotify_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+        parsed = urlparse(url)
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) != 2 or parts[0] != "playlist" or not re.fullmatch(r"[A-Za-z0-9]+", parts[1]):
+            raise ValueError("Spotify 歌单链接无效")
+        playlist_id = parts[1]
+        canonical_url = f"https://open.spotify.com/playlist/{playlist_id}"
+        metadata = json.loads(self._fetch_text(
+            "https://open.spotify.com/oembed?" + urlencode({"url": canonical_url})
+        ))
+        embed_html = self._fetch_text(f"https://open.spotify.com/embed/playlist/{playlist_id}")
+        match = re.search(
+            r'<script[^>]*\bid=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
+            embed_html,
+            re.DOTALL,
+        )
+        if match is None:
+            raise ValueError("Spotify 公开歌单缺少曲目数据")
+        entity = json.loads(match.group(1))["props"]["pageProps"]["state"]["data"]["entity"]
+        playlist_name = (_text(metadata.get("title")) or _text(entity.get("name"))).strip()[:80]
+        artwork_url = _optional_text(metadata.get("thumbnail_url"))
+        candidates = []
+        for track in entity.get("trackList", []):
+            title = _text(track.get("title")).strip()
+            artist = _text(track.get("subtitle")).strip()
+            uri = _text(track.get("uri")).strip()
+            if not title or not artist or not uri.startswith("spotify:track:"):
+                continue
+            candidates.append(BackendCandidate(
+                source="SpotifyMusicClient",
+                title=title,
+                artist=artist,
+                album="",
+                extension="mp3",
+                duration_ms=_positive_int(track.get("duration")),
+                file_size_bytes=None,
+                bitrate=None,
+                sample_rate=None,
+                artwork_url=artwork_url,
+                lyrics=None,
+                opaque=SpotifyPlaylistItem(uri),
+            ))
+        if not playlist_name or not candidates:
+            raise ValueError("Spotify 公开歌单没有可同步曲目")
+        return playlist_name, candidates
+
+    def _fetch_text(self, url: str) -> str:
+        request = Request(url, headers={
+            "Accept": "application/json,text/html;q=0.9",
+            "User-Agent": "Mozilla/5.0 Sona/1.0",
+        })
+        with urlopen(request, timeout=15) as response:
+            return response.read().decode("utf-8")
+
     def download(self, candidate: BackendCandidate) -> list[str]:
+        if isinstance(candidate.opaque, SpotifyPlaylistItem):
+            matches = self.search(
+                f"{candidate.title} {candidate.artist}", self._allowed_sources
+            )
+            resolved = next((
+                item for item in matches
+                if _matches_track(item, candidate.title, candidate.artist, candidate.duration_ms)
+            ), None) or next((
+                item for item in matches
+                if _matches_track(item, candidate.title, candidate.artist, None)
+            ), None)
+            if resolved is None:
+                raise RuntimeError("未在已启用音源中找到 Spotify 歌曲")
+            return self.download(resolved)
         sources = (candidate.source,)
         with self._lock_for(sources):
             client = self._client(sources)
@@ -451,14 +529,14 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             url = _text(self._read_json().get("url")).strip()
             if not url or len(url) > MAX_PLAYLIST_URL_LENGTH:
                 raise ValueError("歌单链接长度必须为 1 到 2048 个字符")
-            normalized_url = url if "://" in url else "https://" + url
+            normalized_url = _normalize_playlist_url(url)
             parsed = urlparse(normalized_url)
             hostname = (parsed.hostname or "").lower().strip(".")
             if parsed.scheme not in {"http", "https"} or not any(
                 hostname == host or hostname.endswith("." + host)
                 for host in PLAYLIST_HOSTS
             ):
-                raise ValueError("仅支持已启用的咪咕、网易云、QQ、酷我和千千歌单链接")
+                raise ValueError("仅支持已启用的咪咕、网易云、QQ、酷我、千千和 Spotify 歌单链接")
             self._json(HTTPStatus.OK, self.server.state.parse_playlist(normalized_url))
         except ValueError as exception:
             self._error(HTTPStatus.BAD_REQUEST, str(exception))
@@ -542,6 +620,41 @@ def _public_candidate(candidate_id: str, candidate: BackendCandidate) -> dict[st
         "hasLyrics": bool(candidate.lyrics),
         "lyrics": candidate.lyrics,
     }
+
+
+def _normalize_playlist_url(value: str) -> str:
+    match = re.search(r'https?://[^\s<>"“”]+', value, re.IGNORECASE)
+    if match is not None:
+        url = match.group(0)
+    else:
+        url = value.strip()
+        if not url or any(character.isspace() for character in url):
+            raise ValueError("分享内容中没有找到歌单链接")
+        if "://" not in url:
+            url = "https://" + url
+    url = url.rstrip(".,;:!?，。；：！？、)]}）】》")
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().strip(".")
+    if (
+        (hostname == "y.qq.com" or hostname.endswith(".y.qq.com"))
+        and parsed.path == "/n3/other/pages/details/playlist.html"
+    ):
+        playlist_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
+        if playlist_id.isdigit():
+            return f"https://y.qq.com/n/ryqq/playlist/{playlist_id}"
+    return _resolve_short_playlist_url(url) if hostname == "163cn.tv" else url
+
+
+def _resolve_short_playlist_url(url: str) -> str:
+    request = Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0 Sona/1.0"})
+    with urlopen(request, timeout=10) as response:
+        resolved_url = response.geturl()
+    parsed = urlparse(resolved_url)
+    hostname = (parsed.hostname or "").lower().strip(".")
+    playlist_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
+    if hostname == "music.163.com" and playlist_id.isdigit():
+        return "https://music.163.com/playlist?" + urlencode({"id": playlist_id})
+    return resolved_url
 
 
 def _duration_ms(duration_s: Any, formatted: Any) -> int | None:

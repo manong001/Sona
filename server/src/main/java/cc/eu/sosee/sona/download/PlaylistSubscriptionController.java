@@ -57,6 +57,14 @@ class PlaylistSubscriptionController {
         return service.sync(user.id(), id);
     }
 
+    @PostMapping("/{id}/download-missing")
+    PlaylistSubscriptionRepository.Subscription downloadMissing(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return service.downloadMissing(user.id(), id);
+    }
+
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(
         @AuthenticationPrincipal AuthenticatedUser user,

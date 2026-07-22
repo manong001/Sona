@@ -439,6 +439,7 @@ struct PlaylistSubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var subscriptions: [PlaylistSubscription] = []
     @State private var syncingIDs: Set<String> = []
+    @State private var downloadingMissingIDs: Set<String> = []
     @State private var isLoading = true
     @State private var showsCreate = false
     @State private var errorMessage: String?
@@ -539,6 +540,25 @@ struct PlaylistSubscriptionsView: View {
             if let error = subscription.lastError, !error.isEmpty {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
+            if subscription.missingCount > 0 {
+                Button {
+                    Task { await downloadMissing(subscription) }
+                } label: {
+                    Label(
+                        downloadingMissingIDs.contains(subscription.id)
+                            ? "正在添加到下载列表…"
+                            : "下载缺少的 \(subscription.missingCount) 首",
+                        systemImage: "arrow.down.circle.fill"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.sonaGreen)
+                .disabled(
+                    syncingIDs.contains(subscription.id)
+                        || downloadingMissingIDs.contains(subscription.id)
+                )
+            }
         }
         .padding(.vertical, 6)
         .listRowBackground(Color.sonaBackground)
@@ -567,6 +587,23 @@ struct PlaylistSubscriptionsView: View {
         defer { syncingIDs.remove(subscription.id) }
         do {
             let updated = try await APIClient.shared.syncPlaylistSubscription(id: subscription.id)
+            if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                subscriptions[index] = updated
+            }
+            changed()
+        } catch {
+            errorMessage = error.localizedDescription
+            await load()
+        }
+    }
+
+    private func downloadMissing(_ subscription: PlaylistSubscription) async {
+        downloadingMissingIDs.insert(subscription.id)
+        defer { downloadingMissingIDs.remove(subscription.id) }
+        do {
+            let updated = try await APIClient.shared.downloadMissingPlaylistSubscription(
+                id: subscription.id
+            )
             if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
                 subscriptions[index] = updated
             }

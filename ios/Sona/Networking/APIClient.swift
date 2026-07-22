@@ -765,6 +765,14 @@ final class APIClient {
         )
     }
 
+    func downloadMissingPlaylistSubscription(id: String) async throws -> PlaylistSubscription {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/download-missing",
+            method: "POST",
+            timeout: 300
+        )
+    }
+
     func deletePlaylistSubscription(id: String) async throws {
         try await requestVoid(path: "/api/v1/me/playlist-subscriptions/\(id)", method: "DELETE")
     }

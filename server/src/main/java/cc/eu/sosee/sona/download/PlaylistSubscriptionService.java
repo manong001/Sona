@@ -75,7 +75,13 @@ class PlaylistSubscriptionService {
     PlaylistSubscriptionRepository.Subscription sync(String userId, String id) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
-        return sync(subscription, false);
+        return sync(subscription, false, false);
+    }
+
+    PlaylistSubscriptionRepository.Subscription downloadMissing(String userId, String id) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        return sync(subscription, false, true);
     }
 
     void delete(String userId, String id) {
@@ -88,7 +94,7 @@ class PlaylistSubscriptionService {
     void syncDueSubscriptions() {
         for (var subscription : subscriptions.findDue()) {
             try {
-                sync(subscription, false);
+                sync(subscription, false, false);
             } catch (RuntimeException ignored) {
                 // 单个公开歌单失效时保留上次成功镜像，并继续同步其他订阅。
             }
@@ -96,7 +102,8 @@ class PlaylistSubscriptionService {
     }
 
     private PlaylistSubscriptionRepository.Subscription sync(
-        PlaylistSubscriptionRepository.Subscription subscription, boolean useRemoteName
+        PlaylistSubscriptionRepository.Subscription subscription, boolean useRemoteName,
+        boolean downloadMissing
     ) {
         if (!syncing.add(subscription.id())) {
             return subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
@@ -122,7 +129,7 @@ class PlaylistSubscriptionService {
                 } else if (candidate.downloadState() == DownloadTaskState.QUEUED
                     || candidate.downloadState() == DownloadTaskState.RUNNING) {
                     state = "DOWNLOADING";
-                } else if (subscription.autoDownload()
+                } else if ((subscription.autoDownload() || downloadMissing)
                     && downloadService.queueForPlaylist(
                         candidate, subscription.username(), subscription.playlistId()
                     ).isPresent()) {
@@ -153,7 +160,7 @@ class PlaylistSubscriptionService {
         try {
             taskExecutor.execute(() -> {
                 try {
-                    sync(subscription, useRemoteName);
+                    sync(subscription, useRemoteName, false);
                 } catch (RuntimeException ignored) {
                     // 同步错误已记录在订阅中，不能影响创建接口的快速返回。
                 }
