@@ -15,6 +15,7 @@ from app import (
     AppState,
     BackendCandidate,
     MusicDlBackend,
+    PublicPlaylistItem,
     SonaDownloaderServer,
     SpotifyPlaylistItem,
 )
@@ -245,6 +246,9 @@ class DownloaderApiTest(unittest.TestCase):
             backend._output_dir = Path(directory)
             backend._lock = threading.Lock()
             backend._source_locks = {}
+            backend._fetch_json = lambda url, referer=None: (_ for _ in ()).throw(
+                OSError("public parser unavailable")
+            )
             backend._client = lambda sources: SimpleNamespace(
                 parseplaylist=lambda url: [song]
             )
@@ -254,6 +258,78 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual("我的歌单", name)
         self.assertEqual("我的歌单", Path(song.work_dir).name)
         self.assertEqual("测试歌曲", candidates[0].title)
+
+    def test_netease_playlist_uses_public_metadata_and_fetches_every_track(self):
+        detail = {
+            "playlist": {
+                "name": "网易云公开歌单",
+                "coverImgUrl": "https://image.example.test/netease.jpg",
+                "trackIds": [{"id": 1}, {"id": 2}],
+                "tracks": [{"id": 1, "name": "首屏歌曲"}],
+            }
+        }
+        songs = {
+            "songs": [
+                {
+                    "id": 1, "name": "第一首", "duration": 180_000,
+                    "artists": [{"name": "歌手甲"}],
+                    "album": {"name": "专辑甲", "picUrl": "https://image.test/1.jpg"},
+                },
+                {
+                    "id": 2, "name": "第二首", "duration": 210_000,
+                    "artists": [{"name": "歌手乙"}],
+                    "album": {"name": "专辑乙", "picUrl": "https://image.test/2.jpg"},
+                },
+            ]
+        }
+        requested_urls = []
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("NeteaseMusicClient", "QQMusicClient")
+        backend._fetch_json = lambda url, referer=None: (
+            requested_urls.append(url) or (detail if "/playlist/detail" in url else songs)
+        )
+        backend._client = lambda sources: self.fail("不应调用 musicdl 网易云解析器")
+
+        name, candidates = backend.parse_playlist(
+            "https://music.163.com/playlist?id=17797258373"
+        )
+
+        self.assertEqual("网易云公开歌单", name)
+        self.assertEqual(["第一首", "第二首"], [item.title for item in candidates])
+        self.assertEqual("歌手乙", candidates[1].artist)
+        self.assertEqual(210_000, candidates[1].duration_ms)
+        self.assertEqual(2, len(requested_urls))
+        self.assertIsInstance(candidates[0].opaque, PublicPlaylistItem)
+
+    def test_qq_playlist_uses_public_metadata(self):
+        response = {
+            "code": 0,
+            "cdlist": [{
+                "dissname": "QQ 公开歌单",
+                "logo": "https://image.example.test/qq.jpg",
+                "songlist": [{
+                    "songmid": "song-mid", "songname": "QQ 歌曲", "interval": 185,
+                    "singer": [{"name": "歌手甲"}, {"name": "歌手乙"}],
+                    "albumname": "QQ 专辑",
+                }],
+            }],
+        }
+        requested_urls = []
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("NeteaseMusicClient", "QQMusicClient")
+        backend._fetch_json = lambda url, referer=None: requested_urls.append(url) or response
+        backend._client = lambda sources: self.fail("不应调用 musicdl QQ 解析器")
+
+        name, candidates = backend.parse_playlist(
+            "https://y.qq.com/n/ryqq/playlist/7526304337"
+        )
+
+        self.assertEqual("QQ 公开歌单", name)
+        self.assertEqual("QQ 歌曲", candidates[0].title)
+        self.assertEqual("歌手甲、歌手乙", candidates[0].artist)
+        self.assertEqual(185_000, candidates[0].duration_ms)
+        self.assertEqual(1, len(requested_urls))
+        self.assertIsInstance(candidates[0].opaque, PublicPlaylistItem)
 
     def test_spotify_playlist_uses_spotify_parser_outside_default_sources(self):
         song = SimpleNamespace(
@@ -349,6 +425,11 @@ class DownloaderApiTest(unittest.TestCase):
             180_000, None, None, None, None, None,
             SpotifyPlaylistItem("spotify:track:test"),
         )
+        public = BackendCandidate(
+            "NeteaseMusicClient", "测试歌曲", "测试歌手", "", "mp3",
+            180_000, None, None, None, None, None,
+            PublicPlaylistItem("NeteaseMusicClient", "123"),
+        )
         resolved = BackendCandidate(
             "NeteaseMusicClient", "测试歌曲", "测试歌手", "测试专辑", "flac",
             180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
@@ -372,10 +453,16 @@ class DownloaderApiTest(unittest.TestCase):
             )
 
             files = backend.download(spotify)
+            public_files = backend.download(public)
 
         self.assertEqual(["download/测试歌曲.flac"], files)
+        self.assertEqual(files, public_files)
         self.assertEqual(
-            [("测试歌曲 测试歌手", ("NeteaseMusicClient", "QQMusicClient"))], queries
+            [
+                ("测试歌曲 测试歌手", ("NeteaseMusicClient", "QQMusicClient")),
+                ("测试歌曲 测试歌手", ("NeteaseMusicClient", "QQMusicClient")),
+            ],
+            queries,
         )
 
     def request(self, method, path, body=None, authenticated=True):

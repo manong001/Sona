@@ -89,6 +89,12 @@ class SpotifyPlaylistItem:
     uri: str
 
 
+@dataclass(frozen=True)
+class PublicPlaylistItem:
+    source: str
+    identifier: str
+
+
 @dataclass
 class CachedCandidate:
     candidate: BackendCandidate
@@ -183,9 +189,16 @@ class MusicDlBackend:
 
     def parse_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
         hostname = (urlparse(url).hostname or "").lower().strip(".")
+        public_parser = None
         if hostname == "open.spotify.com":
+            public_parser = self._parse_spotify_playlist
+        elif hostname == "music.163.com":
+            public_parser = self._parse_netease_playlist
+        elif hostname == "y.qq.com" or hostname.endswith(".y.qq.com") or hostname == "music.qq.com":
+            public_parser = self._parse_qq_playlist
+        if public_parser is not None:
             try:
-                return self._parse_spotify_playlist(url)
+                return public_parser(url)
             except (KeyError, OSError, TypeError, ValueError):
                 pass
         sources = (
@@ -267,6 +280,131 @@ class MusicDlBackend:
             raise ValueError("Spotify 公开歌单没有可同步曲目")
         return playlist_name, candidates
 
+    def _parse_netease_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+        playlist_id = _playlist_id(url, query_keys=("id",))
+        if not playlist_id:
+            raise ValueError("网易云歌单链接无效")
+        detail = self._fetch_json(
+            "https://music.163.com/api/v6/playlist/detail?" + urlencode({"id": playlist_id}),
+            "https://music.163.com/",
+        )
+        playlist = detail["playlist"]
+        name = _text(playlist.get("name")).strip()[:80]
+        cover = _optional_text(playlist.get("coverImgUrl"))
+        embedded = {
+            _text(track.get("id")): track
+            for track in playlist.get("tracks", [])
+            if isinstance(track, dict) and _text(track.get("id"))
+        }
+        track_ids = [
+            _text(item.get("id")).strip()
+            for item in playlist.get("trackIds", [])
+            if isinstance(item, dict) and _text(item.get("id")).strip().isdigit()
+        ][:MAX_CANDIDATES]
+        songs = {}
+        for offset in range(0, len(track_ids), 100):
+            batch = track_ids[offset:offset + 100]
+            response = self._fetch_json(
+                "https://music.163.com/api/song/detail?" + urlencode({
+                    "ids": json.dumps([int(item) for item in batch], separators=(",", ":"))
+                }),
+                "https://music.163.com/",
+            )
+            for song in response.get("songs", []):
+                if isinstance(song, dict):
+                    songs[_text(song.get("id"))] = song
+        ordered_songs = [songs.get(track_id) or embedded.get(track_id) for track_id in track_ids]
+        if not track_ids:
+            ordered_songs = list(embedded.values())[:MAX_CANDIDATES]
+        candidates = []
+        for song in ordered_songs:
+            if not isinstance(song, dict):
+                continue
+            title = _text(song.get("name")).strip()
+            artists = song.get("ar") or song.get("artists") or []
+            artist = "、".join(
+                _text(item.get("name")).strip()
+                for item in artists if isinstance(item, dict) and _text(item.get("name")).strip()
+            )
+            album = song.get("al") or song.get("album") or {}
+            identifier = _text(song.get("id")).strip()
+            if not title or not artist or not identifier:
+                continue
+            candidates.append(BackendCandidate(
+                source="NeteaseMusicClient",
+                title=title,
+                artist=artist,
+                album=_text(album.get("name")).strip() if isinstance(album, dict) else "",
+                extension="mp3",
+                duration_ms=_positive_int(song.get("dt") or song.get("duration")),
+                file_size_bytes=None,
+                bitrate=None,
+                sample_rate=None,
+                artwork_url=(
+                    _optional_text(album.get("picUrl")) if isinstance(album, dict) else None
+                ) or cover,
+                lyrics=None,
+                opaque=PublicPlaylistItem("NeteaseMusicClient", identifier),
+            ))
+        if not name or not candidates:
+            raise ValueError("网易云公开歌单没有可同步曲目")
+        return name, candidates
+
+    def _parse_qq_playlist(self, url: str) -> tuple[str, list[BackendCandidate]]:
+        playlist_id = _playlist_id(url, query_keys=("id", "disstid"), path_marker="playlist")
+        if not playlist_id:
+            raise ValueError("QQ 音乐歌单链接无效")
+        response = self._fetch_json(
+            "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?" + urlencode({
+                "type": 1,
+                "json": 1,
+                "utf8": 1,
+                "onlysong": 0,
+                "disstid": playlist_id,
+                "format": "json",
+                "inCharset": "utf8",
+                "outCharset": "utf-8",
+                "notice": 0,
+                "platform": "yqq.json",
+                "needNewCode": 0,
+            }),
+            "https://y.qq.com/",
+        )
+        playlist = response["cdlist"][0]
+        name = _text(playlist.get("dissname")).strip()[:80]
+        cover = _optional_text(playlist.get("logo"))
+        candidates = []
+        for song in playlist.get("songlist", [])[:MAX_CANDIDATES]:
+            if not isinstance(song, dict):
+                continue
+            title = _text(song.get("songname") or song.get("songorig")).strip()
+            artist = "、".join(
+                _text(item.get("name")).strip()
+                for item in song.get("singer", [])
+                if isinstance(item, dict) and _text(item.get("name")).strip()
+            )
+            identifier = _text(song.get("songmid")).strip()
+            duration_s = _positive_int(song.get("interval"))
+            if not title or not artist or not identifier:
+                continue
+            candidates.append(BackendCandidate(
+                source="QQMusicClient",
+                title=title,
+                artist=artist,
+                album=_text(song.get("albumname")).strip(),
+                extension="mp3",
+                duration_ms=duration_s * 1_000 if duration_s else None,
+                file_size_bytes=None,
+                bitrate=None,
+                sample_rate=None,
+                artwork_url=cover,
+                lyrics=None,
+                opaque=PublicPlaylistItem("QQMusicClient", identifier),
+            ))
+        if not name or not candidates:
+            raise ValueError("QQ 音乐公开歌单没有可同步曲目")
+        return name, candidates
+
     def _fetch_text(self, url: str) -> str:
         request = Request(url, headers={
             "Accept": "application/json,text/html;q=0.9",
@@ -275,8 +413,22 @@ class MusicDlBackend:
         with urlopen(request, timeout=15) as response:
             return response.read().decode("utf-8")
 
+    def _fetch_json(self, url: str, referer: str | None = None) -> dict[str, Any]:
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 Sona/1.0",
+        }
+        if referer:
+            headers["Referer"] = referer
+        request = Request(url, headers=headers)
+        with urlopen(request, timeout=20) as response:
+            value = json.loads(response.read().decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("公开歌单接口返回格式无效")
+        return value
+
     def download(self, candidate: BackendCandidate) -> list[str]:
-        if isinstance(candidate.opaque, SpotifyPlaylistItem):
+        if isinstance(candidate.opaque, (SpotifyPlaylistItem, PublicPlaylistItem)):
             matches = self.search(
                 f"{candidate.title} {candidate.artist}", self._allowed_sources
             )
@@ -288,7 +440,7 @@ class MusicDlBackend:
                 if _matches_track(item, candidate.title, candidate.artist, None)
             ), None)
             if resolved is None:
-                raise RuntimeError("未在已启用音源中找到 Spotify 歌曲")
+                raise RuntimeError("未在已启用音源中找到歌单歌曲")
             return self.download(resolved)
         sources = (candidate.source,)
         with self._lock_for(sources):
@@ -643,6 +795,26 @@ def _normalize_playlist_url(value: str) -> str:
         if playlist_id.isdigit():
             return f"https://y.qq.com/n/ryqq/playlist/{playlist_id}"
     return _resolve_short_playlist_url(url) if hostname == "163cn.tv" else url
+
+
+def _playlist_id(
+    url: str, query_keys: tuple[str, ...], path_marker: str | None = None
+) -> str | None:
+    parsed = urlparse(url)
+    values = parse_qs(parsed.query)
+    fragment = urlparse(parsed.fragment)
+    fragment_values = parse_qs(fragment.query)
+    for key in query_keys:
+        value = ((values.get(key) or fragment_values.get(key)) or [""])[0].strip()
+        if value.isdigit():
+            return value
+    if path_marker:
+        parts = [part for part in parsed.path.split("/") if part]
+        if path_marker in parts:
+            position = parts.index(path_marker)
+            if position + 1 < len(parts) and parts[position + 1].isdigit():
+                return parts[position + 1]
+    return None
 
 
 def _resolve_short_playlist_url(url: str) -> str:
