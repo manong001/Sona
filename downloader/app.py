@@ -181,6 +181,11 @@ class DownloadProcessRunner:
             if task_id in self._cancelled:
                 self._cancelled.remove(task_id)
                 raise RuntimeError("下载已取消")
+            if len(self._progress) >= MAX_CANDIDATES:
+                for previous_task_id in tuple(self._progress):
+                    if previous_task_id not in self._processes:
+                        self._progress.pop(previous_task_id, None)
+                        break
             self._processes[task_id] = process
             self._progress[task_id] = DownloadProgress(0, total_bytes, 0)
             process.start()
@@ -188,6 +193,7 @@ class DownloadProcessRunner:
         previous_bytes = 0
         previous_time = time.monotonic()
         smoothed_speed = 0.0
+        completed_successfully = False
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -197,6 +203,17 @@ class DownloadProcessRunner:
                 try:
                     succeeded, value = result_queue.get(timeout=min(0.1, remaining))
                     if succeeded:
+                        downloaded_bytes = max(
+                            previous_bytes,
+                            self._file_size(progress_path),
+                        )
+                        with self._lock:
+                            self._progress[task_id] = DownloadProgress(
+                                downloaded_bytes,
+                                downloaded_bytes or total_bytes,
+                                round(smoothed_speed),
+                            )
+                        completed_successfully = True
                         return value
                     raise RuntimeError(value)
                 except queue.Empty:
@@ -230,7 +247,8 @@ class DownloadProcessRunner:
             self._terminate(process)
             with self._lock:
                 self._processes.pop(task_id, None)
-                self._progress.pop(task_id, None)
+                if not completed_successfully:
+                    self._progress.pop(task_id, None)
                 self._cancelled.discard(task_id)
             result_queue.close()
 
@@ -240,6 +258,9 @@ class DownloadProcessRunner:
 
     def cancel(self, task_id: str) -> None:
         with self._lock:
+            if task_id in self._progress and task_id not in self._processes:
+                self._progress.pop(task_id, None)
+                return
             self._cancelled.add(task_id)
             process = self._processes.get(task_id)
         if process is not None:

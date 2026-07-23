@@ -134,6 +134,10 @@ class DownloaderApiTest(unittest.TestCase):
                 self.assertEqual(4096, progress.total_bytes)
                 self.assertGreater(progress.bytes_per_second, 0)
                 self.assertEqual(["song.mp3"], future.result())
+                completed = runner.progress("progress-task")
+                self.assertIsNotNone(completed)
+                self.assertEqual(4096, completed.downloaded_bytes)
+                self.assertEqual(4096, completed.total_bytes)
 
     def setUp(self):
         self.temporary = TemporaryDirectory()

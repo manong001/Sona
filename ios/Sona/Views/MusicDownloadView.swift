@@ -1508,10 +1508,10 @@ private struct MusicDownloadTaskRow: View {
             if let total = task.totalBytes, total > 0 {
                 ProgressView(value: min(Double(downloaded) / Double(total), 1))
                     .tint(.sonaGreen)
-                Text(
-                    "\(Int(min(Double(downloaded) / Double(total), 1) * 100))% · "
-                    + "\(byteText(downloaded)) / \(byteText(total)) · \(speedText)"
-                )
+                Text(transferIsComplete
+                    ? "下载完成 · \(byteText(downloaded)) · 正在入库"
+                    : "\(Int(min(Double(downloaded) / Double(total), 1) * 100))% · "
+                        + "\(byteText(downloaded)) / \(byteText(total)) · \(speedText)")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(Color.sonaSecondaryText)
             } else {
@@ -1545,7 +1545,7 @@ private struct MusicDownloadTaskRow: View {
         case .running:
             VStack(spacing: 4) {
                 ProgressView().tint(.sonaGreen)
-                Text(task.state.title).font(.caption2)
+                Text(transferIsComplete ? "入库中" : task.state.title).font(.caption2)
             }
         case .completed:
             Label(task.state.title, systemImage: "checkmark.circle.fill")
@@ -1559,6 +1559,13 @@ private struct MusicDownloadTaskRow: View {
             .buttonStyle(.bordered)
             .tint(.red)
         }
+    }
+
+    private var transferIsComplete: Bool {
+        guard let downloaded = task.downloadedBytes,
+              let total = task.totalBytes,
+              total > 0 else { return false }
+        return downloaded >= total
     }
 }
 
