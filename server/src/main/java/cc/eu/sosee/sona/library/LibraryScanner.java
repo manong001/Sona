@@ -87,7 +87,7 @@ class LibraryScanner {
                 .forEach(path -> {
                     counts[0]++;
                     progress.accept(result(counts));
-                    scanFile(path, mode, counts, errors);
+                    scanFile(path, mode, true, counts, errors);
                     progress.accept(result(counts));
                 });
         }
@@ -112,7 +112,7 @@ class LibraryScanner {
             progress.accept(result(counts));
             var track = trackStore.findById(trackId);
             if (track.isPresent()) {
-                scanFile(track.get().path(), mode, counts, errors);
+                scanFile(track.get().path(), mode, true, counts, errors);
             } else {
                 counts[4]++;
                 if (errors.size() < 50) {
@@ -136,10 +136,26 @@ class LibraryScanner {
             .sorted()
             .forEach(path -> {
                 counts[0]++;
-                scanFile(path, ScrapeMode.STANDARD, counts, errors);
+                scanFile(path, ScrapeMode.STANDARD, false, counts, errors);
             });
         lastErrors.set(List.copyOf(errors));
         return result(counts);
+    }
+
+    void enrichFiles(List<Path> paths) {
+        var counts = new int[5];
+        var errors = new ArrayList<String>();
+        paths.stream()
+            .map(path -> path.toAbsolutePath().normalize())
+            .distinct()
+            .filter(Files::isRegularFile)
+            .filter(this::isSupported)
+            .sorted()
+            .forEach(path -> {
+                counts[0]++;
+                scanFile(path, ScrapeMode.MISSING_ONLY, true, counts, errors);
+            });
+        lastErrors.set(List.copyOf(errors));
     }
 
     List<String> lastErrors() {
@@ -161,7 +177,9 @@ class LibraryScanner {
         return removed;
     }
 
-    private void scanFile(Path path, ScrapeMode mode, int[] counts, List<String> errors) {
+    private void scanFile(
+        Path path, ScrapeMode mode, boolean enrich, int[] counts, List<String> errors
+    ) {
         try {
             var attributes = Files.readAttributes(path, BasicFileAttributes.class);
             var normalizedPath = path.toAbsolutePath().normalize();
@@ -180,7 +198,7 @@ class LibraryScanner {
                     track.id(), track.fileSize(), track.modifiedAt(), AudioFeatures.VERSION
                 )) {
                     counts[3]++;
-                } else if (trySaveAudioFeatures(track, errors)) {
+                } else if (enrich && trySaveAudioFeatures(track, errors)) {
                     counts[2]++;
                 } else {
                     counts[3]++;
@@ -236,17 +254,19 @@ class LibraryScanner {
                     ? refreshExisting.get().plainLyrics() == null
                         && refreshExisting.get().syncedLyrics() == null
                     : lyrics.plain() == null && lyrics.synced() == null);
-            var scraped = metadataScraper.scrape(new ScrapeRequest(
-                title,
-                artist,
-                album,
-                metadata.durationMs(),
-                needsTitle,
-                needsArtist,
-                needsAlbum,
-                needsArtwork,
-                needsLyrics
-            ));
+            var scraped = enrich
+                ? metadataScraper.scrape(new ScrapeRequest(
+                    title,
+                    artist,
+                    album,
+                    metadata.durationMs(),
+                    needsTitle,
+                    needsArtist,
+                    needsAlbum,
+                    needsArtwork,
+                    needsLyrics
+                ))
+                : ScrapedMetadata.empty();
             if (needsTitle && hasText(scraped.title())) {
                 title = fileNameParser.stripTrackNumberPrefix(scraped.title());
             }
@@ -318,7 +338,9 @@ class LibraryScanner {
             trackStore.save(
                 track, overwriteExisting.isPresent(), mode == ScrapeMode.FORCE_OVERWRITE
             );
-            trySaveAudioFeatures(track, errors);
+            if (enrich) {
+                trySaveAudioFeatures(track, errors);
+            }
             if (existing.isPresent()) {
                 counts[2]++;
             } else {

@@ -9,6 +9,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ScanCoordinator {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(ScanCoordinator.class);
 
     private final LibraryScanner libraryScanner;
     private final DirectoryPlaylistService directoryPlaylistService;
@@ -203,6 +207,7 @@ public class ScanCoordinator {
                     var scanResult = libraryScanner.scanFiles(files);
                     directoryPlaylistService.sync(relativeDirectory);
                     result.complete(scanResult);
+                    enqueueEnrichment(files);
                 } catch (Exception exception) {
                     result.completeExceptionally(exception);
                 }
@@ -211,6 +216,20 @@ public class ScanCoordinator {
             result.completeExceptionally(exception);
         }
         return result;
+    }
+
+    private void enqueueEnrichment(List<Path> files) {
+        try {
+            taskExecutor.execute(() -> {
+                try {
+                    libraryScanner.enrichFiles(files);
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("下载歌曲后台增强失败", exception);
+                }
+            });
+        } catch (RuntimeException exception) {
+            LOGGER.warn("无法提交下载歌曲后台增强任务", exception);
+        }
     }
 
     public void trigger() {
