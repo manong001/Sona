@@ -180,6 +180,33 @@ class DownloadService {
         return queued;
     }
 
+    synchronized DownloadTask replace(
+        String id, DownloadCandidate candidate, String requestedBy
+    ) {
+        requireEnabled();
+        var task = repository.findById(id, requestedBy)
+            .orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "下载任务不存在"
+            ));
+        if (task.state() != DownloadTaskState.FAILED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "只有失败任务可以选择备选音源");
+        }
+        if ("SpotifyMusicClient".equals(candidate.source())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请选择 Spotify 以外的备选音源");
+        }
+        var existing = existingState(candidate);
+        if (existing.isPresent()) {
+            var message = existing.get() == DownloadTaskState.COMPLETED
+                ? "所选歌曲已存在于曲库"
+                : "所选歌曲已在下载列表";
+            throw new ResponseStatusException(HttpStatus.CONFLICT, message);
+        }
+        repository.replaceCandidate(task.id(), candidate);
+        var queued = repository.findById(task.id()).orElseThrow();
+        submit(queued);
+        return queued;
+    }
+
     void delete(String id, String requestedBy) {
         var task = repository.findById(id, requestedBy)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "下载任务不存在"));

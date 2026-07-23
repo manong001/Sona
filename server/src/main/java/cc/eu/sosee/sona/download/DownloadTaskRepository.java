@@ -223,6 +223,32 @@ class DownloadTaskRepository {
             .update();
     }
 
+    void replaceCandidate(String id, DownloadCandidate candidate) {
+        jdbcClient.sql("""
+                UPDATE download_tasks
+                SET candidate_id = :candidateId,
+                    source = :source,
+                    source_name = :sourceName,
+                    album = :album,
+                    quality = :quality,
+                    artwork_url = :artworkUrl,
+                    state = 'QUEUED',
+                    files_json = '',
+                    message = NULL,
+                    updated_at = :updatedAt
+                WHERE id = :id
+                """)
+            .param("candidateId", candidate.candidateId())
+            .param("source", candidate.source())
+            .param("sourceName", candidate.sourceName())
+            .param("album", text(candidate.album()))
+            .param("quality", text(candidate.quality()))
+            .param("artworkUrl", blankToNull(candidate.artworkUrl()))
+            .param("updatedAt", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
     private DownloadTask map(ResultSet resultSet, int rowNumber) throws SQLException {
         return new DownloadTask(
             resultSet.getString("id"),

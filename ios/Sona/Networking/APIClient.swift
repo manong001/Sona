@@ -997,6 +997,16 @@ final class APIClient {
         try await request(path: "/api/v1/downloads/\(taskID)/retry", method: "POST")
     }
 
+    func replaceMusicDownload(
+        taskID: String, candidate: DownloadCandidate
+    ) async throws -> MusicDownloadTask {
+        try await request(
+            path: "/api/v1/downloads/\(taskID)/replacement",
+            method: "POST",
+            body: try encoder.encode(candidate)
+        )
+    }
+
     func lyrics(for track: Track) async throws -> Lyrics {
         try await request(path: "/api/v1/tracks/\(track.id)/lyrics")
     }

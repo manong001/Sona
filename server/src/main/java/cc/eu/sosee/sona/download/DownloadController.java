@@ -100,6 +100,17 @@ class DownloadController {
         return ResponseEntity.accepted().body(service.retry(id, user.username()));
     }
 
+    @PostMapping("/{id}/replacement")
+    ResponseEntity<DownloadTask> replace(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @Valid @RequestBody DownloadCandidate candidate
+    ) {
+        return ResponseEntity.accepted().body(
+            service.replace(id, candidate, user.username())
+        );
+    }
+
     record SearchResponse(List<DownloadCandidate> items) {
     }
 
