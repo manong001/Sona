@@ -755,7 +755,7 @@ final class APIClient {
     }
 
     func searchMusicDownloads(
-        query: String, sources: [String] = []
+        query: String, sources: [String] = [], timeout: TimeInterval = 180
     ) async throws -> DownloadSearchResponse {
         var components = URLComponents(
             url: url(for: "/api/v1/downloads/search"),
@@ -765,7 +765,7 @@ final class APIClient {
         if !sources.isEmpty {
             components.queryItems?.append(URLQueryItem(name: "sources", value: sources.joined(separator: ",")))
         }
-        return try await request(url: components.url!, timeout: 180)
+        return try await request(url: components.url!, timeout: timeout)
     }
 
     func queueMusicDownload(_ candidate: DownloadCandidate) async throws -> MusicDownloadTask {

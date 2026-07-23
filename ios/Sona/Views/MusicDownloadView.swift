@@ -342,22 +342,56 @@ struct MusicDownloadView: View {
                 alternativeLoadingTaskIDs.remove(task.id)
                 alternativeSearchTasks[task.id] = nil
             }
-            do {
-                let response = try await APIClient.shared.searchMusicDownloads(
-                    query: "\(task.title) \(task.artist)",
-                    sources: sourceIDs
-                )
-                guard !Task.isCancelled else { return }
-                alternativeCandidates[task.id] = Array(response.items.filter {
-                    $0.source != "SpotifyMusicClient"
-                        && $0.candidateId != task.candidateId
-                }.prefix(3))
-            } catch is CancellationError {
-                // Leaving the download page cancels unfinished searches.
-            } catch let error as URLError where error.code == .cancelled {
-                // Leaving the download page cancels unfinished searches.
-            } catch {
-                alternativeLoadErrors[task.id] = error.localizedDescription
+            let requestedSources = sourceIDs.isEmpty ? [""] : sourceIDs
+            var resultsBySource: [String: [DownloadCandidate]] = [:]
+            var searchErrors: [String] = []
+            await withTaskGroup(
+                of: (source: String, candidates: [DownloadCandidate], error: String?).self
+            ) { group in
+                for source in requestedSources {
+                    group.addTask {
+                        do {
+                            let response = try await APIClient.shared.searchMusicDownloads(
+                                query: "\(task.title) \(task.artist)",
+                                sources: source.isEmpty ? [] : [source],
+                                timeout: 30
+                            )
+                            return (source, response.items, nil)
+                        } catch is CancellationError {
+                            return (source, [], nil)
+                        } catch let error as URLError where error.code == .cancelled {
+                            return (source, [], nil)
+                        } catch let error as URLError where error.code == .timedOut {
+                            return (source, [], "音源服务响应超时，请稍后重试")
+                        } catch {
+                            return (source, [], error.localizedDescription)
+                        }
+                    }
+                }
+
+                for await result in group {
+                    guard !Task.isCancelled else { break }
+                    if let error = result.error {
+                        searchErrors.append(error)
+                    }
+                    resultsBySource[result.source] = result.candidates.filter {
+                        $0.source != "SpotifyMusicClient"
+                            && $0.candidateId != task.candidateId
+                            && $0.downloadState == nil
+                    }
+                    var candidateIDs: Set<String> = []
+                    let available = requestedSources
+                        .flatMap { resultsBySource[$0] ?? [] }
+                        .filter { candidateIDs.insert($0.id).inserted }
+                    alternativeCandidates[task.id] = available
+                    if !available.isEmpty {
+                        alternativeLoadErrors[task.id] = nil
+                    }
+                }
+            }
+            if alternativeCandidates[task.id]?.isEmpty != false,
+               let firstError = searchErrors.first {
+                alternativeLoadErrors[task.id] = firstError
             }
         }
     }
@@ -1670,11 +1704,12 @@ private struct MusicDownloadTaskRow: View {
                         }
                         Text("选择音源")
                         if alternativeCount > 0 {
-                            Text("\(min(alternativeCount, 3))")
+                            Text("\(alternativeCount)")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.black)
+                                .padding(.horizontal, 5)
                                 .frame(minWidth: 18, minHeight: 18)
-                                .background(.white.opacity(0.9), in: Circle())
+                                .background(.white.opacity(0.9), in: Capsule())
                         }
                     }
                     .font(.caption.weight(.semibold))
@@ -1731,11 +1766,41 @@ private struct DownloadAlternativePickerView: View {
             Divider().overlay(Color.white.opacity(0.08))
 
             Group {
-                if isLoading {
+                if !candidates.isEmpty {
+                    VStack(spacing: 0) {
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(Array(candidates.enumerated()), id: \.element.id) {
+                                    index, candidate in
+                                    DownloadCandidateRow(
+                                        candidate: candidate,
+                                        isQueuing: replacingCandidateID == candidate.id,
+                                        downloadState: candidate.downloadState
+                                    ) {
+                                        Task { await replace(with: candidate) }
+                                    }
+                                    if index < candidates.count - 1 {
+                                        Divider()
+                                            .overlay(Color.white.opacity(0.08))
+                                            .padding(.leading, 84)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: CGFloat(min(candidates.count, 3) * 76))
+                        if isLoading {
+                            ProgressView("正在补充其他音源…")
+                                .font(.caption)
+                                .tint(.sonaGreen)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                        }
+                    }
+                } else if isLoading {
                     ProgressView("正在查找备选音源…")
                         .tint(.sonaGreen)
                         .frame(maxWidth: .infinity, minHeight: 92)
-                } else if candidates.isEmpty {
+                } else {
                     VStack(spacing: 8) {
                         Image(systemName: "music.note.slash")
                             .font(.title2)
@@ -1748,24 +1813,6 @@ private struct DownloadAlternativePickerView: View {
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity, minHeight: 112)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(candidates.prefix(3).enumerated()), id: \.element.id) {
-                            index, candidate in
-                            DownloadCandidateRow(
-                                candidate: candidate,
-                                isQueuing: replacingCandidateID == candidate.id,
-                                downloadState: candidate.downloadState
-                            ) {
-                                Task { await replace(with: candidate) }
-                            }
-                            if index < min(candidates.count, 3) - 1 {
-                                Divider()
-                                    .overlay(Color.white.opacity(0.08))
-                                    .padding(.leading, 84)
-                            }
-                        }
-                    }
                 }
             }
         }
