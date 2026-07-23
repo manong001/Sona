@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.download;
 
+import com.github.houbb.opencc4j.util.ZhConverterUtil;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -21,6 +22,9 @@ class PlaylistSubscriptionMatcher {
     private static final double MIN_TITLE_SIMILARITY = 0.70;
     private static final Pattern ARTIST_SEPARATOR = Pattern.compile(
         "(?i)\\s*(?:、|/|,|，|&|＆|;|；|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*"
+    );
+    private static final Pattern TITLE_SUFFIX = Pattern.compile(
+        "\\s*(?:[\\(（\\[【\\{《<]|[-‐‑‒–—―－@＠#＃|｜/／~～:：+＋=＝_＿·•]).*$"
     );
     private static final Set<String> VERSION_MARKERS = Set.of(
         "live", "remix", "instrumental", "acoustic", "伴奏", "现场", "翻唱", "纯音乐"
@@ -50,7 +54,7 @@ class PlaylistSubscriptionMatcher {
         if (value == null) {
             return "";
         }
-        var normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+        var normalized = Normalizer.normalize(ZhConverterUtil.toSimple(value), Normalizer.Form.NFKC)
             .toLowerCase(Locale.ROOT);
         var result = new StringBuilder(normalized.length());
         normalized.codePoints()
@@ -76,6 +80,7 @@ class PlaylistSubscriptionMatcher {
 
         private final List<LocalTrack> tracks;
         private final Map<String, List<LocalTrack>> exact = new HashMap<>();
+        private final Map<String, List<LocalTrack>> strictTitles = new HashMap<>();
         private final Set<String> trackIds;
 
         private Session(List<LocalTrack> tracks) {
@@ -83,6 +88,8 @@ class PlaylistSubscriptionMatcher {
             this.trackIds = tracks.stream().map(LocalTrack::trackId).collect(java.util.stream.Collectors.toSet());
             for (var track : tracks) {
                 exact.computeIfAbsent(exactKey(track.title(), track.artist()), ignored -> new ArrayList<>())
+                    .add(track);
+                strictTitles.computeIfAbsent(strictTitle(track.title()), ignored -> new ArrayList<>())
                     .add(track);
             }
         }
@@ -118,6 +125,40 @@ class PlaylistSubscriptionMatcher {
                 .toList();
             return new MatchResult(Optional.empty(), suggestions);
         }
+
+        Optional<Suggestion> bestStrictMatch(
+            DownloadCandidate candidate, Set<String> excludedTrackIds
+        ) {
+            var title = strictTitle(candidate.title());
+            if (title.isEmpty()) {
+                return Optional.empty();
+            }
+            return strictTitles.getOrDefault(title, List.of()).stream()
+                .filter(track -> !excludedTrackIds.contains(track.trackId()))
+                .map(track -> new ScoredTrack(track, strictScore(candidate, track)))
+                .sorted(Comparator.comparingDouble(ScoredTrack::score).reversed()
+                    .thenComparing(value -> value.track().trackId()))
+                .findFirst()
+                .map(value -> new Suggestion(
+                    value.track().trackId(), value.track().title(), value.track().artist(),
+                    value.track().album(), value.track().durationMs(),
+                    (int) Math.round(value.score())
+                ));
+        }
+    }
+
+    private double strictScore(DownloadCandidate candidate, LocalTrack track) {
+        var score = artistOverlap(candidate.artist(), track.artist()) * 100
+            + similarity(normalizedText(candidate.album()), normalizedText(track.album())) * 10;
+        if (candidate.durationMs() != null && candidate.durationMs() > 0) {
+            var difference = Math.abs(candidate.durationMs() - track.durationMs());
+            if (difference <= 4_000) {
+                score += 5;
+            } else if (difference <= 10_000) {
+                score += 2;
+            }
+        }
+        return score;
     }
 
     private Optional<ScoredTrack> score(DownloadCandidate candidate, LocalTrack track) {
@@ -162,6 +203,20 @@ class PlaylistSubscriptionMatcher {
             } else {
                 normalized = normalized.replace(marker, " ");
             }
+        }
+        return normalizedText(normalized);
+    }
+
+    private static String strictTitle(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        var normalized = Normalizer.normalize(
+            ZhConverterUtil.toSimple(value), Normalizer.Form.NFKC
+        ).toLowerCase(Locale.ROOT);
+        var suffix = TITLE_SUFFIX.matcher(normalized);
+        if (suffix.find()) {
+            normalized = normalized.substring(0, suffix.start());
         }
         return normalizedText(normalized);
     }

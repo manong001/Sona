@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -72,6 +73,24 @@ class PlaylistSubscriptionController {
         @PathVariable String id
     ) {
         return service.items(user.id(), id);
+    }
+
+    @GetMapping("/{id}/suggestions")
+    PlaylistSubscriptionService.ItemPage suggestions(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @RequestParam(defaultValue = "0") @Min(0) int offset,
+        @RequestParam(defaultValue = "40") @Min(1) @Max(100) int limit
+    ) {
+        return service.suggestedItems(user.id(), id, offset, limit);
+    }
+
+    @PostMapping("/{id}/matches/best")
+    PlaylistSubscriptionService.BestMatchResult applyBestMatches(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return service.applyBestMatches(user.id(), id);
     }
 
     @PostMapping("/{id}/items/{itemKey}/match")

@@ -847,6 +847,30 @@ final class APIClient {
         try await request(path: "/api/v1/me/playlist-subscriptions/\(id)/items")
     }
 
+    func playlistSubscriptionSuggestions(
+        id: String, offset: Int, limit: Int
+    ) async throws -> PlaylistSubscriptionItemPage {
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/playlist-subscriptions/\(id)/suggestions"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+        return try await request(url: components.url!, timeout: 60)
+    }
+
+    func applyBestPlaylistSubscriptionMatches(
+        id: String
+    ) async throws -> PlaylistSubscriptionBestMatchResult {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/matches/best",
+            method: "POST",
+            timeout: 300
+        )
+    }
+
     func selectPlaylistSubscriptionMatch(
         id: String, itemKey: String, trackId: String
     ) async throws -> PlaylistSubscription {

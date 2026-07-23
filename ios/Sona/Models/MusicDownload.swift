@@ -91,6 +91,16 @@ struct PlaylistSubscriptionItem: Decodable, Identifiable {
     var id: String { itemKey }
 }
 
+struct PlaylistSubscriptionItemPage: Decodable {
+    let items: [PlaylistSubscriptionItem]
+    let hasMore: Bool
+}
+
+struct PlaylistSubscriptionBestMatchResult: Decodable {
+    let subscription: PlaylistSubscription
+    let matchedCount: Int
+}
+
 struct PlaylistSubscriptionMatchSuggestion: Decodable, Identifiable {
     let trackId: String
     let title: String

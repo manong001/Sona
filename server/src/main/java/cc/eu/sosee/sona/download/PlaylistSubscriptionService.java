@@ -118,6 +118,55 @@ class PlaylistSubscriptionService {
             .toList();
     }
 
+    ItemPage suggestedItems(String userId, String id, int offset, int limit) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var suggested = subscriptions.findItems(subscription.id()).stream()
+            .filter(item -> item.matchedTrackId() == null && "SUGGESTED".equals(item.state()))
+            .toList();
+        if (offset >= suggested.size()) {
+            return new ItemPage(List.of(), false);
+        }
+        var end = Math.min(offset + limit, suggested.size());
+        var session = matcher.open();
+        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
+        var page = suggested.subList(offset, end).stream()
+            .map(item -> new ItemDetail(
+                item.itemKey(), item.position(), item.title(), item.artist(), item.album(),
+                item.matchedTrackId(), item.state(),
+                session.match(asCandidate(item), usedTrackIds).suggestions()
+            ))
+            .toList();
+        return new ItemPage(page, end < suggested.size());
+    }
+
+    @Transactional
+    BestMatchResult applyBestMatches(String userId, String id) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var session = matcher.open();
+        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
+        var matchedCount = 0;
+        for (var item : subscriptions.findItems(subscription.id())) {
+            if (item.matchedTrackId() != null || !"SUGGESTED".equals(item.state())) {
+                continue;
+            }
+            var best = session.bestStrictMatch(asCandidate(item), usedTrackIds);
+            if (best.isPresent() && subscriptions.selectMatch(
+                userId, id, item.itemKey(), best.get().trackId()
+            )) {
+                usedTrackIds.add(best.get().trackId());
+                matchedCount++;
+            }
+        }
+        playlistImportService.replaceTracks(
+            userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
+        );
+        return new BestMatchResult(
+            subscriptions.find(userId, id).orElseThrow(), matchedCount
+        );
+    }
+
     @Transactional
     PlaylistSubscriptionRepository.Subscription selectMatch(
         String userId, String id, String itemKey, String trackId
@@ -331,6 +380,14 @@ class PlaylistSubscriptionService {
         String itemKey, int position, String title, String artist, String album,
         String matchedTrackId, String state,
         List<PlaylistSubscriptionMatcher.Suggestion> suggestions
+    ) {
+    }
+
+    record ItemPage(List<ItemDetail> items, boolean hasMore) {
+    }
+
+    record BestMatchResult(
+        PlaylistSubscriptionRepository.Subscription subscription, int matchedCount
     ) {
     }
 

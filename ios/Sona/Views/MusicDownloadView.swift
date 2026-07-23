@@ -797,17 +797,50 @@ private struct PlaylistSubscriptionItemsView: View {
     @State private var items: [PlaylistSubscriptionItem] = []
     @State private var workingItemKeys: Set<String> = []
     @State private var isLoading = true
+    @State private var isLoadingMore = false
+    @State private var hasMore = false
+    @State private var isApplyingBestMatches = false
+    @State private var canApplyBestMatches = true
+    @State private var showsBestMatchConfirmation = false
+    @State private var resultMessage: String?
     @State private var errorMessage: String?
+
+    private let pageSize = 40
 
     var body: some View {
         NavigationStack {
             Group {
                 if isLoading && items.isEmpty {
                     ProgressView("正在查找本地候选…")
+                } else if items.isEmpty {
+                    ContentUnavailableView(
+                        "没有待确认歌曲",
+                        systemImage: "checkmark.circle",
+                        description: Text("相似歌曲已处理完或暂无可用候选。")
+                    )
                 } else {
-                    List(items) { item in
-                        itemRow(item)
+                    List {
+                        ForEach(items) { item in
+                            itemRow(item)
+                                .listRowBackground(Color.sonaBackground)
+                        }
+                        if hasMore {
+                            Button {
+                                Task { await loadMore() }
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    if isLoadingMore {
+                                        ProgressView()
+                                    } else {
+                                        Label("加载更多", systemImage: "chevron.down")
+                                    }
+                                    Spacer()
+                                }
+                            }
                             .listRowBackground(Color.sonaBackground)
+                            .disabled(isLoadingMore)
+                        }
                     }
                     .listStyle(.plain)
                 }
@@ -819,9 +852,31 @@ private struct PlaylistSubscriptionItemsView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showsBestMatchConfirmation = true
+                    } label: {
+                        if isApplyingBestMatches {
+                            ProgressView()
+                        } else {
+                            Label("一键匹配", systemImage: "wand.and.stars")
+                        }
+                    }
+                    .disabled(isApplyingBestMatches || !canApplyBestMatches)
+                }
             }
-            .task { await load() }
-            .refreshable { await load() }
+            .task { await load(reset: true) }
+            .refreshable { await load(reset: true) }
+            .confirmationDialog(
+                "一键采用最佳匹配？",
+                isPresented: $showsBestMatchConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("开始匹配") { Task { await applyBestMatches() } }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("仅采用规范化后歌名完全一致的候选，歌手相同的优先。")
+            }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -829,6 +884,14 @@ private struct PlaylistSubscriptionItemsView: View {
                 Button("好", role: .cancel) {}
             } message: {
                 Text(errorMessage ?? "未知错误")
+            }
+            .alert("一键匹配完成", isPresented: Binding(
+                get: { resultMessage != nil },
+                set: { if !$0 { resultMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(resultMessage ?? "")
             }
         }
     }
@@ -885,14 +948,62 @@ private struct PlaylistSubscriptionItemsView: View {
         return Text(value.0).font(.caption).foregroundStyle(value.1)
     }
 
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            items = try await APIClient.shared.playlistSubscriptionItems(id: subscription.id)
-        } catch {
-            errorMessage = error.localizedDescription
+    private func load(reset: Bool) async {
+        if reset {
+            isLoading = true
+        } else {
+            guard !isLoadingMore else { return }
+            isLoadingMore = true
         }
+        defer {
+            isLoading = false
+            isLoadingMore = false
+        }
+        do {
+            let offset = reset ? 0 : items.count
+            let page = try await APIClient.shared.playlistSubscriptionSuggestions(
+                id: subscription.id, offset: offset, limit: pageSize
+            )
+            if reset {
+                items = page.items
+                canApplyBestMatches = !page.items.isEmpty || page.hasMore
+            } else {
+                let existing = Set(items.map(\.itemKey))
+                items.append(contentsOf: page.items.filter { !existing.contains($0.itemKey) })
+            }
+            hasMore = page.hasMore
+        } catch {
+            errorMessage = message(for: error)
+        }
+    }
+
+    private func loadMore() async {
+        guard hasMore else { return }
+        await load(reset: false)
+    }
+
+    private func applyBestMatches() async {
+        guard !isApplyingBestMatches else { return }
+        isApplyingBestMatches = true
+        defer { isApplyingBestMatches = false }
+        do {
+            let result = try await APIClient.shared.applyBestPlaylistSubscriptionMatches(
+                id: subscription.id
+            )
+            updated(result.subscription)
+            canApplyBestMatches = (result.subscription.suggestedCount ?? 0) > 0
+            await load(reset: true)
+            resultMessage = "已自动匹配 \(result.matchedCount) 首，其余歌曲保留待确认。"
+        } catch {
+            errorMessage = message(for: error)
+        }
+    }
+
+    private func message(for error: Error) -> String {
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            return "候选较多，本次加载超时，请重试。"
+        }
+        return error.localizedDescription
     }
 
     private func select(
@@ -906,7 +1017,7 @@ private struct PlaylistSubscriptionItemsView: View {
                 id: subscription.id, itemKey: item.itemKey, trackId: suggestion.trackId
             )
             updated(subscription)
-            await load()
+            await load(reset: true)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -920,7 +1031,7 @@ private struct PlaylistSubscriptionItemsView: View {
                 id: subscription.id, itemKey: item.itemKey
             )
             updated(subscription)
-            await load()
+            await load(reset: true)
         } catch {
             errorMessage = error.localizedDescription
         }

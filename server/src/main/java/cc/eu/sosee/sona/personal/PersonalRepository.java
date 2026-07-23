@@ -259,6 +259,10 @@ class PersonalRepository {
                            WHERE playlist_subscriptions.playlist_id = playlists.id
                        ) AS source_artwork_url,
                        EXISTS (
+                           SELECT 1 FROM playlist_subscriptions
+                           WHERE playlist_subscriptions.playlist_id = playlists.id
+                       ) AS subscribed,
+                       EXISTS (
                            SELECT 1 FROM home_items
                            WHERE home_items.user_id = :userId
                              AND home_items.item_id = playlists.id
@@ -277,6 +281,7 @@ class PersonalRepository {
                 WHERE playlists.user_id = :userId OR playlists.featured = 1
                 ORDER BY playlist_order_items.position IS NULL,
                          playlist_order_items.position,
+                         subscribed DESC,
                          playlists.created_at,
                          playlists.id
                 """)
