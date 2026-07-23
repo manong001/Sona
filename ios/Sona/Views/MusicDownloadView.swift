@@ -29,6 +29,7 @@ struct MusicDownloadView: View {
     @State private var alternativeLoadingTaskIDs: Set<String> = []
     @State private var alternativeLoadErrors: [String: String] = [:]
     @State private var alternativeSearchTasks: [String: Task<Void, Never>] = [:]
+    @State private var alternativeQueries: [String: String] = [:]
 
     private let candidatePageSize = 20
     private let showsSectionPicker: Bool
@@ -163,6 +164,17 @@ struct MusicDownloadView: View {
                         candidates: alternativeCandidates[task.id] ?? [],
                         isLoading: alternativeLoadingTaskIDs.contains(task.id),
                         loadError: alternativeLoadErrors[task.id],
+                        query: Binding(
+                            get: { alternativeQueries[task.id] ?? defaultAlternativeTitle(task.title) },
+                            set: { alternativeQueries[task.id] = $0 }
+                        ),
+                        search: {
+                            searchAlternatives(
+                                for: task,
+                                title: alternativeQueries[task.id] ?? defaultAlternativeTitle(task.title),
+                                restart: true
+                            )
+                        },
                         close: { alternativeTask = nil }
                     ) { updated in
                         if let index = tasks.firstIndex(where: { $0.id == updated.id }) {
@@ -335,17 +347,34 @@ struct MusicDownloadView: View {
 
     private func showAlternatives(for task: MusicDownloadTask) {
         alternativeTask = task
+        if alternativeQueries[task.id] == nil {
+            alternativeQueries[task.id] = defaultAlternativeTitle(task.title)
+        }
         if let cached = alternativeCandidates[task.id], !cached.isEmpty {
             return
         }
-        guard alternativeSearchTasks[task.id] == nil else { return }
+        searchAlternatives(
+            for: task,
+            title: alternativeQueries[task.id] ?? defaultAlternativeTitle(task.title)
+        )
+    }
 
+    private func searchAlternatives(
+        for task: MusicDownloadTask,
+        title: String,
+        restart: Bool = false
+    ) {
+        let searchQuery = alternativeSearchQuery(title: title, artist: task.artist)
+        guard !searchQuery.isEmpty else { return }
+        guard alternativeSearchTasks[task.id] == nil else { return }
+        if restart {
+            alternativeCandidates[task.id] = nil
+        }
         alternativeLoadErrors[task.id] = nil
         alternativeLoadingTaskIDs.insert(task.id)
         let sourceIDs = sources
             .map(\.id)
             .filter { $0 != "SpotifyMusicClient" }
-        let searchQuery = alternativeSearchQuery(for: task)
         alternativeSearchTasks[task.id] = Task {
             defer {
                 alternativeLoadingTaskIDs.remove(task.id)
@@ -405,14 +434,23 @@ struct MusicDownloadView: View {
         }
     }
 
-    private func alternativeSearchQuery(for task: MusicDownloadTask) -> String {
-        let artist = task.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        let titleBudget = max(20, 110 - artist.utf16.count - 1)
+    private func alternativeSearchQuery(title: String, artist: String) -> String {
+        let artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let conciseTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleBudget = max(20, 80 - artist.utf16.count - 1)
         let title = utf16Prefix(
-            task.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            conciseTitle,
             maxLength: titleBudget
         )
-        return utf16Prefix("\(title) \(artist)", maxLength: 110)
+        return utf16Prefix("\(title) \(artist)", maxLength: 80)
+    }
+
+    private func defaultAlternativeTitle(_ title: String) -> String {
+        title
+            .split(separator: "/", maxSplits: 1)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? title
     }
 
     private func utf16Prefix(_ value: String, maxLength: Int) -> String {
@@ -1785,6 +1823,8 @@ private struct DownloadAlternativePickerView: View {
     let candidates: [DownloadCandidate]
     let isLoading: Bool
     let loadError: String?
+    @Binding var query: String
+    let search: () -> Void
     let close: () -> Void
     let replaced: (MusicDownloadTask) -> Void
 
@@ -1813,6 +1853,36 @@ private struct DownloadAlternativePickerView: View {
                 .accessibilityLabel("关闭")
             }
             .padding(16)
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            HStack(spacing: 10) {
+                TextField("输入歌曲名称", text: $query)
+                    .textFieldStyle(.plain)
+                    .submitLabel(.search)
+                    .onSubmit(search)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 38)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+
+                Button(action: search) {
+                    if isLoading {
+                        ProgressView()
+                            .tint(.black)
+                    } else {
+                        Text("搜索")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.sonaGreen)
+                .foregroundStyle(.black)
+                .disabled(
+                    isLoading
+                        || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
             Divider().overlay(Color.white.opacity(0.08))
 
