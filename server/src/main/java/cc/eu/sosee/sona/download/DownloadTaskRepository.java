@@ -178,18 +178,11 @@ class DownloadTaskRepository {
             .update() == 1;
     }
 
-    List<String> findRunningIds(String requestedBy) {
+    int deleteFailed(String requestedBy) {
         return jdbcClient.sql("""
-                SELECT id FROM download_tasks
-                WHERE requested_by = :requestedBy AND state = 'RUNNING'
+                DELETE FROM download_tasks
+                WHERE requested_by = :requestedBy AND state = 'FAILED'
                 """)
-            .param("requestedBy", requestedBy)
-            .query(String.class)
-            .list();
-    }
-
-    int deleteAll(String requestedBy) {
-        return jdbcClient.sql("DELETE FROM download_tasks WHERE requested_by = :requestedBy")
             .param("requestedBy", requestedBy)
             .update();
     }

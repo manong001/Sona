@@ -920,7 +920,7 @@ final class APIClient {
         try await request(path: "/api/v1/downloads")
     }
 
-    func clearMusicDownloadTasks() async throws {
+    func clearFailedMusicDownloadTasks() async throws {
         try await requestVoid(path: "/api/v1/downloads", method: "DELETE")
     }
 

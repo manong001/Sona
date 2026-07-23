@@ -191,13 +191,8 @@ class DownloadService {
         }
     }
 
-    void clear(String requestedBy) {
-        List<String> runningIds;
-        synchronized (this) {
-            runningIds = repository.findRunningIds(requestedBy);
-            repository.deleteAll(requestedBy);
-        }
-        runningIds.forEach(this::cancel);
+    void clearFailed(String requestedBy) {
+        repository.deleteFailed(requestedBy);
     }
 
     private void cancel(String taskId) {

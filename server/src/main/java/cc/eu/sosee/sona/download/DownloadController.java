@@ -76,8 +76,8 @@ class DownloadController {
     }
 
     @DeleteMapping
-    ResponseEntity<Void> clear(@AuthenticationPrincipal AuthenticatedUser user) {
-        service.clear(user.username());
+    ResponseEntity<Void> clearFailed(@AuthenticationPrincipal AuthenticatedUser user) {
+        service.clearFailed(user.username());
         return ResponseEntity.noContent().build();
     }
 

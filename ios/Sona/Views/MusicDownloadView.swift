@@ -22,8 +22,8 @@ struct MusicDownloadView: View {
     @State private var needsLibraryRefresh = false
     @State private var showsAddedToast = false
     @State private var addedToastTask: Task<Void, Never>?
-    @State private var showsClearTasksConfirmation = false
-    @State private var isClearingTasks = false
+    @State private var showsClearFailedTasksConfirmation = false
+    @State private var isClearingFailedTasks = false
 
     private let candidatePageSize = 20
 
@@ -48,10 +48,13 @@ struct MusicDownloadView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if selectedSection == 1 {
-                Button("清空", systemImage: "trash", role: .destructive) {
-                    showsClearTasksConfirmation = true
+                Button("清除失败任务", systemImage: "trash", role: .destructive) {
+                    showsClearFailedTasksConfirmation = true
                 }
-                .disabled(tasks.isEmpty || isClearingTasks)
+                .disabled(
+                    !tasks.contains(where: { $0.state == .failed })
+                        || isClearingFailedTasks
+                )
                 Button("刷新", systemImage: "arrow.clockwise") {
                     Task { await loadTasks(showLoading: true) }
                 }
@@ -62,16 +65,16 @@ struct MusicDownloadView: View {
             }
         }
         .confirmationDialog(
-            "清空全部下载任务？",
-            isPresented: $showsClearTasksConfirmation,
+            "清除所有失败任务？",
+            isPresented: $showsClearFailedTasksConfirmation,
             titleVisibility: .visible
         ) {
-            Button("清空下载队列", role: .destructive) {
-                Task { await clearTasks() }
+            Button("清除失败任务", role: .destructive) {
+                Task { await clearFailedTasks() }
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("等待中和下载中的任务也会取消，已下载入库的音乐不会删除。")
+            Text("只删除失败记录，等待中、下载中、入库中及成功入库记录都会保留。")
         }
         .task {
             async let sourceRequest: Void = loadSources()
@@ -445,21 +448,23 @@ struct MusicDownloadView: View {
         defer { if showLoading { isLoadingTasks = false } }
         do {
             tasks = try await APIClient.shared.musicDownloadTasks()
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func clearTasks() async {
-        guard !isClearingTasks else { return }
-        isClearingTasks = true
+    private func clearFailedTasks() async {
+        guard !isClearingFailedTasks else { return }
+        isClearingFailedTasks = true
         errorMessage = nil
-        defer { isClearingTasks = false }
+        defer { isClearingFailedTasks = false }
         do {
-            try await APIClient.shared.clearMusicDownloadTasks()
-            tasks.removeAll()
-            candidates.removeAll()
-            queuedCandidateIDs.removeAll()
+            try await APIClient.shared.clearFailedMusicDownloadTasks()
+            tasks.removeAll { $0.state == .failed }
         } catch {
             errorMessage = error.localizedDescription
             await loadTasks(showLoading: false)
