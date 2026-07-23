@@ -147,6 +147,7 @@ struct AchievementsView: View {
                     description: Text(errorMessage ?? "请稍后重试")
                 )
                 .padding(.top, 70)
+                .desktopEmptyState()
             }
         }
         .background(Color.sonaBackground.ignoresSafeArea())

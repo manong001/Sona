@@ -16,6 +16,7 @@ struct PlaylistsView: View {
                         systemImage: "rectangle.stack.badge.plus",
                         description: Text("创建歌单后，在曲目菜单中添加歌曲")
                     )
+                    .desktopEmptyState()
                 } else {
                     List {
                         ForEach(personal.playlists) { playlist in
@@ -104,6 +105,7 @@ private struct PlaylistDetailView: View {
                     systemImage: "music.note",
                     description: Text("从曲库的曲目菜单添加歌曲")
                 )
+                .desktopEmptyState()
             } else {
                 List(tracks) { track in
                     TrackRow(

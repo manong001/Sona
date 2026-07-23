@@ -863,6 +863,7 @@ private struct GenreRecommendationView: View {
                     systemImage: "music.note.list",
                     description: Text(errorMessage ?? "管理员标注曲风后会显示在这里。")
                 )
+                .desktopEmptyState()
             } else {
                 List(tracks) { track in
                     Button { play(track) } label: {
@@ -946,6 +947,7 @@ private struct ChartsView: View {
                     systemImage: "chart.bar",
                     description: Text(errorMessage ?? "歌曲产生有效播放后会在这里排行。")
                 )
+                .desktopEmptyState()
             } else {
                 List(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     Button { play(entry.track) } label: {

@@ -33,3 +33,72 @@ extension Color {
     static let sonaChip = Color(red: 0.20, green: 0.20, blue: 0.20)
     static let sonaSecondaryText = Color(red: 0.70, green: 0.70, blue: 0.70)
 }
+
+enum DesktopSheetSize {
+    case standard
+    case large
+
+    fileprivate var width: CGFloat {
+        switch self {
+        case .standard: 620
+        case .large: 800
+        }
+    }
+
+    fileprivate var height: CGFloat {
+        switch self {
+        case .standard: 480
+        case .large: 560
+        }
+    }
+}
+
+struct ModalDismissButton: View {
+    @Environment(\.dismiss) private var dismiss
+    private let mobileTitle: LocalizedStringKey
+
+    init(_ mobileTitle: LocalizedStringKey = "取消") {
+        self.mobileTitle = mobileTitle
+    }
+
+    var body: some View {
+#if targetEnvironment(macCatalyst)
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "chevron.left")
+        }
+        .accessibilityLabel("返回")
+        .help("返回")
+#else
+        Button(mobileTitle) {
+            dismiss()
+        }
+#endif
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func desktopSheetSize(_ size: DesktopSheetSize) -> some View {
+#if targetEnvironment(macCatalyst)
+        frame(
+            minWidth: size.width,
+            idealWidth: size.width,
+            minHeight: size.height,
+            idealHeight: size.height
+        )
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func desktopEmptyState(minHeight: CGFloat = 320) -> some View {
+#if targetEnvironment(macCatalyst)
+        frame(maxWidth: .infinity, minHeight: minHeight, alignment: .center)
+#else
+        self
+#endif
+    }
+}

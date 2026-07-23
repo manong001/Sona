@@ -137,6 +137,7 @@ struct MiniPlayerView: View {
         .coordinateSpace(name: "miniPlayerSurface")
         .sheet(isPresented: $showsQueue) {
             PlaybackQueueView()
+                .desktopSheetSize(.large)
         }
         .task(id: player.currentTrack?.id) {
             await loadLyrics(for: player.currentTrack)

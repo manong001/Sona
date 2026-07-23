@@ -41,6 +41,7 @@ struct LyricsView: View {
                         systemImage: "quote.bubble",
                         description: Text(errorMessage)
                     )
+                    .desktopEmptyState()
                 } else {
                     ProgressView("载入歌词…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -50,9 +51,15 @@ struct LyricsView: View {
             .navigationTitle(track.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
+#if targetEnvironment(macCatalyst)
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("完成")
                 }
+#else
+                ToolbarItem(placement: .topBarTrailing) {
+                    ModalDismissButton("完成")
+                }
+#endif
             }
             .task {
                 do {

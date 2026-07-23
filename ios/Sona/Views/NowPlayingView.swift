@@ -205,10 +205,12 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showsLyrics) {
             if let track = player.currentTrack {
                 LyricsView(track: track)
+                    .desktopSheetSize(.large)
             }
         }
         .sheet(isPresented: $showsQueue) {
             PlaybackQueueView()
+                .desktopSheetSize(.large)
         }
         .task(id: player.currentTrack?.id) {
             await loadLyrics(for: player.currentTrack)

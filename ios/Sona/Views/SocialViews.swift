@@ -51,9 +51,18 @@ struct SocialHubView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showsAddFriend) { SocialAddFriendView() }
-            .sheet(isPresented: $showsComposer) { SocialMomentComposerView() }
-            .sheet(isPresented: $showsProfileEditor) { SocialProfileEditorView() }
+            .sheet(isPresented: $showsAddFriend) {
+                SocialAddFriendView()
+                    .desktopSheetSize(.standard)
+            }
+            .sheet(isPresented: $showsComposer) {
+                SocialMomentComposerView()
+                    .desktopSheetSize(.large)
+            }
+            .sheet(isPresented: $showsProfileEditor) {
+                SocialProfileEditorView()
+                    .desktopSheetSize(.standard)
+            }
             .task(id: session.currentUser?.id) {
                 guard session.currentUser != nil else { social.reset(); return }
                 await social.bootstrap()
@@ -92,6 +101,7 @@ private struct SocialConversationListView: View {
                     systemImage: "bubble.left.and.bubble.right",
                     description: Text("先添加好友，再分享音乐和此刻心情。")
                 )
+                .desktopEmptyState()
             } else {
                 List(social.conversations) { user in
                     NavigationLink { SocialChatView(peer: user) } label: {
@@ -121,6 +131,7 @@ private struct SocialContactListView: View {
                         systemImage: "person.2",
                         description: Text("通过账号名找到一起听歌的朋友。")
                     )
+                    .desktopEmptyState()
                     Button("添加好友") { showsAddFriend = true }
                         .buttonStyle(.borderedProminent)
                         .tint(.sonaGreen)
@@ -263,7 +274,11 @@ private struct SocialAddFriendView: View {
             }
             .navigationTitle("添加好友")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("完成")
+                }
+            }
             .alert("操作失败", isPresented: hasError($errorMessage)) {
                 Button("知道了", role: .cancel) {}
             } message: { Text(errorMessage ?? "") }
@@ -358,7 +373,10 @@ struct SocialChatView: View {
         .background(Color.sonaBackground)
         .navigationTitle(peer.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showsTrackPicker) { SocialTrackShareView(peerId: peer.id) }
+        .sheet(isPresented: $showsTrackPicker) {
+            SocialTrackShareView(peerId: peer.id)
+                .desktopSheetSize(.large)
+        }
         .task {
             try? await social.loadMessages(with: peer.id)
             while !Task.isCancelled {
@@ -459,7 +477,11 @@ private struct SocialTrackShareView: View {
             .searchable(text: $query, prompt: "搜索歌曲")
             .navigationTitle("分享歌曲")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton()
+                }
+            }
             .task { if library.tracks.isEmpty { await library.refresh() } }
             .alert("分享失败", isPresented: hasError($errorMessage)) {
                 Button("知道了", role: .cancel) {}
@@ -481,6 +503,7 @@ private struct SocialMomentFeedView: View {
                         systemImage: "camera.aperture",
                         description: Text("发布第一条图片、GIF、实况照片或视频动态。")
                     )
+                    .desktopEmptyState()
                     Button("发布动态") { showsComposer = true }
                         .buttonStyle(.borderedProminent)
                         .tint(.sonaGreen)
@@ -570,7 +593,10 @@ private struct SocialMomentCard: View {
         }
         .padding(14)
         .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 18))
-        .sheet(item: $selectedMedia) { SocialMediaViewer(selection: $0) }
+        .sheet(item: $selectedMedia) {
+            SocialMediaViewer(selection: $0)
+                .desktopSheetSize(.large)
+        }
         .alert("操作失败", isPresented: hasError($errorMessage)) {
             Button("知道了", role: .cancel) {}
         } message: { Text(errorMessage ?? "") }
@@ -708,7 +734,17 @@ private struct SocialMediaViewer: View {
                     }
                 }
             }
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+            .toolbar {
+#if targetEnvironment(macCatalyst)
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("完成")
+                }
+#else
+                ToolbarItem(placement: .topBarTrailing) {
+                    ModalDismissButton("完成")
+                }
+#endif
+            }
         }
     }
 }
@@ -769,7 +805,10 @@ private struct SocialMomentComposerView: View {
             .navigationTitle("发布朋友圈")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(isPublishing) }
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton()
+                        .disabled(isPublishing)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("发布") { publish() }
                         .disabled(isPublishing || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && imageItems.isEmpty && videoItems.isEmpty)
@@ -1007,7 +1046,9 @@ private struct SocialProfileEditorView: View {
             .navigationTitle("编辑社交资料")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton()
+                }
                 ToolbarItem(placement: .confirmationAction) { Button("保存") { save() }.disabled(isSaving) }
             }
             .onAppear {

@@ -18,6 +18,7 @@ struct LibraryView: View {
                         systemImage: "music.note.house",
                         description: Text("在设置中扫描服务器音乐目录")
                     )
+                    .desktopEmptyState()
                 } else {
                     List {
                         ForEach(library.tracks) { track in

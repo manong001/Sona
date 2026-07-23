@@ -637,6 +637,7 @@ private struct ImportHistoryView: View {
                         "还没有导入记录",
                         systemImage: "clock.arrow.circlepath"
                     )
+                    .desktopEmptyState()
                 } else {
                     ForEach(items) { item in
                         ImportHistoryRow(item: item) {
@@ -889,6 +890,7 @@ private struct DuplicateTrackManagementView: View {
                     systemImage: "checkmark.circle",
                     description: Text("按标准化歌手和歌名检测，目前没有重复候选。")
                 )
+                .desktopEmptyState()
                 .listRowBackground(Color.clear)
             }
 
@@ -1172,6 +1174,7 @@ private struct TrackManagementView: View {
                 editingTrack = nil
                 await load()
             }
+            .desktopSheetSize(.standard)
         }
         .overlay(alignment: .bottom) {
             if let errorMessage { Text(errorMessage).foregroundStyle(.white).padding(8).background(.red, in: Capsule()) }
@@ -1302,7 +1305,9 @@ struct MetadataEditorView: View {
             }
             .navigationTitle("编辑元数据")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton()
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { Task { await save() } }
                         .disabled(isSaving || title.isBlank || artist.isBlank || album.isBlank || genre.isBlank)
@@ -1442,6 +1447,7 @@ private struct TrashView: View {
         List {
             if tracks.isEmpty {
                 ContentUnavailableView("垃圾桶为空", systemImage: "trash")
+                    .desktopEmptyState()
             }
             if isSelecting {
                 HStack {
@@ -1811,7 +1817,7 @@ struct UserManagementView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showsCreate = false }
+                        ModalDismissButton()
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("创建") { Task { await createUser() } }
@@ -1820,6 +1826,7 @@ struct UserManagementView: View {
                 }
             }
             .presentationDetents([.medium])
+            .desktopSheetSize(.standard)
         }
         .sheet(item: $editUser) { user in
             NavigationStack {
@@ -1828,6 +1835,7 @@ struct UserManagementView: View {
                     editUser = nil
                 }
             }
+            .desktopSheetSize(.standard)
         }
         .alert("重置密码", isPresented: resetAlertBinding) {
             SecureField("新密码（至少 8 位）", text: $resetPassword)
@@ -1995,7 +2003,7 @@ struct EditUserView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("取消") { dismiss() }
+                ModalDismissButton()
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") { Task { await save() } }
@@ -2059,7 +2067,7 @@ struct OwnAvatarEditorView: View {
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("取消") { dismiss() }
+                ModalDismissButton()
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") { Task { await save() } }

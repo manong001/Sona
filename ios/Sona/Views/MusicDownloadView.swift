@@ -111,6 +111,7 @@ struct MusicDownloadView: View {
                 needsLibraryRefresh = true
                 showAddedToast()
             }
+            .desktopSheetSize(.large)
         }
         .overlay(alignment: .bottom) {
             if let errorMessage {
@@ -212,6 +213,7 @@ struct MusicDownloadView: View {
                             )
                         )
                         .padding(.top, 55)
+                        .desktopEmptyState(minHeight: 420)
                     } else {
                         ForEach(visibleCandidates) { candidate in
                             DownloadCandidateRow(
@@ -258,6 +260,7 @@ struct MusicDownloadView: View {
                         description: Text("从搜索结果中选择歌曲开始下载")
                     )
                     .padding(.top, 55)
+                    .desktopEmptyState(minHeight: 420)
                 } else {
                     ForEach(sortedTasks) { task in
                         MusicDownloadTaskRow(task: task) {
@@ -519,6 +522,7 @@ struct PlaylistSubscriptionsView: View {
                         systemImage: "link.badge.plus",
                         description: Text("订阅公开歌单后，Sona 会按周期匹配本地曲库。")
                     )
+                    .desktopEmptyState()
                 } else {
                     List {
                         ForEach(subscriptions) { subscription in
@@ -541,7 +545,7 @@ struct PlaylistSubscriptionsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
+                    ModalDismissButton("关闭")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("添加", systemImage: "plus") { showsCreate = true }
@@ -559,6 +563,7 @@ struct PlaylistSubscriptionsView: View {
                     Task { await personal.refreshPlaylists() }
                     changed()
                 }
+                .desktopSheetSize(.standard)
             }
             .sheet(item: $renamingSubscription) { subscription in
                 RenamePlaylistSubscriptionView(subscription: subscription) { name in
@@ -570,6 +575,7 @@ struct PlaylistSubscriptionsView: View {
                     }
                     changed()
                 }
+                .desktopSheetSize(.standard)
             }
             .sheet(item: $inspectingSubscription) { subscription in
                 PlaylistSubscriptionItemsView(subscription: subscription) { updated in
@@ -579,6 +585,7 @@ struct PlaylistSubscriptionsView: View {
                     Task { await personal.refreshPlaylists() }
                     changed()
                 }
+                .desktopSheetSize(.large)
             }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
@@ -826,6 +833,7 @@ private struct PlaylistSubscriptionItemsView: View {
                         systemImage: "checkmark.circle",
                         description: Text("相似歌曲已处理完或暂无可用候选。")
                     )
+                    .desktopEmptyState()
                 } else {
                     List {
                         ForEach(items) { item in
@@ -858,7 +866,7 @@ private struct PlaylistSubscriptionItemsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
+                    ModalDismissButton("关闭")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -1076,7 +1084,7 @@ private struct RenamePlaylistSubscriptionView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    ModalDismissButton()
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -1154,7 +1162,8 @@ struct CreatePlaylistSubscriptionView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }.disabled(isSaving)
+                    ModalDismissButton()
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("订阅") { Task { await save() } }
@@ -1359,6 +1368,7 @@ private struct PlaylistDownloadImportView: View {
                         description: Text("解析完成后可确认曲目，再批量下载并创建同名歌单。")
                     )
                     .frame(maxHeight: .infinity)
+                    .desktopEmptyState()
                 }
             }
             .background(Color.sonaBackground)
@@ -1366,7 +1376,7 @@ private struct PlaylistDownloadImportView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
+                    ModalDismissButton("关闭")
                 }
             }
             .alert("导入失败", isPresented: Binding(

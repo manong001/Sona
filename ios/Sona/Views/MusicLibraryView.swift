@@ -185,14 +185,17 @@ struct MusicLibraryView: View {
                 library.applyTrackUpdate(updated)
                 personal.applyTrackUpdate(updated)
             }
+            .desktopSheetSize(.standard)
         }
         .sheet(isPresented: $showsHomePlaylistPicker) {
             HomePlaylistSelectionView()
                 .environmentObject(personal)
+                .desktopSheetSize(.large)
         }
         .sheet(isPresented: $showsPlaylistOrder) {
             PlaylistOrderView()
                 .environmentObject(personal)
+                .desktopSheetSize(.large)
         }
         .sheet(isPresented: $showsCreateSubscription) {
             CreatePlaylistSubscriptionView { subscription in
@@ -200,6 +203,7 @@ struct MusicLibraryView: View {
                 subscriptions.insert(subscription, at: 0)
                 Task { await personal.refreshPlaylists() }
             }
+            .desktopSheetSize(.standard)
         }
         .sheet(isPresented: $showsSubscriptionManager) {
             PlaylistSubscriptionsView {
@@ -208,6 +212,7 @@ struct MusicLibraryView: View {
                     await personal.refreshPlaylists()
                 }
             }
+            .desktopSheetSize(.large)
         }
         .confirmationDialog(
             "覆盖信息刮削",
@@ -787,7 +792,7 @@ struct TrackIdentityEditorView: View {
             .navigationTitle("编辑歌曲")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    ModalDismissButton()
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { Task { await save() } }
@@ -874,7 +879,7 @@ private struct PlaylistOrderView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", role: .cancel) { dismiss() }
+                    ModalDismissButton()
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -1094,6 +1099,7 @@ private struct ManagedPlaylistDetailView: View {
                 await loadMissingTracks()
                 return nil
             }
+            .desktopSheetSize(.standard)
         }
         .sheet(item: $editingTrack) { track in
             TrackIdentityEditorView(track: track) { updated in
@@ -1101,6 +1107,7 @@ private struct ManagedPlaylistDetailView: View {
                 personal.applyTrackUpdate(updated)
                 loadedTracks[updated.id] = updated
             }
+            .desktopSheetSize(.standard)
         }
         .sheet(item: $editingMetadataTrack) { track in
             MetadataEditorView(track: track) {
@@ -1108,6 +1115,7 @@ private struct ManagedPlaylistDetailView: View {
                 loadedTracks[track.id] = nil
                 await loadMissingTracks()
             }
+            .desktopSheetSize(.standard)
         }
         .fileImporter(
             isPresented: $showsImporter,
@@ -1120,6 +1128,7 @@ private struct ManagedPlaylistDetailView: View {
             ServerDirectoryPicker { directory in
                 Task { await importServerDirectory(directory) }
             }
+            .desktopSheetSize(.large)
         }
         .alert("导入结果", isPresented: Binding(
             get: { importMessage != nil },
@@ -1587,7 +1596,7 @@ private struct DirectoryPlaylistEditor: View {
             .navigationTitle("编辑歌单")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    ModalDismissButton()
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { Task { await save() } }
@@ -1690,9 +1699,15 @@ private struct HomePlaylistSelectionView: View {
             .navigationTitle("首页展示")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+#if targetEnvironment(macCatalyst)
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("完成")
                 }
+#else
+                ToolbarItem(placement: .confirmationAction) {
+                    ModalDismissButton("完成")
+                }
+#endif
             }
             .alert("设置失败", isPresented: Binding(
                 get: { errorMessage != nil },
@@ -1886,6 +1901,7 @@ private struct ServerDirectoryLevel: View {
                     systemImage: "externaldrive.badge.exclamationmark",
                     description: Text(errorMessage ?? "请稍后重试")
                 )
+                .desktopEmptyState()
             }
         }
         .background(Color.sonaBackground)

@@ -1062,6 +1062,7 @@ struct SonaTrackListView: View {
                     loadedPlaylistTracks[updated.id] = updated
                 }
             }
+            .desktopSheetSize(.standard)
         }
         .fileImporter(
             isPresented: $showsImporter,
@@ -1074,6 +1075,7 @@ struct SonaTrackListView: View {
             ServerDirectoryPicker { directory in
                 Task { await importServerDirectory(directory) }
             }
+            .desktopSheetSize(.large)
         }
         .alert("导入结果", isPresented: Binding(
             get: { importMessage != nil },

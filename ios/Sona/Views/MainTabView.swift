@@ -124,18 +124,23 @@ struct MainTabView: View {
 #endif
         .sheet(isPresented: $showsAccountSecurity) {
             NavigationStack { AccountSecurityView().macModalBackButton() }
+                .desktopSheetSize(.standard)
         }
         .sheet(isPresented: $showsAvatarEditor) {
             NavigationStack { OwnAvatarEditorView() }
+                .desktopSheetSize(.standard)
         }
         .sheet(isPresented: $showsUserManagement) {
             NavigationStack { UserManagementView().macModalBackButton() }
+                .desktopSheetSize(.large)
         }
         .sheet(isPresented: $showsAchievements) {
             NavigationStack { AchievementsView().macModalBackButton() }
+                .desktopSheetSize(.large)
         }
         .sheet(isPresented: $showsSocial) {
             SocialHubView().macModalBackButton()
+                .desktopSheetSize(.large)
         }
         .alert("发现新版本", isPresented: $showsUpdateAlert) {
             Button("稍后", role: .cancel) { }
@@ -260,16 +265,12 @@ struct MainTabView: View {
 }
 
 private struct MacModalBackButtonModifier: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-
     @ViewBuilder
     func body(content: Content) -> some View {
 #if targetEnvironment(macCatalyst)
         content.toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("返回", systemImage: "chevron.left") {
-                    dismiss()
-                }
+                ModalDismissButton("返回")
             }
         }
 #else
