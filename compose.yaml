@@ -9,7 +9,7 @@ services:
       SONA_DOWNLOADER_PORT: 6700
       SONA_MUSIC_DIR: /music
       SONA_SIDECAR_TOKEN: ${SONA_SIDECAR_TOKEN:?请在 .env 设置 SONA_SIDECAR_TOKEN}
-      SONA_DOWNLOAD_SOURCES: ${SONA_DOWNLOAD_SOURCES:-MiguMusicClient,NeteaseMusicClient,QQMusicClient,KuwoMusicClient,QianqianMusicClient,SodaMusicClient}
+      SONA_DOWNLOAD_SOURCES: ${SONA_DOWNLOAD_SOURCES:-MiguMusicClient,NeteaseMusicClient,QQMusicClient,KuwoMusicClient,QianqianMusicClient,SodaMusicClient,SpotifyMusicClient}
       HTTP_PROXY: ${SONA_DOWNLOADER_PROXY:-}
       HTTPS_PROXY: ${SONA_DOWNLOADER_PROXY:-}
       NO_PROXY: ${SONA_DOWNLOADER_NO_PROXY:-localhost,127.0.0.1,sona-downloader,sona-server}

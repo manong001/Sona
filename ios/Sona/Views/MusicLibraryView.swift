@@ -1076,6 +1076,12 @@ private struct ManagedPlaylistDetailView: View {
                 }
                 .disabled(tracks.isEmpty)
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("播放全部", systemImage: "play.fill") {
+                    playAll()
+                }
+                .disabled(tracks.isEmpty)
+            }
         }
         .photosPicker(
             isPresented: $showsArtworkPicker,
@@ -1209,14 +1215,6 @@ private struct ManagedPlaylistDetailView: View {
                 .accessibilityLabel("返回")
 
                 Spacer()
-
-                Button {
-                    playRandom()
-                } label: {
-                    macToolbarIcon("shuffle")
-                }
-                .accessibilityLabel("随机播放")
-                .disabled(tracks.isEmpty)
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 20)
@@ -1350,6 +1348,10 @@ private struct ManagedPlaylistDetailView: View {
                 }
 
                 Spacer(minLength: 0)
+
+                #if targetEnvironment(macCatalyst)
+                playlistPlaybackActions
+                #endif
             }
             .buttonStyle(.bordered)
             .labelStyle(.iconOnly)
@@ -1371,6 +1373,37 @@ private struct ManagedPlaylistDetailView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
     }
+
+    #if targetEnvironment(macCatalyst)
+    private var playlistPlaybackActions: some View {
+        HStack(spacing: 10) {
+            Button {
+                playRandom()
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.body.bold())
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(.white.opacity(0.1), in: Circle())
+            }
+            .accessibilityLabel("随机播放")
+            .disabled(tracks.isEmpty)
+
+            Button {
+                playAll()
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.title3.bold())
+                    .foregroundStyle(.black)
+                    .frame(width: 46, height: 46)
+                    .background(Color.sonaGreen, in: Circle())
+            }
+            .accessibilityLabel("播放全部")
+            .disabled(tracks.isEmpty)
+        }
+        .buttonStyle(.plain)
+    }
+    #endif
 
     private var canEditPlaylistArtwork: Bool {
         guard let playlist else { return false }
@@ -1408,6 +1441,17 @@ private struct ManagedPlaylistDetailView: View {
         player.play(
             track: first,
             queue: queue,
+            prioritizedQueueTitle: playlist?.name ?? "歌单",
+            queueContextID: playlistID,
+            offlineURLProvider: offline.localURL(for:)
+        )
+    }
+
+    private func playAll() {
+        guard let first = tracks.first else { return }
+        player.play(
+            track: first,
+            queue: tracks,
             prioritizedQueueTitle: playlist?.name ?? "歌单",
             queueContextID: playlistID,
             offlineURLProvider: offline.localURL(for:)

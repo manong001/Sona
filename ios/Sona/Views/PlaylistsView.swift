@@ -139,9 +139,13 @@ private struct PlaylistDetailView: View {
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Button("随机播放", systemImage: "shuffle") {
                     playRandom()
+                }
+                .disabled(tracks.isEmpty)
+                Button("播放全部", systemImage: "play.fill") {
+                    playAll()
                 }
                 .disabled(tracks.isEmpty)
             }
@@ -154,6 +158,16 @@ private struct PlaylistDetailView: View {
         player.play(
             track: first,
             queue: queue,
+            prioritizedQueueTitle: playlist?.name ?? "歌单",
+            offlineURLProvider: offline.localURL(for:)
+        )
+    }
+
+    private func playAll() {
+        guard let first = tracks.first else { return }
+        player.play(
+            track: first,
+            queue: tracks,
             prioritizedQueueTitle: playlist?.name ?? "歌单",
             offlineURLProvider: offline.localURL(for:)
         )

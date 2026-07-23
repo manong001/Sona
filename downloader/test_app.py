@@ -20,6 +20,7 @@ from app import (
     PublicPlaylistItem,
     SonaDownloaderServer,
     SpotifyPlaylistItem,
+    _spotify_candidates_from_search_response,
 )
 
 
@@ -101,6 +102,42 @@ class DownloaderApiTest(unittest.TestCase):
 
         self.assertLess(time.monotonic() - started, 1)
 
+    def test_download_runner_allows_a_per_download_timeout(self):
+        runner = DownloadProcessRunner(timeout_seconds=5)
+
+        started = time.monotonic()
+        with self.assertRaisesRegex(TimeoutError, "0.1 秒"):
+            runner.run("short-timeout-task", time.sleep, 5, timeout_seconds=0.1)
+
+        self.assertLess(time.monotonic() - started, 1)
+
+    def test_download_runner_kills_a_process_that_ignores_terminate(self):
+        class StubbornProcess:
+            def __init__(self):
+                self.alive = True
+                self.terminated = False
+                self.killed = False
+
+            def is_alive(self):
+                return self.alive
+
+            def terminate(self):
+                self.terminated = True
+
+            def join(self, timeout):
+                pass
+
+            def kill(self):
+                self.killed = True
+                self.alive = False
+
+        process = StubbornProcess()
+
+        DownloadProcessRunner()._terminate(process)
+
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.killed)
+
     def test_download_runner_honors_cancel_before_start(self):
         runner = DownloadProcessRunner(timeout_seconds=1)
         runner.cancel("queued-task")
@@ -163,6 +200,10 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual("MiguMusicClient", body["sources"][0]["id"])
         self.assertEqual(
             {"id": "SodaMusicClient", "name": "汽水音乐"},
+            body["sources"][-2],
+        )
+        self.assertEqual(
+            {"id": "SpotifyMusicClient", "name": "Spotify"},
             body["sources"][-1],
         )
 
@@ -569,7 +610,9 @@ class DownloaderApiTest(unittest.TestCase):
 
     def test_spotify_playlist_item_resolves_from_enabled_sources_when_downloaded(self):
         class InlineDownloadRunner:
-            def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):
+            def run(self, task_id, action, *arguments, **kwargs):
+                if action.__name__ == "_download_spotify_musicdl_candidate":
+                    raise RuntimeError("Spotify 暂不可用")
                 return ["download/测试歌曲.flac"]
 
         spotify = BackendCandidate(
@@ -594,7 +637,9 @@ class DownloaderApiTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             music_dir = Path(directory).resolve()
             backend = MusicDlBackend.__new__(MusicDlBackend)
-            backend._allowed_sources = ("NeteaseMusicClient", "QQMusicClient")
+            backend._allowed_sources = (
+                "NeteaseMusicClient", "QQMusicClient", "SpotifyMusicClient",
+            )
             backend._music_dir = music_dir
             backend._state_dir = music_dir
             backend._lock = threading.Lock()
@@ -616,6 +661,148 @@ class DownloaderApiTest(unittest.TestCase):
                 ("测试歌曲 测试歌手", ("QQMusicClient",)),
             ],
             queries,
+        )
+
+    def test_spotify_download_returns_direct_result_without_fallback(self):
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "测试歌曲", "测试歌手", "", "mp3",
+            180_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:test"),
+        )
+        calls = []
+
+        class DirectSpotifyRunner:
+            def run(self, task_id, action, *arguments, **kwargs):
+                calls.append((task_id, action.__name__, arguments, kwargs))
+                return ["download/Spotify/测试歌曲.mp3"]
+
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("NeteaseMusicClient", "SpotifyMusicClient")
+            backend._music_dir = Path(directory)
+            backend._state_dir = Path(directory)
+            backend._download_runner = DirectSpotifyRunner()
+            backend._search_for_download = lambda query, sources: self.fail(
+                "Spotify 直接下载成功后不应搜索回退渠道"
+            )
+
+            files = backend.download(spotify, "spotify-task")
+
+        self.assertEqual(["download/Spotify/测试歌曲.mp3"], files)
+        self.assertEqual("spotify-task", calls[0][0])
+        self.assertEqual("_download_spotify_musicdl_candidate", calls[0][1])
+        self.assertEqual(30, calls[0][3]["timeout_seconds"])
+
+    def test_spotify_download_timeout_falls_back_to_other_sources(self):
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "测试歌曲", "测试歌手", "", "mp3",
+            180_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:test"),
+        )
+        resolved = BackendCandidate(
+            "NeteaseMusicClient", "测试歌曲", "测试歌手", "", "flac",
+            180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
+        )
+        calls = []
+
+        class TimeoutThenFallbackRunner:
+            def run(self, task_id, action, *arguments, **kwargs):
+                calls.append((task_id, action.__name__, arguments, kwargs))
+                if action.__name__ == "_download_spotify_musicdl_candidate":
+                    raise TimeoutError("下载超时（超过 30 秒）")
+                return ["download/网易云音乐/测试歌曲.flac"]
+
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("NeteaseMusicClient", "SpotifyMusicClient")
+            backend._music_dir = Path(directory)
+            backend._state_dir = Path(directory)
+            backend._download_runner = TimeoutThenFallbackRunner()
+            backend._search_for_download = lambda query, sources: (
+                self.assertEqual(("NeteaseMusicClient",), sources) or [resolved]
+            )
+
+            files = backend.download(spotify, "spotify-task")
+
+        self.assertEqual(["download/网易云音乐/测试歌曲.flac"], files)
+        self.assertEqual(
+            [
+                "_download_spotify_musicdl_candidate",
+                "_download_musicdl_candidate",
+            ],
+            [call[1] for call in calls],
+        )
+
+    def test_spotify_search_response_is_converted_without_resolving_audio(self):
+        response = {
+            "data": {
+                "searchV2": {
+                    "tracksV2": {
+                        "items": [{
+                            "item": {
+                                "data": {
+                                    "uri": "spotify:track:56fpSqPZomJHt3cAlD5W5J",
+                                    "name": "Signal to Noise",
+                                    "artists": {
+                                        "items": [
+                                            {"profile": {"name": "Aaron Aitken"}},
+                                            {"profile": {"name": "Guest Artist"}},
+                                        ]
+                                    },
+                                    "albumOfTrack": {
+                                        "name": "Signal to Noise",
+                                        "coverArt": {
+                                            "sources": [
+                                                {
+                                                    "url": "https://example.test/300.jpg",
+                                                    "width": 300,
+                                                },
+                                                {
+                                                    "url": "https://example.test/640.jpg",
+                                                    "width": 640,
+                                                },
+                                            ]
+                                        },
+                                    },
+                                    "duration": {"totalMilliseconds": 157_090},
+                                }
+                            }
+                        }]
+                    }
+                }
+            }
+        }
+
+        candidates = _spotify_candidates_from_search_response(response)
+
+        self.assertEqual(1, len(candidates))
+        candidate = candidates[0]
+        self.assertEqual("SpotifyMusicClient", candidate.source)
+        self.assertEqual("Signal to Noise", candidate.title)
+        self.assertEqual("Aaron Aitken, Guest Artist", candidate.artist)
+        self.assertEqual("Signal to Noise", candidate.album)
+        self.assertEqual(157_090, candidate.duration_ms)
+        self.assertEqual("https://example.test/640.jpg", candidate.artwork_url)
+        self.assertEqual(
+            SpotifyPlaylistItem("spotify:track:56fpSqPZomJHt3cAlD5W5J"),
+            candidate.opaque,
+        )
+
+    def test_spotify_search_bypasses_musicdl_audio_resolution(self):
+        candidate = BackendCandidate(
+            "SpotifyMusicClient", "Signal to Noise", "Aaron Aitken", "", "mp3",
+            157_090, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:56fpSqPZomJHt3cAlD5W5J"),
+        )
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._search_spotify_metadata = lambda query: [candidate]
+        backend._client = lambda sources: self.fail(
+            "Spotify 搜索不应触发 musicdl 音频解析"
+        )
+
+        self.assertEqual(
+            [candidate],
+            backend.search("Signal to Noise", ("SpotifyMusicClient",)),
         )
 
     def test_spotify_playlist_download_accepts_a_localized_title_alias(self):

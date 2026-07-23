@@ -26,6 +26,7 @@ DEFAULT_SOURCES = (
     "KuwoMusicClient",
     "QianqianMusicClient",
     "SodaMusicClient",
+    "SpotifyMusicClient",
 )
 SOURCE_LABELS = {
     "MiguMusicClient": "咪咕音乐",
@@ -53,6 +54,8 @@ CANDIDATE_TTL_SECONDS = 30 * 60
 PLAYLIST_CANDIDATE_TTL_SECONDS = 72 * 60 * 60
 PLAYBACK_URL_TTL_SECONDS = 30 * 60
 DOWNLOAD_TIMEOUT_SECONDS = 10 * 60
+SPOTIFY_SEARCH_TIMEOUT_SECONDS = 20
+SPOTIFY_DOWNLOAD_TIMEOUT_SECONDS = 30
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
@@ -170,7 +173,13 @@ class DownloadProcessRunner:
         *arguments: Any,
         progress_path: Path | None = None,
         total_bytes: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> list[str]:
+        effective_timeout = (
+            self._timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
+        if effective_timeout <= 0:
+            raise ValueError("下载超时必须大于 0 秒")
         result_queue = self._context.Queue(maxsize=1)
         process = self._context.Process(
             target=_run_download_process,
@@ -191,7 +200,7 @@ class DownloadProcessRunner:
             self._processes[task_id] = process
             self._progress[task_id] = DownloadProgress(0, total_bytes, 0)
             process.start()
-        deadline = time.monotonic() + self._timeout_seconds
+        deadline = time.monotonic() + effective_timeout
         previous_bytes = 0
         previous_time = time.monotonic()
         smoothed_speed = 0.0
@@ -201,7 +210,7 @@ class DownloadProcessRunner:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._terminate(process)
-                    raise TimeoutError(f"下载超时（超过 {self._timeout_seconds:g} 秒）")
+                    raise TimeoutError(f"下载超时（超过 {effective_timeout:g} 秒）")
                 try:
                     succeeded, value = result_queue.get(timeout=min(0.1, remaining))
                     if succeeded:
@@ -272,6 +281,9 @@ class DownloadProcessRunner:
         if process.is_alive():
             process.terminate()
             process.join(timeout=1)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=1)
 
     def _file_size(self, path: Path | None) -> int:
         if path is None:
@@ -288,9 +300,38 @@ def _download_musicdl_candidate(
     source: str,
     opaque: Any,
 ) -> list[str]:
+    music_dir = Path(music_dir_value).resolve()
+    client = _build_musicdl_download_client(state_dir_value, source)
+    return _musicdl_downloaded_files(
+        client.download(song_infos=[opaque]),
+        music_dir,
+    )
+
+
+def _download_spotify_musicdl_candidate(
+    music_dir_value: str,
+    state_dir_value: str,
+    uri: str,
+) -> list[str]:
+    source = "SpotifyMusicClient"
+    track_id = uri.removeprefix("spotify:track:")
+    if not track_id or track_id == uri:
+        raise ValueError("Spotify 曲目 ID 无效")
+    music_dir = Path(music_dir_value).resolve()
+    client = _build_musicdl_download_client(state_dir_value, source)
+    song = client.music_clients[source]._parsewiththirdpartapis({"id": track_id})
+    if not getattr(song, "with_valid_download_url", False):
+        raise RuntimeError("Spotify 未返回有效下载地址")
+    song.work_dir = str(music_dir / "download" / source_label(source))
+    return _musicdl_downloaded_files(
+        client.download(song_infos=[song]),
+        music_dir,
+    )
+
+
+def _build_musicdl_download_client(state_dir_value: str, source: str) -> Any:
     from musicdl import musicdl
 
-    music_dir = Path(music_dir_value).resolve()
     config = {
         source: {
             "work_dir": state_dir_value,
@@ -300,12 +341,14 @@ def _download_musicdl_candidate(
             "disable_print": True,
         }
     }
-    client = musicdl.MusicClient(
+    return musicdl.MusicClient(
         music_sources=[source],
         init_music_clients_cfg=config,
         clients_threadings={source: 2},
     )
-    downloaded = client.download(song_infos=[opaque])
+
+
+def _musicdl_downloaded_files(downloaded: list[Any], music_dir: Path) -> list[str]:
     files: list[str] = []
     for song in downloaded:
         raw_path = getattr(song, "_save_path", None) or getattr(song, "save_path", None)
@@ -351,10 +394,39 @@ class MusicDlBackend:
         return self._registered_sources
 
     def search(self, query: str, sources: tuple[str, ...]) -> list[BackendCandidate]:
-        with self._lock_for(sources):
-            client = self._client(sources)
-            results = client.search(keyword=query)
-        return self._candidates_from_results(results, sources)
+        musicdl_sources = tuple(
+            source for source in sources if source != "SpotifyMusicClient"
+        )
+        candidates_by_source: dict[str, list[BackendCandidate]] = {
+            source: [] for source in sources
+        }
+        if musicdl_sources:
+            with self._lock_for(musicdl_sources):
+                client = self._client(musicdl_sources)
+                results = client.search(keyword=query)
+            for candidate in self._candidates_from_results(results, musicdl_sources):
+                candidates_by_source[candidate.source].append(candidate)
+        if "SpotifyMusicClient" in candidates_by_source:
+            candidates_by_source["SpotifyMusicClient"] = self._search_spotify_metadata(query)
+        return [
+            candidate
+            for source in sources
+            for candidate in candidates_by_source[source]
+        ]
+
+    def _search_spotify_metadata(self, query: str) -> list[BackendCandidate]:
+        import requests
+        from musicdl.modules.utils.spotifyutils import SpotifyMusicClientSearchUtils
+
+        with requests.Session() as session:
+            response = SpotifyMusicClientSearchUtils.searchbykeyword(
+                session=session,
+                query=query,
+                limit=8,
+                offset=0,
+                request_overrides={"timeout": SPOTIFY_SEARCH_TIMEOUT_SECONDS},
+            )
+        return _spotify_candidates_from_search_response(response)
 
     def _search_for_download(
         self, query: str, sources: tuple[str, ...]
@@ -699,7 +771,34 @@ class MusicDlBackend:
                 isinstance(candidate.opaque, PublicPlaylistItem)
                 and candidate.source in self._allowed_sources
             )
-            preferred_sources = (candidate.source,) if use_original_source else self._allowed_sources
+            if isinstance(candidate.opaque, SpotifyPlaylistItem):
+                if "SpotifyMusicClient" in self._allowed_sources:
+                    effective_task_id = task_id or str(uuid.uuid4())
+                    try:
+                        return self._download_runner.run(
+                            effective_task_id,
+                            _download_spotify_musicdl_candidate,
+                            str(self._music_dir),
+                            str(self._state_dir),
+                            candidate.opaque.uri,
+                            timeout_seconds=SPOTIFY_DOWNLOAD_TIMEOUT_SECONDS,
+                        )
+                    except RuntimeError as exception:
+                        if str(exception) == "下载已取消":
+                            raise
+                    except TimeoutError:
+                        pass
+                preferred_sources = tuple(
+                    source
+                    for source in self._allowed_sources
+                    if source != "SpotifyMusicClient"
+                )
+                if not preferred_sources:
+                    raise RuntimeError("Spotify 下载需要至少启用一个其他音源作为回退渠道")
+            else:
+                preferred_sources = (
+                    (candidate.source,) if use_original_source else self._allowed_sources
+                )
             query = f"{candidate.title} {candidate.artist}"
             matches = self._search_for_download(query, preferred_sources)
             searched_matches = list(matches)
@@ -710,9 +809,11 @@ class MusicDlBackend:
                 item for item in matches
                 if _matches_track(item, candidate.title, candidate.artist, None)
             ), None)
-            if resolved is None and preferred_sources != self._allowed_sources:
+            if resolved is None and use_original_source:
                 fallback_sources = tuple(
-                    source for source in self._allowed_sources if source != candidate.source
+                    source
+                    for source in self._allowed_sources
+                    if source not in {candidate.source, "SpotifyMusicClient"}
                 )
                 if fallback_sources:
                     matches = self._search_for_download(query, fallback_sources)
@@ -1195,6 +1296,64 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
+def _spotify_candidates_from_search_response(
+    response: Any,
+) -> list[BackendCandidate]:
+    if not isinstance(response, dict):
+        return []
+    tracks = (
+        response.get("data", {})
+        .get("searchV2", {})
+        .get("tracksV2", {})
+        .get("items", [])
+    )
+    if not isinstance(tracks, list):
+        return []
+    candidates = []
+    for track in tracks:
+        if not isinstance(track, dict):
+            continue
+        wrapper = track.get("item") or track.get("itemV2") or {}
+        data = (wrapper.get("data") or {}) if isinstance(wrapper, dict) else {}
+        uri = _text(data.get("uri")).strip()
+        title = _text(data.get("name")).strip()
+        if not uri.startswith("spotify:track:") or not title:
+            continue
+        artists = data.get("artists", {}).get("items", [])
+        artist_names = [
+            _text((artist.get("profile") or {}).get("name") or artist.get("name")).strip()
+            for artist in artists
+            if isinstance(artist, dict)
+        ]
+        artist = ", ".join(name for name in artist_names if name)
+        if not artist:
+            continue
+        album = data.get("albumOfTrack") or {}
+        artwork_sources = (album.get("coverArt") or {}).get("sources") or []
+        artwork = max(
+            (source for source in artwork_sources if isinstance(source, dict)),
+            key=lambda source: _positive_int(source.get("width")) or 0,
+            default={},
+        )
+        candidates.append(BackendCandidate(
+            source="SpotifyMusicClient",
+            title=title,
+            artist=artist,
+            album=_text(album.get("name")).strip(),
+            extension="mp3",
+            duration_ms=_positive_int(
+                (data.get("duration") or {}).get("totalMilliseconds")
+            ),
+            file_size_bytes=None,
+            bitrate=None,
+            sample_rate=None,
+            artwork_url=_optional_text(artwork.get("url")),
+            lyrics=None,
+            opaque=SpotifyPlaylistItem(uri),
+        ))
+    return candidates
+
+
 def _resolver_musicdl_sources(resolvers: tuple[str, ...]) -> tuple[str, ...]:
     sources = []
     if "ikun" in resolvers:
@@ -1309,7 +1468,7 @@ def main() -> None:
         raise ValueError("SONA_DOWNLOAD_SOURCES must contain at least one source")
     # Instantiate the backend before validating the environment so operators
     # can opt into any client shipped by musicdl (the defaults remain the
-    # stable, well-tested five Chinese providers).
+    # stable, tested providers).
     backend = MusicDlBackend(music_dir, configured_sources, state_dir)
     invalid = [source for source in configured_sources if source not in backend.registered_sources]
     if invalid:
