@@ -898,6 +898,7 @@ private struct ManagedPlaylistDetailView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     @State private var isSelecting = false
     @State private var selectedIDs = Set<String>()
     @State private var showsImporter = false
@@ -926,6 +927,14 @@ private struct ManagedPlaylistDetailView: View {
         guard let playlist else { return nil }
         return sonaArtworkPaths(playlist.artworkURLs).first
             ?? sonaFirstArtworkURL(in: tracks)
+    }
+
+    private var playlistBottomContentMargin: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24
+#else
+        miniPlayerMode == "fixed" ? 96 : 24
+#endif
     }
 
     var body: some View {
@@ -1003,6 +1012,11 @@ private struct ManagedPlaylistDetailView: View {
                     }
                 }
             }
+            .contentMargins(
+                .bottom,
+                playlistBottomContentMargin,
+                for: .scrollContent
+            )
             .safeAreaPadding(.top, detailScrollTopPadding)
 
             #if targetEnvironment(macCatalyst)

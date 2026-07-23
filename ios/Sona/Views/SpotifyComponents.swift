@@ -534,6 +534,7 @@ struct SonaTrackListView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
+    @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     @State private var isSelecting = false
     @State private var selectedIDs = Set<String>()
     @State private var showsImporter = false
@@ -613,6 +614,14 @@ struct SonaTrackListView: View {
     private var trackCount: Int {
         if collection.id == "liked-songs" { return personal.favoriteIDs.count }
         return playlist?.trackIDs.count ?? tracks.count
+    }
+
+    private var playlistBottomContentMargin: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24
+#else
+        miniPlayerMode == "fixed" ? 96 : 24
+#endif
     }
 
     private var queue: [Track] {
@@ -972,8 +981,12 @@ struct SonaTrackListView: View {
                             .padding(.vertical, 18)
                     }
                 }
-                .padding(.bottom, 24)
             }
+            .contentMargins(
+                .bottom,
+                playlistBottomContentMargin,
+                for: .scrollContent
+            )
             .safeAreaPadding(.top, detailScrollTopPadding)
 
             #if targetEnvironment(macCatalyst)
