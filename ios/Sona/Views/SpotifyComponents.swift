@@ -1195,32 +1195,27 @@ struct SonaTrackListView: View {
     }
 
     private var playlistArtworkMenu: some View {
-        Menu {
-            Button("上传图片", systemImage: "photo.badge.plus") {
-                showsArtworkPicker = true
+        StablePlaylistArtworkMenu(
+            playlistID: playlist?.id ?? "",
+            hasSourceArtwork: playlist?.sourceArtworkURL != nil,
+            hasManualArtwork: playlist?.artworkTrackID != nil,
+            upload: { showsArtworkPicker = true },
+            useSourceArtwork: {
+                guard let playlist else { return }
+                Task { await personal.useSourcePlaylistArtwork(playlistID: playlist.id) }
+            },
+            clearManualArtwork: {
+                guard let playlist else { return }
+                Task { await personal.clearPlaylistArtwork(playlistID: playlist.id) }
             }
-            Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
-            if playlist?.sourceArtworkURL != nil {
-                Divider()
-                Button("使用源订阅封面", systemImage: "photo.on.rectangle") {
-                    guard let playlist else { return }
-                    Task { await personal.useSourcePlaylistArtwork(playlistID: playlist.id) }
-                }
-            }
-            if playlist?.artworkTrackID != nil {
-                Divider()
-                Button("恢复自动轮换", systemImage: "arrow.triangle.2.circlepath") {
-                    guard let playlist else { return }
-                    Task { await personal.clearPlaylistArtwork(playlistID: playlist.id) }
-                }
-            }
-        } label: {
+        ) {
             Image(systemName: "photo")
                 .font(.title3)
                 .foregroundStyle(.white)
                 .frame(width: 36, height: 36)
                 .background(.white.opacity(0.1), in: Circle())
         }
+        .equatable()
         .buttonStyle(.plain)
         .accessibilityLabel("设置歌单封面")
     }

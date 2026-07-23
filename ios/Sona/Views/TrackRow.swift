@@ -1,5 +1,67 @@
 import SwiftUI
 
+struct StablePlaylistArtworkMenu<MenuLabel: View>: View, Equatable {
+    let playlistID: String
+    let hasSourceArtwork: Bool
+    let hasManualArtwork: Bool
+    let upload: () -> Void
+    let useSourceArtwork: () -> Void
+    let clearManualArtwork: () -> Void
+    let menuLabel: MenuLabel
+
+    init(
+        playlistID: String,
+        hasSourceArtwork: Bool,
+        hasManualArtwork: Bool,
+        upload: @escaping () -> Void,
+        useSourceArtwork: @escaping () -> Void,
+        clearManualArtwork: @escaping () -> Void,
+        @ViewBuilder label: () -> MenuLabel
+    ) {
+        self.playlistID = playlistID
+        self.hasSourceArtwork = hasSourceArtwork
+        self.hasManualArtwork = hasManualArtwork
+        self.upload = upload
+        self.useSourceArtwork = useSourceArtwork
+        self.clearManualArtwork = clearManualArtwork
+        self.menuLabel = label()
+    }
+
+    static func == (
+        lhs: StablePlaylistArtworkMenu<MenuLabel>,
+        rhs: StablePlaylistArtworkMenu<MenuLabel>
+    ) -> Bool {
+        lhs.playlistID == rhs.playlistID
+            && lhs.hasSourceArtwork == rhs.hasSourceArtwork
+            && lhs.hasManualArtwork == rhs.hasManualArtwork
+    }
+
+    var body: some View {
+        Menu {
+            Button("上传图片", systemImage: "photo.badge.plus", action: upload)
+            Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
+            if hasSourceArtwork {
+                Divider()
+                Button(
+                    "使用源订阅封面",
+                    systemImage: "photo.on.rectangle",
+                    action: useSourceArtwork
+                )
+            }
+            if hasManualArtwork {
+                Divider()
+                Button(
+                    "恢复自动轮换",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    action: clearManualArtwork
+                )
+            }
+        } label: {
+            menuLabel
+        }
+    }
+}
+
 struct TrackRow: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerStore

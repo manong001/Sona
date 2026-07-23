@@ -1412,27 +1412,22 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private var playlistArtworkMenu: some View {
-        Menu {
-            Button("上传图片", systemImage: "photo.badge.plus") {
-                showsArtworkPicker = true
+        StablePlaylistArtworkMenu(
+            playlistID: playlistID,
+            hasSourceArtwork: playlist?.sourceArtworkURL != nil,
+            hasManualArtwork: playlist?.artworkTrackID != nil,
+            upload: { showsArtworkPicker = true },
+            useSourceArtwork: {
+                Task { await personal.useSourcePlaylistArtwork(playlistID: playlistID) }
+            },
+            clearManualArtwork: {
+                Task { await personal.clearPlaylistArtwork(playlistID: playlistID) }
             }
-            Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
-            if playlist?.sourceArtworkURL != nil {
-                Divider()
-                Button("使用源订阅封面", systemImage: "photo.on.rectangle") {
-                    Task { await personal.useSourcePlaylistArtwork(playlistID: playlistID) }
-                }
-            }
-            if playlist?.artworkTrackID != nil {
-                Divider()
-                Button("恢复自动轮换", systemImage: "arrow.triangle.2.circlepath") {
-                    Task { await personal.clearPlaylistArtwork(playlistID: playlistID) }
-                }
-            }
-        } label: {
+        ) {
             Label("设置歌单封面", systemImage: "photo")
                 .frame(width: 24)
         }
+        .equatable()
     }
 
     private func playRandom() {
