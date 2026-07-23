@@ -140,30 +140,33 @@ struct MusicDownloadView: View {
     private var searchContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                LiveSearchTextField(text: $query, onSubmit: submitSearch)
-                    .frame(maxWidth: .infinity, minHeight: 34)
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.gray)
+                HStack(spacing: 8) {
+                    LiveSearchTextField(text: $query, onSubmit: submitSearch)
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                    if !query.isEmpty {
+                        Button {
+                            query = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.gray)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, minHeight: 50, maxHeight: 50)
+                .background(.white, in: RoundedRectangle(cornerRadius: 8))
+
                 Button(action: submitSearch) {
                     Text(isSearching ? "重新搜索" : "搜索")
                         .font(.subheadline.weight(.semibold))
-                        .frame(minWidth: 52, minHeight: 34)
+                        .frame(minWidth: 76, minHeight: 50)
+                        .background(Color.sonaGreen, in: Capsule())
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.sonaGreen)
+                .buttonStyle(.plain)
                 .foregroundStyle(.black)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 50)
-            .background(.white, in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
 

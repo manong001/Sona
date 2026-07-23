@@ -38,6 +38,8 @@ struct MusicLibraryView: View {
     @State private var isForceScrapingPlaylist = false
     @State private var forceScrapeMessage: String?
     @State private var playlistDeletionErrorMessage: String?
+    @State private var movingPlaylistID: String?
+    @State private var playlistOrderErrorMessage: String?
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
     var requestedCollectionID: String? = nil
@@ -246,6 +248,14 @@ struct MusicLibraryView: View {
             Button("好", role: .cancel) { }
         } message: {
             Text(playlistDeletionErrorMessage ?? "未知错误")
+        }
+        .alert("歌单排序失败", isPresented: Binding(
+            get: { playlistOrderErrorMessage != nil },
+            set: { if !$0 { playlistOrderErrorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text(playlistOrderErrorMessage ?? "未知错误")
         }
         .overlay(alignment: .bottom) {
             if isForceScrapingPlaylist {
@@ -590,6 +600,13 @@ struct MusicLibraryView: View {
                 .contextMenu {
                     if isPlaylistFilter,
                        let playlist = personal.playlists.first(where: { $0.id == collection.id }) {
+                        Button("移至首位", systemImage: "arrow.up.to.line") {
+                            Task { await movePlaylistToFirst(playlist) }
+                        }
+                        .disabled(
+                            personal.playlists.first?.id == playlist.id
+                                || movingPlaylistID != nil
+                        )
                         if let subscription = subscriptions.first(where: { $0.playlistId == playlist.id }) {
                             Button("立即同步", systemImage: "arrow.clockwise") {
                                 Task { await syncSubscription(subscription) }
@@ -717,6 +734,21 @@ struct MusicLibraryView: View {
             return
         }
         playlistDeletionErrorMessage = nil
+    }
+
+    private func movePlaylistToFirst(_ playlist: Playlist) async {
+        guard movingPlaylistID == nil,
+              let index = personal.playlists.firstIndex(where: { $0.id == playlist.id }),
+              index > 0 else { return }
+        movingPlaylistID = playlist.id
+        defer { movingPlaylistID = nil }
+        var ids = personal.playlists.map(\.id)
+        ids.insert(ids.remove(at: index), at: 0)
+        guard await personal.reorderPlaylists(ids: ids) else {
+            playlistOrderErrorMessage = personal.errorMessage ?? "请稍后重试"
+            return
+        }
+        playlistOrderErrorMessage = nil
     }
 }
 
