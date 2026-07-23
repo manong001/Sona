@@ -161,6 +161,10 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("ok", body["status"])
         self.assertEqual("MiguMusicClient", body["sources"][0]["id"])
+        self.assertEqual(
+            {"id": "SodaMusicClient", "name": "汽水音乐"},
+            body["sources"][-1],
+        )
 
     def test_search_requires_token_and_hides_download_url(self):
         with self.assertRaises(HTTPError) as context:

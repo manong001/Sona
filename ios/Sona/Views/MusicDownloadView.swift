@@ -178,7 +178,10 @@ struct MusicDownloadView: View {
                             HStack(spacing: 8) {
                                 sourceChip(title: "全部", source: nil)
                                 ForEach(sources) { source in
-                                    sourceChip(title: source.name, source: source.id)
+                                    sourceChip(
+                                        title: source.name.replacingOccurrences(of: "音乐", with: ""),
+                                        source: source.id
+                                    )
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -208,7 +211,7 @@ struct MusicDownloadView: View {
                             systemImage: "music.note.list",
                             description: Text(
                                 candidates.isEmpty
-                                    ? "支持咪咕、网易云、QQ、酷我和千千音乐"
+                                    ? "支持咪咕、网易云、QQ、酷我、千千和汽水音乐"
                                     : "请选择其他平台或重新搜索"
                             )
                         )
@@ -1305,7 +1308,7 @@ private struct PlaylistDownloadImportView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .textFieldStyle(.roundedBorder)
-                    Text("支持咪咕、网易云、QQ、酷我和千千音乐公开歌单")
+                    Text("支持咪咕、网易云、QQ、酷我、千千和汽水音乐公开歌单")
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
                     Button {

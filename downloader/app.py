@@ -25,6 +25,7 @@ DEFAULT_SOURCES = (
     "QQMusicClient",
     "KuwoMusicClient",
     "QianqianMusicClient",
+    "SodaMusicClient",
 )
 SOURCE_LABELS = {
     "MiguMusicClient": "咪咕音乐",
@@ -32,6 +33,7 @@ SOURCE_LABELS = {
     "QQMusicClient": "QQ音乐",
     "KuwoMusicClient": "酷我音乐",
     "QianqianMusicClient": "千千音乐",
+    "SodaMusicClient": "汽水音乐",
     "KugouMusicClient": "酷狗音乐",
     "BilibiliMusicClient": "哔哩哔哩",
     "AppleMusicClient": "Apple Music",
@@ -1019,7 +1021,7 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
                 hostname == host or hostname.endswith("." + host)
                 for host in PLAYLIST_HOSTS
             ):
-                raise ValueError("仅支持已启用的咪咕、网易云、QQ、酷我、千千和 Spotify 歌单链接")
+                raise ValueError("仅支持已启用的咪咕、网易云、QQ、酷我、千千、汽水和 Spotify 歌单链接")
             self._json(HTTPStatus.OK, self.server.state.parse_playlist(normalized_url))
         except ValueError as exception:
             self._error(HTTPStatus.BAD_REQUEST, str(exception))
