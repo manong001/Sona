@@ -8,6 +8,7 @@ import queue
 import re
 import threading
 import time
+import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
+
+from opencc import OpenCC
 
 
 DEFAULT_SOURCES = (
@@ -56,6 +59,13 @@ PLAYBACK_URL_TTL_SECONDS = 30 * 60
 DOWNLOAD_TIMEOUT_SECONDS = 10 * 60
 SPOTIFY_SEARCH_TIMEOUT_SECONDS = 20
 SPOTIFY_DOWNLOAD_TIMEOUT_SECONDS = 30
+LIVE_VERSION_DURATION_TOLERANCE_MS = 30_000
+_TRADITIONAL_TO_SIMPLIFIED = OpenCC("t2s")
+_LIVE_VERSION_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])live(?:\s*version|\s*版)?(?![A-Za-z0-9])"
+    r"|演唱会(?:版)?|现场(?:版)?",
+    re.IGNORECASE,
+)
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
@@ -1392,6 +1402,12 @@ def _best_ranked_playlist_match(
         candidate_title = _normalize_track_text(candidate.title)
         exact_title = candidate_title == normalized_title
         artist_matches = _artists_match(candidate.artist, artist)
+        localized_artist = _artists_may_be_localized(candidate.artist, artist)
+        live_title = (
+            _is_live_version(candidate.title)
+            and _normalize_track_title(candidate.title, omit_live_marker=True)
+            == _normalize_track_title(title, omit_live_marker=True)
+        )
         title_alias = (
             min(len(candidate_title), len(normalized_title)) >= 4
             and (
@@ -1400,37 +1416,133 @@ def _best_ranked_playlist_match(
             )
         )
         duration_difference = abs(candidate.duration_ms - duration_ms)
+        duration_tolerance = (
+            LIVE_VERSION_DURATION_TOLERANCE_MS
+            if live_title and artist_matches and not exact_title
+            else 5_000
+        )
         if (
-            not (exact_title or (title_alias and artist_matches))
-            or duration_difference > 5_000
+            not (
+                (exact_title and (artist_matches or localized_artist))
+                or (title_alias and artist_matches)
+                or (live_title and artist_matches)
+            )
+            or duration_difference > duration_tolerance
         ):
             continue
+        title_rank = 0 if exact_title else (2 if live_title else 1)
         score = (
+            title_rank,
             0 if artist_matches else 1,
-            0 if exact_title else 1,
             position,
             duration_difference,
         )
         ranked.append((score, candidate))
-    if not ranked:
+    if ranked:
+        ranked.sort(key=lambda value: value[0])
+        if len(ranked) == 1 or ranked[0][0][:3] != ranked[1][0][:3]:
+            return ranked[0][1]
+    return _best_consensus_playlist_match(candidates, duration_ms)
+
+
+def _best_consensus_playlist_match(
+    candidates: list[BackendCandidate],
+    duration_ms: int,
+) -> BackendCandidate | None:
+    source_positions: dict[str, int] = {}
+    groups: dict[
+        tuple[str, str],
+        list[tuple[int, int, BackendCandidate]],
+    ] = {}
+    for candidate in candidates:
+        position = source_positions.get(candidate.source, 0)
+        source_positions[candidate.source] = position + 1
+        if not candidate.duration_ms:
+            continue
+        duration_difference = abs(candidate.duration_ms - duration_ms)
+        if duration_difference > 5_000:
+            continue
+        key = (
+            _normalize_track_text(candidate.title),
+            _normalize_track_text(candidate.artist),
+        )
+        if len(key[0]) < 2 or not key[1]:
+            continue
+        groups.setdefault(key, []).append((
+            position,
+            duration_difference,
+            candidate,
+        ))
+    ranked_groups: list[
+        tuple[tuple[int, int, int], BackendCandidate]
+    ] = []
+    for values in groups.values():
+        source_count = len({value[2].source for value in values})
+        if source_count < 2:
+            continue
+        values.sort(key=lambda value: (value[0], value[1]))
+        representative = values[0]
+        ranked_groups.append((
+            (-source_count, representative[0], representative[1]),
+            representative[2],
+        ))
+    if not ranked_groups:
         return None
-    ranked.sort(key=lambda value: value[0])
-    if len(ranked) > 1 and ranked[0][0][:3] == ranked[1][0][:3]:
+    ranked_groups.sort(key=lambda value: value[0])
+    if (
+        len(ranked_groups) > 1
+        and ranked_groups[0][0][:2] == ranked_groups[1][0][:2]
+    ):
         return None
-    return ranked[0][1]
+    return ranked_groups[0][1]
 
 
 def _normalize_track_text(value: str) -> str:
-    return re.sub(r"[^\w\u4e00-\u9fff]", "", value).casefold()
+    compatible = unicodedata.normalize("NFKC", value)
+    simplified = _TRADITIONAL_TO_SIMPLIFIED.convert(compatible)
+    return re.sub(r"[^\w\u4e00-\u9fff]", "", simplified).casefold()
+
+
+def _normalize_track_title(value: str, *, omit_live_marker: bool = False) -> str:
+    if not omit_live_marker:
+        return _normalize_track_text(value)
+    compatible = unicodedata.normalize("NFKC", value)
+    simplified = _TRADITIONAL_TO_SIMPLIFIED.convert(compatible)
+    return _normalize_track_text(_LIVE_VERSION_PATTERN.sub("", simplified))
+
+
+def _is_live_version(value: str) -> bool:
+    compatible = unicodedata.normalize("NFKC", value)
+    simplified = _TRADITIONAL_TO_SIMPLIFIED.convert(compatible)
+    return _LIVE_VERSION_PATTERN.search(simplified) is not None
 
 
 def _artists_match(first: str, second: str) -> bool:
-    normalized_first = _normalize_track_text(first)
-    normalized_second = _normalize_track_text(second)
-    return (
-        normalized_first in normalized_second
-        or normalized_second in normalized_first
+    first_names = _artist_names(first)
+    second_names = _artist_names(second)
+    return bool(first_names & second_names)
+
+
+def _artists_may_be_localized(first: str, second: str) -> bool:
+    first_has_ascii = re.search(r"[A-Za-z]", first) is not None
+    second_has_ascii = re.search(r"[A-Za-z]", second) is not None
+    return bool(_normalize_track_text(first) and _normalize_track_text(second)) and (
+        first_has_ascii != second_has_ascii
     )
+
+
+def _artist_names(value: str) -> set[str]:
+    compatible = unicodedata.normalize("NFKC", value)
+    parts = re.split(
+        r"\s*(?:,|，|、|/|&|;|；|\+|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)\s*",
+        compatible,
+        flags=re.IGNORECASE,
+    )
+    return {
+        normalized
+        for part in parts
+        if (normalized := _normalize_track_text(part))
+    }
 
 
 def _opaque_value(opaque: Any, name: str) -> str:

@@ -1,1 +1,2 @@
 musicdl==2.13.1
+opencc-python-reimplemented==0.1.7

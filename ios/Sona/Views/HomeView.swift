@@ -13,6 +13,8 @@ struct HomeView: View {
     @State private var genres: [String] = []
     @State private var madeForYouMixes: [MadeForYouMix] = []
     @State private var favoriteRotationOffset = 0
+    @State private var loadedHomePlaylistTracks: [String: Track] = [:]
+    @State private var homePlaylistPlaybackTask: Task<Void, Never>?
     @AppStorage("childMode") private var childMode = false
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
@@ -612,9 +614,14 @@ struct HomeView: View {
     }
 
     private func playCollection(_ collection: SonaCollection) {
-        guard let first = collection.tracks.first else { return }
+        homePlaylistPlaybackTask?.cancel()
+        if collection.id.hasPrefix("playlist-") {
+            playHomePlaylist(collection)
+            return
+        }
 
         if collection.id.hasPrefix("daily-"),
+           let first = collection.tracks.first,
            let queueIndex = Int(collection.id.dropFirst("daily-".count)) {
             player.playDailyRecommendations(
                 track: first,
@@ -625,9 +632,60 @@ struct HomeView: View {
             return
         }
 
+        startCollectionPlayback(
+            collection,
+            queue: playbackQueue(for: collection) ?? collection.tracks
+        )
+    }
+
+    private func playHomePlaylist(_ collection: SonaCollection) {
+        let playlistID = String(collection.id.dropFirst("playlist-".count))
+        guard let playlist = personal.playlists.first(where: { $0.id == playlistID }) else {
+            return
+        }
+        homePlaylistPlaybackTask = Task {
+            let visibleIDs = playlist.trackIDs.filter {
+                !personal.hiddenTrackIDs.contains($0)
+            }
+            let visibleIDSet = Set(visibleIDs)
+            var tracksByID = Dictionary(
+                uniqueKeysWithValues: collection.tracks
+                    .filter { visibleIDSet.contains($0.id) }
+                    .map { ($0.id, $0) }
+            )
+            loadedHomePlaylistTracks.forEach {
+                if visibleIDSet.contains($0.key) {
+                    tracksByID[$0.key] = $0.value
+                }
+            }
+            let initiallyAvailable = visibleIDs.compactMap { tracksByID[$0] }
+            let missingIDs = visibleIDs.filter { tracksByID[$0] == nil }
+            if !initiallyAvailable.isEmpty {
+                startCollectionPlayback(collection, queue: initiallyAvailable)
+            }
+            guard !missingIDs.isEmpty, !Task.isCancelled,
+                  let loaded = try? await APIClient.shared.tracks(ids: missingIDs) else {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            loaded.forEach {
+                tracksByID[$0.id] = $0
+                loadedHomePlaylistTracks[$0.id] = $0
+            }
+            let queue = playlist.trackIDs.compactMap { tracksByID[$0] }
+            guard !queue.isEmpty else { return }
+            startCollectionPlayback(collection, queue: queue)
+        }
+    }
+
+    private func startCollectionPlayback(
+        _ collection: SonaCollection,
+        queue: [Track]
+    ) {
+        guard let first = queue.first else { return }
         player.play(
             track: first,
-            queue: playbackQueue(for: collection) ?? collection.tracks,
+            queue: queue,
             prioritizedQueueTitle: collection.title,
             queueContextID: collection.id,
             offlineURLProvider: offline.localURL(for:)

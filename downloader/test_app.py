@@ -20,6 +20,7 @@ from app import (
     PublicPlaylistItem,
     SonaDownloaderServer,
     SpotifyPlaylistItem,
+    _best_ranked_playlist_match,
     _spotify_candidates_from_search_response,
 )
 
@@ -875,6 +876,154 @@ class DownloaderApiTest(unittest.TestCase):
             self.assertEqual(["download/Good Goodbye.flac"], backend.download(spotify))
 
         self.assertEqual(["hwasa"], downloaded)
+
+    def test_spotify_download_accepts_consensus_for_translated_metadata(self):
+        downloaded = []
+
+        class InlineDownloadRunner:
+            def run(self, task_id, action, *arguments, **kwargs):
+                if action.__name__ == "_download_spotify_musicdl_candidate":
+                    raise RuntimeError("Spotify 暂不可用")
+                downloaded.append(arguments[-1].tag)
+                return ["download/爱错.flac"]
+
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "愛錯", "Leehom Wang", "", "mp3",
+            238_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:love-wrong"),
+        )
+        matches = [
+            BackendCandidate(
+                "MiguMusicClient", "爱错（Live）", "A-Lin, 王赫野", "", "flac",
+                253_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="wrong-live"),
+            ),
+            BackendCandidate(
+                "QQMusicClient", "爱错", "王力宏", "", "flac",
+                238_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="qq-original"),
+            ),
+            BackendCandidate(
+                "KuwoMusicClient", "爱错", "王力宏", "", "flac",
+                239_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="kuwo-original"),
+            ),
+        ]
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = (
+                "MiguMusicClient", "QQMusicClient",
+                "KuwoMusicClient", "SpotifyMusicClient",
+            )
+            backend._music_dir = Path(directory)
+            backend._state_dir = Path(directory)
+            backend._download_runner = InlineDownloadRunner()
+            backend._search_for_download = lambda query, sources: matches
+
+            self.assertEqual(["download/爱错.flac"], backend.download(spotify))
+
+        self.assertEqual(["qq-original"], downloaded)
+
+    def test_playlist_match_ignores_traditional_simplified_and_english_case(self):
+        candidates = [
+            BackendCandidate(
+                "QQMusicClient", "世界赠予我的", "FAYE WONG", "", "flac",
+                244_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="localized"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates, "世界贈予我的", "faye wong", 244_000,
+        )
+
+        self.assertIs(candidates[0], match)
+
+    def test_playlist_match_ignores_english_case_and_fullwidth_characters(self):
+        candidates = [
+            BackendCandidate(
+                "QQMusicClient", "ＥＶＥＲＹＷＨＥＲＥ ＷＥ ＧＯ",
+                "MC仁, EDISON CHEN, 厨房仔", "", "flac",
+                226_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="case-insensitive"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates, "Everywhere We Go", "Edison Chen", 226_000,
+        )
+
+        self.assertIs(candidates[0], match)
+
+    def test_playlist_match_accepts_original_artist_with_collaborators(self):
+        candidates = [
+            BackendCandidate(
+                "QQMusicClient", "爱错", "王力宏、单依纯", "", "flac",
+                238_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="collaboration"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates, "爱错", "王力宏", 238_000,
+        )
+
+        self.assertIs(candidates[0], match)
+
+    def test_playlist_match_rejects_same_title_from_a_different_artist(self):
+        candidates = [
+            BackendCandidate(
+                "QQMusicClient", "同名歌曲", "翻唱歌手", "", "flac",
+                238_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="cover"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates, "同名歌曲", "原唱歌手", 238_000,
+        )
+
+        self.assertIsNone(match)
+
+    def test_playlist_match_uses_live_version_only_with_original_artist(self):
+        candidates = [
+            BackendCandidate(
+                "NeteaseMusicClient", "無名的人 (Live)", "毛不易、周深", "", "flac",
+                263_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="original-live"),
+            ),
+            BackendCandidate(
+                "QQMusicClient", "无名的人 (Live)", "翻唱歌手", "", "flac",
+                244_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="cover-live"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates, "无名的人", "毛不易", 244_000,
+        )
+
+        self.assertIs(candidates[0], match)
+
+    def test_playlist_match_prefers_studio_version_before_live_fallback(self):
+        candidates = [
+            BackendCandidate(
+                "NeteaseMusicClient", "无名的人 (Live)", "毛不易", "", "flac",
+                246_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="live"),
+            ),
+            BackendCandidate(
+                "QQMusicClient", "無名的人", "毛不易", "", "flac",
+                244_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="studio"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates, "无名的人", "毛不易", 244_000,
+        )
+
+        self.assertIs(candidates[1], match)
 
     def test_spotify_playlist_download_rejects_ambiguous_same_rank_candidates(self):
         spotify = BackendCandidate(
