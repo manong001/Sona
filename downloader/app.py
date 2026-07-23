@@ -345,24 +345,69 @@ class MusicDlBackend:
         candidates: list[BackendCandidate] = []
         for source in sources:
             for song in results.get(source, []):
-                song.work_dir = str(self._output_dir / source_label(source))
-                candidates.append(
-                    BackendCandidate(
-                        source=source,
-                        title=_text(song.song_name),
-                        artist=_text(song.singers),
-                        album=_text(song.album),
-                        extension=_text(song.ext).removeprefix(".").lower(),
-                        duration_ms=_duration_ms(song.duration_s, song.duration),
-                        file_size_bytes=_positive_int(song.file_size_bytes),
-                        bitrate=_positive_int(song.bitrate),
-                        sample_rate=_positive_int(song.samplerate),
-                        artwork_url=_optional_text(song.cover_url),
-                        lyrics=_optional_text(song.lyric),
-                        opaque=song,
-                    )
-                )
+                candidates.append(self._candidate_from_song(source, song))
         return candidates
+
+    def _candidate_from_song(self, source: str, song: Any) -> BackendCandidate:
+        song.work_dir = str(self._output_dir / source_label(source))
+        return BackendCandidate(
+            source=source,
+            title=_text(song.song_name),
+            artist=_text(song.singers),
+            album=_text(song.album),
+            extension=_text(song.ext).removeprefix(".").lower(),
+            duration_ms=_duration_ms(song.duration_s, song.duration),
+            file_size_bytes=_positive_int(song.file_size_bytes),
+            bitrate=_positive_int(song.bitrate),
+            sample_rate=_positive_int(song.samplerate),
+            artwork_url=_optional_text(song.cover_url),
+            lyrics=_optional_text(song.lyric),
+            opaque=song,
+        )
+
+    def _resolve_public_playlist_item(
+        self, candidate: BackendCandidate
+    ) -> BackendCandidate | None:
+        item = candidate.opaque
+        if (
+            not isinstance(item, PublicPlaylistItem)
+            or item.source not in self._allowed_sources
+            or item.source not in {"NeteaseMusicClient", "QQMusicClient"}
+        ):
+            return None
+        if item.source == "QQMusicClient":
+            source_data = {
+                "mid": item.identifier,
+                "songmid": item.identifier,
+                "title": candidate.title,
+                "songname": candidate.title,
+                "singer": [{"name": candidate.artist}],
+                "albumname": candidate.album,
+                "interval": (candidate.duration_ms or 0) / 1_000,
+            }
+        else:
+            source_data = {
+                "id": item.identifier,
+                "name": candidate.title,
+                "ar": [{"name": candidate.artist}],
+                "al": {"name": candidate.album},
+                "dt": candidate.duration_ms or 0,
+            }
+        try:
+            source_client = self._build_client((item.source,)).music_clients[item.source]
+            song = source_client._parsewithofficialapiv1(
+                search_result=source_data,
+                lossless_quality_is_sufficient=False,
+            )
+        except Exception:
+            return None
+        extension = _text(getattr(song, "ext", "")).removeprefix(".").lower()
+        if (
+            not getattr(song, "with_valid_download_url", False)
+            or extension not in SUPPORTED_AUDIO_EXTENSIONS
+        ):
+            return None
+        return self._candidate_from_song(item.source, song)
 
     def parse_playlist(self, url: str) -> tuple[str, str | None, list[BackendCandidate]]:
         hostname = (urlparse(url).hostname or "").lower().strip(".")
@@ -625,6 +670,8 @@ class MusicDlBackend:
 
     def download(self, candidate: BackendCandidate, task_id: str | None = None) -> list[str]:
         if isinstance(candidate.opaque, (SpotifyPlaylistItem, PublicPlaylistItem)):
+            if resolved := self._resolve_public_playlist_item(candidate):
+                return self.download(resolved, task_id)
             use_original_source = (
                 isinstance(candidate.opaque, PublicPlaylistItem)
                 and candidate.source in self._allowed_sources

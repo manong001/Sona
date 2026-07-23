@@ -610,6 +610,58 @@ class DownloaderApiTest(unittest.TestCase):
             queries,
         )
 
+    def test_public_playlist_item_resolves_by_source_identifier_before_search(self):
+        class InlineDownloadRunner:
+            def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):
+                return [f"download/{opaque.song_name}.flac"]
+
+        direct_requests = []
+
+        class DirectQQClient:
+            def _parsewithofficialapiv1(self, search_result, **kwargs):
+                direct_requests.append(search_result)
+                return SimpleNamespace(
+                    source="QQMusicClient",
+                    song_name="时间沦陷 (DJ版)",
+                    singers="王忻辰",
+                    album="",
+                    ext="flac",
+                    duration_s=180,
+                    duration="03:00",
+                    file_size_bytes=1_000,
+                    bitrate=1_411,
+                    samplerate=44_100,
+                    cover_url=None,
+                    lyric=None,
+                    work_dir="",
+                    save_path="/tmp/时间沦陷.flac",
+                    with_valid_download_url=True,
+                )
+
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("QQMusicClient",)
+            backend._music_dir = Path(directory)
+            backend._output_dir = Path(directory) / "download"
+            backend._state_dir = Path(directory)
+            backend._download_runner = InlineDownloadRunner()
+            backend._build_client = lambda sources: SimpleNamespace(
+                music_clients={"QQMusicClient": DirectQQClient()}
+            )
+            backend._search_for_download = lambda query, sources: self.fail(
+                "按歌曲 ID 解析成功后不应再执行关键词搜索"
+            )
+            candidate = BackendCandidate(
+                "QQMusicClient", "时间沦陷 (DJ版)", "王忻辰", "", "mp3",
+                180_000, None, None, None, None, None,
+                PublicPlaylistItem("QQMusicClient", "qq-song-mid"),
+            )
+
+            files = backend.download(candidate)
+
+        self.assertEqual(["download/时间沦陷 (DJ版).flac"], files)
+        self.assertEqual("qq-song-mid", direct_requests[0]["songmid"])
+
     def test_subscription_candidates_resolve_concurrently(self):
         class InlineDownloadRunner:
             def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):

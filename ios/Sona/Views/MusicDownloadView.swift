@@ -1520,7 +1520,7 @@ private struct MusicDownloadTaskRow: View {
                     .foregroundStyle(Color.sonaSecondaryText)
             }
         } else {
-            Text("正在连接下载源…")
+            Text("正在解析下载地址…")
                 .font(.caption2)
                 .foregroundStyle(Color.sonaSecondaryText)
         }
