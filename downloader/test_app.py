@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from app import (
     AppState,
     BackendCandidate,
+    DownloadProcessRunner,
     MusicDlBackend,
     PublicPlaylistItem,
     SonaDownloaderServer,
@@ -21,10 +22,22 @@ from app import (
 )
 
 
+def wait_for_peer(directory: str, marker: str) -> bool:
+    marker_directory = Path(directory)
+    (marker_directory / marker).touch()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if len(list(marker_directory.iterdir())) >= 2:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 class FakeBackend:
     def __init__(self, music_dir: Path):
         self.music_dir = music_dir
         self.downloaded = []
+        self.cancelled_downloads = []
         self.parsed_playlist_urls = []
 
     def search(self, query, sources):
@@ -45,12 +58,15 @@ class FakeBackend:
             )
         ]
 
-    def download(self, candidate):
+    def download(self, candidate, task_id=None):
         self.downloaded.append(candidate)
         target = self.music_dir / "download" / "测试.flac"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"audio")
         return ["download/测试.flac"]
+
+    def cancel_download(self, task_id):
+        self.cancelled_downloads.append(task_id)
 
     def parse_playlist(self, url):
         self.parsed_playlist_urls.append(url)
@@ -62,6 +78,23 @@ class FakeBackend:
 
 
 class DownloaderApiTest(unittest.TestCase):
+
+    def test_download_runner_terminates_a_stuck_download(self):
+        runner = DownloadProcessRunner(timeout_seconds=0.1)
+
+        started = time.monotonic()
+        with self.assertRaisesRegex(TimeoutError, "下载超时"):
+            runner.run("stuck-task", time.sleep, 5)
+
+        self.assertLess(time.monotonic() - started, 1)
+
+    def test_download_runner_honors_cancel_before_start(self):
+        runner = DownloadProcessRunner(timeout_seconds=1)
+        runner.cancel("queued-task")
+
+        with self.assertRaisesRegex(RuntimeError, "下载已取消"):
+            runner.run("queued-task", time.sleep, 0)
+
     def setUp(self):
         self.temporary = TemporaryDirectory()
         self.backend = FakeBackend(Path(self.temporary.name))
@@ -113,6 +146,12 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual(["download/测试.flac"], result["files"])
         self.assertEqual(1, len(self.backend.downloaded))
+
+    def test_cancel_download_is_idempotent(self):
+        status, _ = self.request("DELETE", "/v1/downloads/task-1")
+
+        self.assertEqual(204, status)
+        self.assertEqual(["task-1"], self.backend.cancelled_downloads)
 
     def test_playback_fallback_caches_the_first_valid_url(self):
         calls = 0
@@ -234,37 +273,16 @@ class DownloaderApiTest(unittest.TestCase):
 
         self.assertLess(time.monotonic() - started, 0.35)
 
-    def test_same_source_downloads_use_two_independent_clients(self):
-        class SlowClient:
-            def __init__(self, path):
-                self.path = path
+    def test_download_processes_can_run_concurrently(self):
+        runner = DownloadProcessRunner(timeout_seconds=5)
 
-            def download(self, song_infos):
-                time.sleep(0.2)
-                return [SimpleNamespace(_save_path=str(self.path))]
+        with TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(runner.run, f"task-{index}", wait_for_peer, directory, str(index))
+                for index in range(2)
+            ]
 
-        with TemporaryDirectory() as directory:
-            music_dir = Path(directory).resolve()
-            downloaded = music_dir / "download" / "测试歌曲.flac"
-            downloaded.parent.mkdir(parents=True)
-            downloaded.write_bytes(b"audio")
-            backend = MusicDlBackend.__new__(MusicDlBackend)
-            backend._music_dir = music_dir
-            backend._lock = threading.Lock()
-            backend._download_client_pools = {}
-            backend._build_client = lambda sources: SlowClient(downloaded)
-            candidate = BackendCandidate(
-                "NeteaseMusicClient", "测试歌曲", "测试歌手", "测试专辑", "flac",
-                180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
-            )
-
-            started = time.monotonic()
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [executor.submit(backend.download, candidate) for _ in range(2)]
-                for future in futures:
-                    future.result()
-
-        self.assertLess(time.monotonic() - started, 0.35)
+            self.assertTrue(all(future.result() for future in futures))
 
     def test_playlist_name_omits_musicdl_timestamp_prefix(self):
         song = SimpleNamespace(
@@ -492,6 +510,10 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(2, len(requested_urls))
 
     def test_spotify_playlist_item_resolves_from_enabled_sources_when_downloaded(self):
+        class InlineDownloadRunner:
+            def run(self, task_id, action, music_dir, state_dir, source, opaque):
+                return ["download/测试歌曲.flac"]
+
         spotify = BackendCandidate(
             "SpotifyMusicClient", "测试歌曲", "测试歌手", "", "mp3",
             180_000, None, None, None, None, None,
@@ -513,20 +535,15 @@ class DownloaderApiTest(unittest.TestCase):
         queries = []
         with TemporaryDirectory() as directory:
             music_dir = Path(directory).resolve()
-            downloaded = music_dir / "download" / "测试歌曲.flac"
-            downloaded.parent.mkdir(parents=True)
-            downloaded.write_bytes(b"audio")
             backend = MusicDlBackend.__new__(MusicDlBackend)
             backend._allowed_sources = ("NeteaseMusicClient", "QQMusicClient")
             backend._music_dir = music_dir
+            backend._state_dir = music_dir
             backend._lock = threading.Lock()
             backend._source_locks = {}
-            backend._download_client_pools = {}
+            backend._download_runner = InlineDownloadRunner()
             backend.search = lambda query, sources: queries.append((query, sources)) or (
                 [unrelated] if sources == ("NeteaseMusicClient",) else [resolved]
-            )
-            backend._build_client = lambda sources: SimpleNamespace(
-                download=lambda song_infos: [SimpleNamespace(_save_path=str(downloaded))]
             )
 
             files = backend.download(spotify)
@@ -551,7 +568,8 @@ class DownloaderApiTest(unittest.TestCase):
         if authenticated:
             request.add_header("X-Sona-Token", "test-token")
         with urlopen(request, timeout=5) as response:
-            return response.status, json.loads(response.read())
+            response_body = response.read()
+            return response.status, json.loads(response_body) if response_body else None
 
 
 if __name__ == "__main__":

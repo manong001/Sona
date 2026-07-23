@@ -165,6 +165,22 @@ class DownloadTaskRepository {
             .update() == 1;
     }
 
+    List<String> findRunningIds(String requestedBy) {
+        return jdbcClient.sql("""
+                SELECT id FROM download_tasks
+                WHERE requested_by = :requestedBy AND state = 'RUNNING'
+                """)
+            .param("requestedBy", requestedBy)
+            .query(String.class)
+            .list();
+    }
+
+    int deleteAll(String requestedBy) {
+        return jdbcClient.sql("DELETE FROM download_tasks WHERE requested_by = :requestedBy")
+            .param("requestedBy", requestedBy)
+            .update();
+    }
+
     int failActiveTasks(String message) {
         return jdbcClient.sql("""
                 UPDATE download_tasks
@@ -174,6 +190,17 @@ class DownloadTaskRepository {
             .param("message", message)
             .param("updatedAt", clock.millis())
             .update();
+    }
+
+    boolean markRunning(String id) {
+        return jdbcClient.sql("""
+                UPDATE download_tasks
+                SET state = 'RUNNING', files_json = '[]', message = NULL, updated_at = :updatedAt
+                WHERE id = :id AND state = 'QUEUED'
+                """)
+            .param("updatedAt", clock.millis())
+            .param("id", id)
+            .update() == 1;
     }
 
     void update(String id, DownloadTaskState state, List<String> files, String message) {

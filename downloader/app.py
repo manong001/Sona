@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import multiprocessing
 import os
 import queue
 import re
@@ -49,7 +50,7 @@ MAX_CANDIDATES = 1_000
 CANDIDATE_TTL_SECONDS = 30 * 60
 PLAYLIST_CANDIDATE_TTL_SECONDS = 72 * 60 * 60
 PLAYBACK_URL_TTL_SECONDS = 30 * 60
-DOWNLOAD_CONCURRENCY_PER_SOURCE = 2
+DOWNLOAD_TIMEOUT_SECONDS = 10 * 60
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
@@ -137,6 +138,117 @@ class CandidateCache:
             self._items.pop(candidate_id, None)
 
 
+def _run_download_process(action: Any, arguments: tuple[Any, ...], result_queue: Any) -> None:
+    try:
+        result_queue.put((True, action(*arguments)))
+    except BaseException as exception:
+        result_queue.put((False, str(exception) or exception.__class__.__name__))
+
+
+class DownloadProcessRunner:
+    def __init__(self, timeout_seconds: float = DOWNLOAD_TIMEOUT_SECONDS):
+        self._timeout_seconds = timeout_seconds
+        self._context = multiprocessing.get_context("spawn")
+        self._processes: dict[str, Any] = {}
+        self._cancelled: set[str] = set()
+        self._lock = threading.Lock()
+
+    def run(self, task_id: str, action: Any, *arguments: Any) -> list[str]:
+        result_queue = self._context.Queue(maxsize=1)
+        process = self._context.Process(
+            target=_run_download_process,
+            args=(action, arguments, result_queue),
+            daemon=True,
+        )
+        with self._lock:
+            if task_id in self._processes:
+                raise RuntimeError("下载任务正在运行")
+            if task_id in self._cancelled:
+                self._cancelled.remove(task_id)
+                raise RuntimeError("下载已取消")
+            self._processes[task_id] = process
+            process.start()
+        deadline = time.monotonic() + self._timeout_seconds
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._terminate(process)
+                    raise TimeoutError(f"下载超时（超过 {self._timeout_seconds:g} 秒）")
+                try:
+                    succeeded, value = result_queue.get(timeout=min(0.1, remaining))
+                    if succeeded:
+                        return value
+                    raise RuntimeError(value)
+                except queue.Empty:
+                    if process.is_alive():
+                        continue
+                    with self._lock:
+                        cancelled = task_id in self._cancelled
+                    if cancelled:
+                        raise RuntimeError("下载已取消")
+                    raise RuntimeError("下载进程异常退出")
+        finally:
+            self._terminate(process)
+            with self._lock:
+                self._processes.pop(task_id, None)
+                self._cancelled.discard(task_id)
+            result_queue.close()
+
+    def cancel(self, task_id: str) -> None:
+        with self._lock:
+            self._cancelled.add(task_id)
+            process = self._processes.get(task_id)
+        if process is not None:
+            self._terminate(process)
+
+    def _terminate(self, process: Any) -> None:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=1)
+
+
+def _download_musicdl_candidate(
+    music_dir_value: str,
+    state_dir_value: str,
+    source: str,
+    opaque: Any,
+) -> list[str]:
+    from musicdl import musicdl
+
+    music_dir = Path(music_dir_value).resolve()
+    config = {
+        source: {
+            "work_dir": state_dir_value,
+            "search_size_per_source": 8,
+            "search_size_per_page": 8,
+            "strict_limit_search_size_per_page": True,
+            "disable_print": True,
+        }
+    }
+    client = musicdl.MusicClient(
+        music_sources=[source],
+        init_music_clients_cfg=config,
+        clients_threadings={source: 2},
+    )
+    downloaded = client.download(song_infos=[opaque])
+    files: list[str] = []
+    for song in downloaded:
+        raw_path = getattr(song, "_save_path", None) or getattr(song, "save_path", None)
+        if not raw_path:
+            continue
+        resolved = Path(raw_path).resolve()
+        try:
+            relative = resolved.relative_to(music_dir)
+        except ValueError as exception:
+            raise RuntimeError("musicdl returned a path outside /music") from exception
+        if resolved.is_file() and resolved.suffix.removeprefix(".").lower() in SUPPORTED_AUDIO_EXTENSIONS:
+            files.append(relative.as_posix())
+    if not files:
+        raise RuntimeError("musicdl did not produce an audio file")
+    return files
+
+
 class MusicDlBackend:
     def __init__(
         self,
@@ -156,9 +268,9 @@ class MusicDlBackend:
         self._allowed_sources = allowed_sources
         self._registered_sources = frozenset(MusicClientBuilder.REGISTERED_MODULES)
         self._clients: dict[tuple[str, ...], Any] = {}
-        self._download_client_pools: dict[tuple[str, ...], queue.LifoQueue[Any]] = {}
         self._source_locks: dict[tuple[str, ...], threading.Lock] = {}
         self._lock = threading.Lock()
+        self._download_runner = DownloadProcessRunner()
 
     @property
     def registered_sources(self) -> frozenset[str]:
@@ -449,7 +561,7 @@ class MusicDlBackend:
             raise ValueError("公开歌单接口返回格式无效")
         return value
 
-    def download(self, candidate: BackendCandidate) -> list[str]:
+    def download(self, candidate: BackendCandidate, task_id: str | None = None) -> list[str]:
         if isinstance(candidate.opaque, (SpotifyPlaylistItem, PublicPlaylistItem)):
             use_original_source = (
                 isinstance(candidate.opaque, PublicPlaylistItem)
@@ -482,32 +594,19 @@ class MusicDlBackend:
                     ), None)
             if resolved is None:
                 raise RuntimeError("未在已启用音源中找到歌单歌曲")
-            return self.download(resolved)
-        sources = (candidate.source,)
-        pool = self._download_client_pool(sources)
-        client = pool.get()
-        try:
-            downloaded = client.download(song_infos=[candidate.opaque])
-        finally:
-            pool.put(client)
-        files: list[str] = []
-        for song in downloaded:
-            # musicdl normally sets _save_path, but a few third-party clients
-            # only populate save_path.  Accept both while retaining the path
-            # boundary check below.
-            raw_path = getattr(song, "_save_path", None) or getattr(song, "save_path", None)
-            if not raw_path:
-                continue
-            resolved = Path(raw_path).resolve()
-            try:
-                relative = resolved.relative_to(self._music_dir)
-            except ValueError as exception:
-                raise RuntimeError("musicdl returned a path outside /music") from exception
-            if resolved.is_file() and resolved.suffix.removeprefix(".").lower() in SUPPORTED_AUDIO_EXTENSIONS:
-                files.append(relative.as_posix())
-        if not files:
-            raise RuntimeError("musicdl did not produce an audio file")
-        return files
+            return self.download(resolved, task_id)
+        effective_task_id = task_id or str(uuid.uuid4())
+        return self._download_runner.run(
+            effective_task_id,
+            _download_musicdl_candidate,
+            str(self._music_dir),
+            str(self._state_dir),
+            candidate.source,
+            candidate.opaque,
+        )
+
+    def cancel_download(self, task_id: str) -> None:
+        self._download_runner.cancel(task_id)
 
     def _client(self, sources: tuple[str, ...]):
         key = tuple(sorted(sources))
@@ -517,18 +616,6 @@ class MusicDlBackend:
         client = self._build_client(sources)
         self._clients[key] = client
         return client
-
-    def _download_client_pool(self, sources: tuple[str, ...]) -> queue.LifoQueue[Any]:
-        key = tuple(sorted(sources))
-        with self._lock:
-            pool = self._download_client_pools.get(key)
-            if pool is not None:
-                return pool
-            pool = queue.LifoQueue(maxsize=DOWNLOAD_CONCURRENCY_PER_SOURCE)
-            for _ in range(DOWNLOAD_CONCURRENCY_PER_SOURCE):
-                pool.put(self._build_client(sources))
-            self._download_client_pools[key] = pool
-            return pool
 
     def _build_client(self, sources: tuple[str, ...]):
         config = {
@@ -579,11 +666,16 @@ class AppState:
             items.append(_public_candidate(candidate_id, candidate))
         return items
 
-    def download(self, candidate_id: str) -> list[str]:
+    def download(self, candidate_id: str, task_id: str | None = None) -> list[str]:
         candidate = self.cache.get(candidate_id)
         if candidate is None:
             raise LookupError("候选结果不存在或已过期，请重新搜索")
-        return self.backend.download(candidate)
+        return self.backend.download(candidate, task_id)
+
+    def cancel_download(self, task_id: str) -> None:
+        cancel = getattr(self.backend, "cancel_download", None)
+        if cancel is not None:
+            cancel(task_id)
 
     def parse_playlist(self, url: str) -> dict[str, Any]:
         name, artwork_url, candidates = self.backend.parse_playlist(url)
@@ -697,6 +789,22 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             return
         self._error(HTTPStatus.NOT_FOUND, "接口不存在")
 
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        if not self._authorized():
+            return
+        prefix = "/v1/downloads/"
+        if parsed.path.startswith(prefix):
+            task_id = parsed.path.removeprefix(prefix).strip()
+            if not task_id or "/" in task_id:
+                self._error(HTTPStatus.BAD_REQUEST, "下载任务 ID 无效")
+                return
+            self.server.state.cancel_download(task_id)
+            self.send_response(HTTPStatus.NO_CONTENT.value)
+            self.end_headers()
+            return
+        self._error(HTTPStatus.NOT_FOUND, "接口不存在")
+
     def _search(self, raw_query: str) -> None:
         query = parse_qs(raw_query)
         keyword = (query.get("q") or [""])[0].strip()
@@ -728,7 +836,8 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             if not candidate_id:
                 self._error(HTTPStatus.BAD_REQUEST, "candidateId 不能为空")
                 return
-            files = self.server.state.download(candidate_id)
+            task_id = _text(body.get("taskId")).strip() or None
+            files = self.server.state.download(candidate_id, task_id)
             self._json(HTTPStatus.OK, {"files": files})
         except LookupError as exception:
             self._error(HTTPStatus.NOT_FOUND, str(exception))

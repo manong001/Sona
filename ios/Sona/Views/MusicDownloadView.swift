@@ -22,6 +22,8 @@ struct MusicDownloadView: View {
     @State private var needsLibraryRefresh = false
     @State private var showsAddedToast = false
     @State private var addedToastTask: Task<Void, Never>?
+    @State private var showsClearTasksConfirmation = false
+    @State private var isClearingTasks = false
 
     private let candidatePageSize = 20
 
@@ -46,6 +48,10 @@ struct MusicDownloadView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if selectedSection == 1 {
+                Button("清空", systemImage: "trash", role: .destructive) {
+                    showsClearTasksConfirmation = true
+                }
+                .disabled(tasks.isEmpty || isClearingTasks)
                 Button("刷新", systemImage: "arrow.clockwise") {
                     Task { await loadTasks(showLoading: true) }
                 }
@@ -54,6 +60,18 @@ struct MusicDownloadView: View {
                     showsPlaylistImport = true
                 }
             }
+        }
+        .confirmationDialog(
+            "清空全部下载任务？",
+            isPresented: $showsClearTasksConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清空下载队列", role: .destructive) {
+                Task { await clearTasks() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("等待中和下载中的任务也会取消，已下载入库的音乐不会删除。")
         }
         .task {
             async let sourceRequest: Void = loadSources()
@@ -429,6 +447,22 @@ struct MusicDownloadView: View {
             tasks = try await APIClient.shared.musicDownloadTasks()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func clearTasks() async {
+        guard !isClearingTasks else { return }
+        isClearingTasks = true
+        errorMessage = nil
+        defer { isClearingTasks = false }
+        do {
+            try await APIClient.shared.clearMusicDownloadTasks()
+            tasks.removeAll()
+            candidates.removeAll()
+            queuedCandidateIDs.removeAll()
+        } catch {
+            errorMessage = error.localizedDescription
+            await loadTasks(showLoading: false)
         }
     }
 

@@ -6,6 +6,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.RejectedExecutionException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpStatus;
@@ -14,6 +16,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 class DownloadService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadService.class);
 
     private final DownloaderGateway gateway;
     private final DownloadTaskRepository repository;
@@ -141,8 +145,30 @@ class DownloadService {
     }
 
     void delete(String id, String requestedBy) {
+        var task = repository.findById(id, requestedBy)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "下载任务不存在"));
+        if (task.state() == DownloadTaskState.QUEUED || task.state() == DownloadTaskState.RUNNING) {
+            cancel(task.id());
+        }
         if (!repository.delete(id, requestedBy)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "下载记录不存在");
+        }
+    }
+
+    void clear(String requestedBy) {
+        List<String> runningIds;
+        synchronized (this) {
+            runningIds = repository.findRunningIds(requestedBy);
+            repository.deleteAll(requestedBy);
+        }
+        runningIds.forEach(this::cancel);
+    }
+
+    private void cancel(String taskId) {
+        try {
+            gateway.cancel(taskId);
+        } catch (RuntimeException exception) {
+            LOGGER.warn("无法通知下载服务取消任务 {}，继续清理本地记录", taskId, exception);
         }
     }
 
@@ -156,9 +182,11 @@ class DownloadService {
     }
 
     private void run(DownloadTask task) {
-        repository.update(task.id(), DownloadTaskState.RUNNING, List.of(), null);
+        if (!markRunning(task.id())) {
+            return;
+        }
         try {
-            var files = gateway.download(task.candidateId());
+            var files = gateway.download(task.candidateId(), task.id());
             if (files.isEmpty()) {
                 throw new IllegalStateException("下载服务没有返回文件");
             }
@@ -176,6 +204,10 @@ class DownloadService {
                 conciseMessage(exception)
             );
         }
+    }
+
+    private synchronized boolean markRunning(String taskId) {
+        return repository.markRunning(taskId);
     }
 
     private void requireEnabled() {

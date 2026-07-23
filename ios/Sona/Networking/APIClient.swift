@@ -896,6 +896,10 @@ final class APIClient {
         try await request(path: "/api/v1/downloads")
     }
 
+    func clearMusicDownloadTasks() async throws {
+        try await requestVoid(path: "/api/v1/downloads", method: "DELETE")
+    }
+
     func deleteMusicDownloadTask(taskID: String) async throws {
         try await requestVoid(path: "/api/v1/downloads/\(taskID)", method: "DELETE")
     }

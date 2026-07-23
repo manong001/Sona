@@ -75,6 +75,12 @@ class DownloadController {
         return ResponseEntity.noContent().build();
     }
 
+    @DeleteMapping
+    ResponseEntity<Void> clear(@AuthenticationPrincipal AuthenticatedUser user) {
+        service.clear(user.username());
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping
     ResponseEntity<DownloadTask> queue(
         @AuthenticationPrincipal AuthenticatedUser user,

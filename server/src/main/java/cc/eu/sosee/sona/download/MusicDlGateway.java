@@ -5,6 +5,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -22,6 +23,7 @@ class MusicDlGateway implements DownloaderGateway {
     private final String token;
     private final RestClient searchClient;
     private final RestClient downloadClient;
+    private final RestClient cancelClient;
     private final ObjectMapper objectMapper;
 
     MusicDlGateway(SonaProperties properties, ObjectMapper objectMapper) {
@@ -31,6 +33,7 @@ class MusicDlGateway implements DownloaderGateway {
         this.objectMapper = objectMapper;
         searchClient = client(downloader.getBaseUrl(), Duration.ofMinutes(3));
         downloadClient = client(downloader.getBaseUrl(), DOWNLOAD_TIMEOUT);
+        cancelClient = client(downloader.getBaseUrl(), Duration.ofSeconds(5));
     }
 
     @Override
@@ -75,8 +78,13 @@ class MusicDlGateway implements DownloaderGateway {
 
     @Override
     public List<String> download(String candidateId) {
+        return download(candidateId, UUID.randomUUID().toString());
+    }
+
+    @Override
+    public List<String> download(String candidateId, String taskId) {
         requireEnabled();
-        var requestBody = requestBody(new DownloadBody(candidateId));
+        var requestBody = requestBody(new DownloadBody(candidateId, taskId));
         var response = downloadClient.post()
             .uri("/v1/downloads")
             .header("X-Sona-Token", token)
@@ -87,6 +95,16 @@ class MusicDlGateway implements DownloaderGateway {
             .retrieve()
             .body(DownloadEnvelope.class);
         return response == null || response.files() == null ? List.of() : response.files();
+    }
+
+    @Override
+    public void cancel(String taskId) {
+        requireEnabled();
+        cancelClient.delete()
+            .uri("/v1/downloads/{taskId}", taskId)
+            .header("X-Sona-Token", token)
+            .retrieve()
+            .toBodilessEntity();
     }
 
     @Override
@@ -194,7 +212,7 @@ class MusicDlGateway implements DownloaderGateway {
     private record SearchEnvelope(List<DownloadCandidate> items) {
     }
 
-    private record DownloadBody(String candidateId) {
+    private record DownloadBody(String candidateId, String taskId) {
     }
 
     private record PlaylistBody(String url) {

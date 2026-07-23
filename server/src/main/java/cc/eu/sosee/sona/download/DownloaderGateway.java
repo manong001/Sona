@@ -18,5 +18,12 @@ public interface DownloaderGateway {
 
     List<String> download(String candidateId);
 
+    default List<String> download(String candidateId, String taskId) {
+        return download(candidateId);
+    }
+
+    default void cancel(String taskId) {
+    }
+
     String resolvePlaybackFallback(String title, String artist, long durationMs, List<String> sources);
 }
