@@ -217,7 +217,7 @@ class DownloadService {
             return;
         }
         try {
-            var files = gateway.download(task.candidateId(), task.id());
+            var files = download(task);
             if (files.isEmpty()) {
                 throw new IllegalStateException("下载服务没有返回文件");
             }
@@ -244,6 +244,70 @@ class DownloadService {
                 conciseMessage(exception)
             );
         }
+    }
+
+    private List<String> download(DownloadTask task) {
+        try {
+            return gateway.download(task.candidateId(), task.id());
+        } catch (DownloadCandidateUnavailableException exception) {
+            var replacement = findReplacementCandidate(task)
+                .orElseThrow(() -> new IllegalStateException(
+                    "候选结果已失效，重新搜索后仍未找到匹配歌曲"
+                ));
+            LOGGER.info(
+                "下载候选已失效，任务 {} 改用重新搜索到的候选 {}",
+                task.id(), replacement.candidateId()
+            );
+            return gateway.download(replacement.candidateId(), task.id());
+        }
+    }
+
+    private Optional<DownloadCandidate> findReplacementCandidate(DownloadTask task) {
+        var query = (task.title() + " " + task.artist()).strip();
+        var sameSource = searchCandidates(query, List.of(task.source()));
+        var replacement = bestMatchingCandidate(task, sameSource);
+        if (replacement.isPresent()) {
+            return replacement;
+        }
+        return bestMatchingCandidate(task, searchCandidates(query, List.of()));
+    }
+
+    private List<DownloadCandidate> searchCandidates(String query, List<String> sources) {
+        try {
+            return gateway.search(query, sources);
+        } catch (RuntimeException exception) {
+            LOGGER.debug("失效候选重新搜索失败：query={}, sources={}", query, sources, exception);
+            return List.of();
+        }
+    }
+
+    private Optional<DownloadCandidate> bestMatchingCandidate(
+        DownloadTask task, List<DownloadCandidate> candidates
+    ) {
+        var title = PlaylistSubscriptionMatcher.normalizedText(task.title());
+        var artist = PlaylistSubscriptionMatcher.normalizedText(task.artist());
+        return candidates.stream()
+            .filter(candidate ->
+                title.equals(PlaylistSubscriptionMatcher.normalizedText(candidate.title()))
+                    && artistsOverlap(
+                        artist,
+                        PlaylistSubscriptionMatcher.normalizedText(candidate.artist())
+                    )
+            )
+            .max(Comparator
+                .comparing((DownloadCandidate candidate) ->
+                    PlaylistSubscriptionMatcher.normalizedText(candidate.quality())
+                        .equals(PlaylistSubscriptionMatcher.normalizedText(task.quality()))
+                )
+                .thenComparing(
+                    DownloadCandidate::fileSizeBytes,
+                    Comparator.nullsFirst(Comparator.naturalOrder())
+                ));
+    }
+
+    private boolean artistsOverlap(String expected, String candidate) {
+        return !expected.isEmpty() && !candidate.isEmpty()
+            && (expected.contains(candidate) || candidate.contains(expected));
     }
 
     private synchronized boolean markRunning(String taskId) {

@@ -96,7 +96,11 @@ class MusicDlGateway implements DownloaderGateway {
             .exchange((request, sidecarResponse) -> {
                 var responseBody = sidecarResponse.getBody().readAllBytes();
                 if (sidecarResponse.getStatusCode().isError()) {
-                    throw new IllegalStateException(downloadError(responseBody));
+                    var message = downloadError(responseBody);
+                    if (sidecarResponse.getStatusCode().value() == HttpStatus.NOT_FOUND.value()) {
+                        throw new DownloadCandidateUnavailableException(message);
+                    }
+                    throw new IllegalStateException(message);
                 }
                 if (responseBody.length == 0) {
                     return null;
