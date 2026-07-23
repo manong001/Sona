@@ -20,6 +20,7 @@ public class ScanCoordinator {
     private final LibraryScanner libraryScanner;
     private final DirectoryPlaylistService directoryPlaylistService;
     private final TaskExecutor taskExecutor;
+    private final TaskExecutor downloadImportTaskExecutor;
     private final AtomicReference<ScanStatus> status = new AtomicReference<>(ScanStatus.idle());
     private final AtomicBoolean rerunRequested = new AtomicBoolean();
     private final AtomicReference<String> rerunDirectory = new AtomicReference<>();
@@ -30,11 +31,13 @@ public class ScanCoordinator {
     ScanCoordinator(
         LibraryScanner libraryScanner,
         DirectoryPlaylistService directoryPlaylistService,
-        @Qualifier("scanTaskExecutor") TaskExecutor scanTaskExecutor
+        @Qualifier("scanTaskExecutor") TaskExecutor scanTaskExecutor,
+        @Qualifier("downloadImportTaskExecutor") TaskExecutor downloadImportTaskExecutor
     ) {
         this.libraryScanner = libraryScanner;
         this.directoryPlaylistService = directoryPlaylistService;
         this.taskExecutor = scanTaskExecutor;
+        this.downloadImportTaskExecutor = downloadImportTaskExecutor;
     }
 
     synchronized ScanStatus start() {
@@ -195,7 +198,7 @@ public class ScanCoordinator {
     ) {
         var result = new CompletableFuture<ScanResult>();
         try {
-            taskExecutor.execute(() -> {
+            downloadImportTaskExecutor.execute(() -> {
                 try {
                     var scanResult = libraryScanner.scanFiles(files);
                     directoryPlaylistService.sync(relativeDirectory);

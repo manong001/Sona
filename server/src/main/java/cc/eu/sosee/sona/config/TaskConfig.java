@@ -20,6 +20,17 @@ class TaskConfig {
     }
 
     @Bean
+    TaskExecutor downloadImportTaskExecutor() {
+        var executor = new ThreadPoolTaskExecutor();
+        executor.setThreadNamePrefix("sona-download-import-");
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(100);
+        executor.initialize();
+        return executor;
+    }
+
+    @Bean
     TaskExecutor downloadTaskExecutor() {
         var executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("sona-download-");
