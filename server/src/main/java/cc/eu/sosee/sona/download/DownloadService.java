@@ -60,7 +60,21 @@ class DownloadService {
     }
 
     List<DownloadTask> tasks(String requestedBy) {
-        return repository.findRecent(requestedBy);
+        return repository.findRecent(requestedBy).stream()
+            .map(this::withProgress)
+            .toList();
+    }
+
+    private DownloadTask withProgress(DownloadTask task) {
+        if (task.state() != DownloadTaskState.RUNNING) {
+            return task;
+        }
+        try {
+            return gateway.progress(task.id()).map(task::withProgress).orElse(task);
+        } catch (RuntimeException exception) {
+            LOGGER.debug("无法读取下载任务 {} 的进度", task.id(), exception);
+            return task;
+        }
     }
 
     DownloadPlaylistPreview parsePlaylist(String url) {

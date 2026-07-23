@@ -148,6 +148,9 @@ struct MusicDownloadTask: Decodable, Identifiable {
     let state: MusicDownloadState
     let files: [String]
     let message: String?
+    let downloadedBytes: Int64?
+    let totalBytes: Int64?
+    let bytesPerSecond: Int64?
     let createdAt: Int64
     let updatedAt: Int64
 }

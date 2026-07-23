@@ -105,6 +105,13 @@ class CachedCandidate:
     expires_at: float
 
 
+@dataclass(frozen=True)
+class DownloadProgress:
+    downloaded_bytes: int
+    total_bytes: int | None
+    bytes_per_second: int
+
+
 class CandidateCache:
     def __init__(self, clock=time.monotonic):
         self._clock = clock
@@ -150,10 +157,18 @@ class DownloadProcessRunner:
         self._timeout_seconds = timeout_seconds
         self._context = multiprocessing.get_context("spawn")
         self._processes: dict[str, Any] = {}
+        self._progress: dict[str, DownloadProgress] = {}
         self._cancelled: set[str] = set()
         self._lock = threading.Lock()
 
-    def run(self, task_id: str, action: Any, *arguments: Any) -> list[str]:
+    def run(
+        self,
+        task_id: str,
+        action: Any,
+        *arguments: Any,
+        progress_path: Path | None = None,
+        total_bytes: int | None = None,
+    ) -> list[str]:
         result_queue = self._context.Queue(maxsize=1)
         process = self._context.Process(
             target=_run_download_process,
@@ -167,8 +182,12 @@ class DownloadProcessRunner:
                 self._cancelled.remove(task_id)
                 raise RuntimeError("下载已取消")
             self._processes[task_id] = process
+            self._progress[task_id] = DownloadProgress(0, total_bytes, 0)
             process.start()
         deadline = time.monotonic() + self._timeout_seconds
+        previous_bytes = 0
+        previous_time = time.monotonic()
+        smoothed_speed = 0.0
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -181,6 +200,25 @@ class DownloadProcessRunner:
                         return value
                     raise RuntimeError(value)
                 except queue.Empty:
+                    now = time.monotonic()
+                    downloaded_bytes = self._file_size(progress_path)
+                    elapsed = max(now - previous_time, 0.001)
+                    instant_speed = max(0, downloaded_bytes - previous_bytes) / elapsed
+                    if instant_speed > 0:
+                        smoothed_speed = (
+                            instant_speed if smoothed_speed == 0
+                            else smoothed_speed * 0.7 + instant_speed * 0.3
+                        )
+                    elif downloaded_bytes == previous_bytes:
+                        smoothed_speed *= 0.7
+                    with self._lock:
+                        self._progress[task_id] = DownloadProgress(
+                            downloaded_bytes,
+                            total_bytes,
+                            round(smoothed_speed),
+                        )
+                    previous_bytes = downloaded_bytes
+                    previous_time = now
                     if process.is_alive():
                         continue
                     with self._lock:
@@ -192,8 +230,13 @@ class DownloadProcessRunner:
             self._terminate(process)
             with self._lock:
                 self._processes.pop(task_id, None)
+                self._progress.pop(task_id, None)
                 self._cancelled.discard(task_id)
             result_queue.close()
+
+    def progress(self, task_id: str) -> DownloadProgress | None:
+        with self._lock:
+            return self._progress.get(task_id)
 
     def cancel(self, task_id: str) -> None:
         with self._lock:
@@ -206,6 +249,14 @@ class DownloadProcessRunner:
         if process.is_alive():
             process.terminate()
             process.join(timeout=1)
+
+    def _file_size(self, path: Path | None) -> int:
+        if path is None:
+            return 0
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
 
 
 def _download_musicdl_candidate(
@@ -280,6 +331,17 @@ class MusicDlBackend:
         with self._lock_for(sources):
             client = self._client(sources)
             results = client.search(keyword=query)
+        return self._candidates_from_results(results, sources)
+
+    def _search_for_download(
+        self, query: str, sources: tuple[str, ...]
+    ) -> list[BackendCandidate]:
+        results = self._build_client(sources).search(keyword=query)
+        return self._candidates_from_results(results, sources)
+
+    def _candidates_from_results(
+        self, results: dict[str, list[Any]], sources: tuple[str, ...]
+    ) -> list[BackendCandidate]:
         candidates: list[BackendCandidate] = []
         for source in sources:
             for song in results.get(source, []):
@@ -569,7 +631,7 @@ class MusicDlBackend:
             )
             preferred_sources = (candidate.source,) if use_original_source else self._allowed_sources
             query = f"{candidate.title} {candidate.artist}"
-            matches = self.search(query, preferred_sources)
+            matches = self._search_for_download(query, preferred_sources)
             resolved = next((
                 item for item in matches
                 if _matches_track(item, candidate.title, candidate.artist, candidate.duration_ms)
@@ -582,7 +644,7 @@ class MusicDlBackend:
                     source for source in self._allowed_sources if source != candidate.source
                 )
                 if fallback_sources:
-                    matches = self.search(query, fallback_sources)
+                    matches = self._search_for_download(query, fallback_sources)
                     resolved = next((
                         item for item in matches
                         if _matches_track(
@@ -596,6 +658,7 @@ class MusicDlBackend:
                 raise RuntimeError("未在已启用音源中找到歌单歌曲")
             return self.download(resolved, task_id)
         effective_task_id = task_id or str(uuid.uuid4())
+        save_path = getattr(candidate.opaque, "save_path", None)
         return self._download_runner.run(
             effective_task_id,
             _download_musicdl_candidate,
@@ -603,10 +666,15 @@ class MusicDlBackend:
             str(self._state_dir),
             candidate.source,
             candidate.opaque,
+            progress_path=Path(save_path) if save_path else None,
+            total_bytes=candidate.file_size_bytes,
         )
 
     def cancel_download(self, task_id: str) -> None:
         self._download_runner.cancel(task_id)
+
+    def download_progress(self, task_id: str) -> DownloadProgress | None:
+        return self._download_runner.progress(task_id)
 
     def _client(self, sources: tuple[str, ...]):
         key = tuple(sorted(sources))
@@ -676,6 +744,16 @@ class AppState:
         cancel = getattr(self.backend, "cancel_download", None)
         if cancel is not None:
             cancel(task_id)
+
+    def download_progress(self, task_id: str) -> dict[str, int | None] | None:
+        progress = getattr(self.backend, "download_progress", lambda ignored: None)(task_id)
+        if progress is None:
+            return None
+        return {
+            "downloadedBytes": progress.downloaded_bytes,
+            "totalBytes": progress.total_bytes,
+            "bytesPerSecond": progress.bytes_per_second,
+        }
 
     def parse_playlist(self, url: str) -> dict[str, Any]:
         name, artwork_url, candidates = self.backend.parse_playlist(url)
@@ -771,6 +849,12 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/v1/search":
             self._search(parsed.query)
+            return
+        progress_match = re.fullmatch(r"/v1/downloads/([^/]+)/progress", parsed.path)
+        if progress_match:
+            self._json(HTTPStatus.OK, {
+                "progress": self.server.state.download_progress(progress_match.group(1))
+            })
             return
         self._error(HTTPStatus.NOT_FOUND, "接口不存在")
 

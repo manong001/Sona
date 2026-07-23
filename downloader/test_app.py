@@ -15,6 +15,7 @@ from app import (
     AppState,
     BackendCandidate,
     DownloadProcessRunner,
+    DownloadProgress,
     MusicDlBackend,
     PublicPlaylistItem,
     SonaDownloaderServer,
@@ -31,6 +32,15 @@ def wait_for_peer(directory: str, marker: str) -> bool:
             return True
         time.sleep(0.05)
     return False
+
+
+def write_download_chunks(path: str) -> list[str]:
+    target = Path(path)
+    for _ in range(4):
+        with target.open("ab") as output:
+            output.write(b"x" * 1024)
+        time.sleep(0.1)
+    return [target.name]
 
 
 class FakeBackend:
@@ -68,6 +78,9 @@ class FakeBackend:
     def cancel_download(self, task_id):
         self.cancelled_downloads.append(task_id)
 
+    def download_progress(self, task_id):
+        return DownloadProgress(2_000_000, 8_000_000, 500_000)
+
     def parse_playlist(self, url):
         self.parsed_playlist_urls.append(url)
         return (
@@ -94,6 +107,33 @@ class DownloaderApiTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "下载已取消"):
             runner.run("queued-task", time.sleep, 0)
+
+    def test_download_runner_reports_file_progress_and_speed(self):
+        runner = DownloadProcessRunner(timeout_seconds=2)
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "song.mp3"
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    runner.run,
+                    "progress-task",
+                    write_download_chunks,
+                    str(target),
+                    progress_path=target,
+                    total_bytes=4096,
+                )
+                deadline = time.monotonic() + 1
+                progress = None
+                while time.monotonic() < deadline:
+                    progress = runner.progress("progress-task")
+                    if progress is not None and progress.downloaded_bytes >= 1024:
+                        break
+                    time.sleep(0.02)
+
+                self.assertIsNotNone(progress)
+                self.assertGreaterEqual(progress.downloaded_bytes, 1024)
+                self.assertEqual(4096, progress.total_bytes)
+                self.assertGreater(progress.bytes_per_second, 0)
+                self.assertEqual(["song.mp3"], future.result())
 
     def setUp(self):
         self.temporary = TemporaryDirectory()
@@ -152,6 +192,16 @@ class DownloaderApiTest(unittest.TestCase):
 
         self.assertEqual(204, status)
         self.assertEqual(["task-1"], self.backend.cancelled_downloads)
+
+    def test_returns_download_progress(self):
+        status, body = self.request("GET", "/v1/downloads/task-1/progress")
+
+        self.assertEqual(200, status)
+        self.assertEqual({
+            "downloadedBytes": 2_000_000,
+            "totalBytes": 8_000_000,
+            "bytesPerSecond": 500_000,
+        }, body["progress"])
 
     def test_playback_fallback_caches_the_first_valid_url(self):
         calls = 0
@@ -511,7 +561,7 @@ class DownloaderApiTest(unittest.TestCase):
 
     def test_spotify_playlist_item_resolves_from_enabled_sources_when_downloaded(self):
         class InlineDownloadRunner:
-            def run(self, task_id, action, music_dir, state_dir, source, opaque):
+            def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):
                 return ["download/测试歌曲.flac"]
 
         spotify = BackendCandidate(
@@ -542,7 +592,7 @@ class DownloaderApiTest(unittest.TestCase):
             backend._lock = threading.Lock()
             backend._source_locks = {}
             backend._download_runner = InlineDownloadRunner()
-            backend.search = lambda query, sources: queries.append((query, sources)) or (
+            backend._search_for_download = lambda query, sources: queries.append((query, sources)) or (
                 [unrelated] if sources == ("NeteaseMusicClient",) else [resolved]
             )
 
@@ -558,6 +608,55 @@ class DownloaderApiTest(unittest.TestCase):
                 ("测试歌曲 测试歌手", ("QQMusicClient",)),
             ],
             queries,
+        )
+
+    def test_subscription_candidates_resolve_concurrently(self):
+        class InlineDownloadRunner:
+            def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):
+                return [f"download/{opaque.song_name}.mp3"]
+
+        search_barrier = threading.Barrier(2)
+        overlapping_queries = []
+
+        class ConcurrentSearchClient:
+            def search(self, keyword):
+                try:
+                    search_barrier.wait(timeout=1)
+                    overlapping_queries.append(keyword)
+                except threading.BrokenBarrierError:
+                    pass
+                title = keyword.removesuffix(" 测试歌手")
+                return {"TestSource": [SimpleNamespace(
+                    source="TestSource", song_name=title, singers="测试歌手", album="",
+                    ext="mp3", duration_s=180, duration="03:00", file_size_bytes=1_000,
+                    bitrate=320, samplerate=44_100, cover_url=None, lyric=None,
+                    work_dir="", save_path=f"/tmp/{title}.mp3",
+                )]}
+
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("TestSource",)
+            backend._music_dir = Path(directory)
+            backend._output_dir = Path(directory) / "download"
+            backend._state_dir = Path(directory)
+            backend._lock = threading.Lock()
+            backend._source_locks = {}
+            backend._download_runner = InlineDownloadRunner()
+            client = ConcurrentSearchClient()
+            backend._client = lambda sources: client
+            backend._build_client = lambda sources: client
+            candidates = [BackendCandidate(
+                "TestSource", f"歌曲 {index}", "测试歌手", "", "mp3",
+                180_000, None, None, None, None, None,
+                PublicPlaylistItem("TestSource", str(index)),
+            ) for index in range(2)]
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(backend.download, candidates))
+
+        self.assertEqual(2, len(results))
+        self.assertCountEqual(
+            ["歌曲 0 测试歌手", "歌曲 1 测试歌手"], overlapping_queries
         )
 
     def request(self, method, path, body=None, authenticated=True):

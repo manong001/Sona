@@ -5,6 +5,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -105,6 +106,18 @@ class MusicDlGateway implements DownloaderGateway {
             .header("X-Sona-Token", token)
             .retrieve()
             .toBodilessEntity();
+    }
+
+    @Override
+    public Optional<DownloadProgress> progress(String taskId) {
+        requireEnabled();
+        var response = searchClient.get()
+            .uri("/v1/downloads/{taskId}/progress", taskId)
+            .header("X-Sona-Token", token)
+            .accept(MediaType.APPLICATION_JSON)
+            .retrieve()
+            .body(ProgressEnvelope.class);
+        return Optional.ofNullable(response == null ? null : response.progress());
     }
 
     @Override
@@ -219,6 +232,9 @@ class MusicDlGateway implements DownloaderGateway {
     }
 
     private record DownloadEnvelope(List<String> files) {
+    }
+
+    private record ProgressEnvelope(DownloadProgress progress) {
     }
 
     private record PlaybackFallbackBody(String title, String artist, long durationMs, List<String> sources) {

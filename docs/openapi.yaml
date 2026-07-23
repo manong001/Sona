@@ -1972,6 +1972,15 @@ components:
             type: string
         message:
           type: [string, "null"]
+        downloadedBytes:
+          type: [integer, "null"]
+          format: int64
+        totalBytes:
+          type: [integer, "null"]
+          format: int64
+        bytesPerSecond:
+          type: [integer, "null"]
+          format: int64
         createdAt:
           type: integer
           format: int64

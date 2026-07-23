@@ -1,6 +1,7 @@
 package cc.eu.sosee.sona.download;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface DownloaderGateway {
 
@@ -23,6 +24,10 @@ public interface DownloaderGateway {
     }
 
     default void cancel(String taskId) {
+    }
+
+    default Optional<DownloadProgress> progress(String taskId) {
+        return Optional.empty();
     }
 
     String resolvePlaybackFallback(String title, String artist, long durationMs, List<String> sources);

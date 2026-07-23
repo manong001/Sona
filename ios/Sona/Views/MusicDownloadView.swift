@@ -1491,12 +1491,48 @@ private struct MusicDownloadTaskRow: View {
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
                 }
+                if task.state == .running {
+                    downloadProgressView
+                }
             }
             Spacer(minLength: 4)
             statusView
         }
         .padding(.horizontal, 16)
-        .frame(minHeight: 72)
+        .frame(minHeight: task.state == .running ? 90 : 72)
+    }
+
+    @ViewBuilder
+    private var downloadProgressView: some View {
+        if let downloaded = task.downloadedBytes, downloaded > 0 {
+            if let total = task.totalBytes, total > 0 {
+                ProgressView(value: min(Double(downloaded) / Double(total), 1))
+                    .tint(.sonaGreen)
+                Text(
+                    "\(Int(min(Double(downloaded) / Double(total), 1) * 100))% · "
+                    + "\(byteText(downloaded)) / \(byteText(total)) · \(speedText)"
+                )
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.sonaSecondaryText)
+            } else {
+                Text("已下载 \(byteText(downloaded)) · \(speedText)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.sonaSecondaryText)
+            }
+        } else {
+            Text("正在连接下载源…")
+                .font(.caption2)
+                .foregroundStyle(Color.sonaSecondaryText)
+        }
+    }
+
+    private var speedText: String {
+        guard let speed = task.bytesPerSecond, speed > 0 else { return "计算速度…" }
+        return "\(byteText(speed))/s"
+    }
+
+    private func byteText(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     @ViewBuilder
