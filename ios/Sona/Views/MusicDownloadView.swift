@@ -25,6 +25,10 @@ struct MusicDownloadView: View {
     @State private var showsClearFailedTasksConfirmation = false
     @State private var isClearingFailedTasks = false
     @State private var alternativeTask: MusicDownloadTask?
+    @State private var alternativeCandidates: [String: [DownloadCandidate]] = [:]
+    @State private var alternativeLoadingTaskIDs: Set<String> = []
+    @State private var alternativeLoadErrors: [String: String] = [:]
+    @State private var alternativeSearchTasks: [String: Task<Void, Never>] = [:]
 
     private let candidatePageSize = 20
 
@@ -103,6 +107,8 @@ struct MusicDownloadView: View {
         .onDisappear {
             searchTask?.cancel()
             addedToastTask?.cancel()
+            alternativeSearchTasks.values.forEach { $0.cancel() }
+            alternativeSearchTasks.removeAll()
         }
         .sheet(isPresented: $showsPlaylistImport) {
             PlaylistDownloadImportView { result in
@@ -111,16 +117,6 @@ struct MusicDownloadView: View {
                 }
                 needsLibraryRefresh = true
                 showAddedToast()
-            }
-            .desktopSheetSize(.large)
-        }
-        .sheet(item: $alternativeTask) { task in
-            DownloadAlternativePickerView(task: task, sources: sources) { updated in
-                if let index = tasks.firstIndex(where: { $0.id == updated.id }) {
-                    tasks[index] = updated
-                }
-                alternativeTask = nil
-                needsLibraryRefresh = true
             }
             .desktopSheetSize(.large)
         }
@@ -147,6 +143,34 @@ struct MusicDownloadView: View {
                 .padding()
             }
         }
+        .overlay {
+            if let task = alternativeTask {
+                ZStack {
+                    Color.black.opacity(0.28)
+                        .ignoresSafeArea()
+                        .onTapGesture { alternativeTask = nil }
+
+                    DownloadAlternativePickerView(
+                        task: task,
+                        candidates: alternativeCandidates[task.id] ?? [],
+                        isLoading: alternativeLoadingTaskIDs.contains(task.id),
+                        loadError: alternativeLoadErrors[task.id],
+                        close: { alternativeTask = nil }
+                    ) { updated in
+                        if let index = tasks.firstIndex(where: { $0.id == updated.id }) {
+                            tasks[index] = updated
+                        }
+                        alternativeCandidates[task.id] = nil
+                        alternativeLoadErrors[task.id] = nil
+                        alternativeTask = nil
+                        needsLibraryRefresh = true
+                    }
+                    .padding(20)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: alternativeTask?.id)
     }
 
     private var searchContent: some View {
@@ -280,7 +304,9 @@ struct MusicDownloadView: View {
                         MusicDownloadTaskRow(
                             task: task,
                             retry: { Task { await retry(task) } },
-                            chooseAlternative: { alternativeTask = task }
+                            alternativeCount: alternativeCandidates[task.id]?.count ?? 0,
+                            isLoadingAlternatives: alternativeLoadingTaskIDs.contains(task.id),
+                            chooseAlternative: { showAlternatives(for: task) }
                         )
                         Divider().overlay(Color.white.opacity(0.08))
                             .padding(.leading, 78)
@@ -297,6 +323,43 @@ struct MusicDownloadView: View {
             .filter { $0.state == .queued || $0.state == .running }
             .map { "\($0.id):\($0.state.rawValue)" }
             .joined(separator: "|")
+    }
+
+    private func showAlternatives(for task: MusicDownloadTask) {
+        alternativeTask = task
+        if let cached = alternativeCandidates[task.id], !cached.isEmpty {
+            return
+        }
+        guard alternativeSearchTasks[task.id] == nil else { return }
+
+        alternativeLoadErrors[task.id] = nil
+        alternativeLoadingTaskIDs.insert(task.id)
+        let sourceIDs = sources
+            .map(\.id)
+            .filter { $0 != "SpotifyMusicClient" }
+        alternativeSearchTasks[task.id] = Task {
+            defer {
+                alternativeLoadingTaskIDs.remove(task.id)
+                alternativeSearchTasks[task.id] = nil
+            }
+            do {
+                let response = try await APIClient.shared.searchMusicDownloads(
+                    query: "\(task.title) \(task.artist)",
+                    sources: sourceIDs
+                )
+                guard !Task.isCancelled else { return }
+                alternativeCandidates[task.id] = Array(response.items.filter {
+                    $0.source != "SpotifyMusicClient"
+                        && $0.candidateId != task.candidateId
+                }.prefix(3))
+            } catch is CancellationError {
+                // Leaving the download page cancels unfinished searches.
+            } catch let error as URLError where error.code == .cancelled {
+                // Leaving the download page cancels unfinished searches.
+            } catch {
+                alternativeLoadErrors[task.id] = error.localizedDescription
+            }
+        }
     }
 
     private var sortedTasks: [MusicDownloadTask] {
@@ -1498,6 +1561,8 @@ private struct DownloadCandidateRow: View {
 private struct MusicDownloadTaskRow: View {
     let task: MusicDownloadTask
     let retry: () -> Void
+    let alternativeCount: Int
+    let isLoadingAlternatives: Bool
     let chooseAlternative: () -> Void
 
     var body: some View {
@@ -1596,8 +1661,23 @@ private struct MusicDownloadTaskRow: View {
                 .tint(.red)
 
                 Button(action: chooseAlternative) {
-                    Label("选择音源", systemImage: "music.note.list")
-                        .font(.caption.weight(.semibold))
+                    HStack(spacing: 5) {
+                        if isLoadingAlternatives && alternativeCount == 0 {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "music.note.list")
+                        }
+                        Text("选择音源")
+                        if alternativeCount > 0 {
+                            Text("\(min(alternativeCount, 3))")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.black)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .background(.white.opacity(0.9), in: Circle())
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.sonaGreen)
@@ -1615,104 +1695,91 @@ private struct MusicDownloadTaskRow: View {
 }
 
 private struct DownloadAlternativePickerView: View {
-    @Environment(\.dismiss) private var dismiss
     let task: MusicDownloadTask
-    let sources: [DownloadSource]
+    let candidates: [DownloadCandidate]
+    let isLoading: Bool
+    let loadError: String?
+    let close: () -> Void
     let replaced: (MusicDownloadTask) -> Void
 
-    @State private var candidates: [DownloadCandidate] = []
-    @State private var isLoading = true
     @State private var replacingCandidateID: String?
     @State private var errorMessage: String?
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("选择备选音源")
+                        .font(.headline)
+                    Text("\(task.title) · \(task.artist)")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.1), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("关闭")
+            }
+            .padding(16)
+
+            Divider().overlay(Color.white.opacity(0.08))
+
             Group {
                 if isLoading {
                     ProgressView("正在查找备选音源…")
                         .tint(.sonaGreen)
+                        .frame(maxWidth: .infinity, minHeight: 92)
                 } else if candidates.isEmpty {
-                    ContentUnavailableView(
-                        "没有可用的备选音源",
-                        systemImage: "music.note.slash",
-                        description: Text("可以关闭后重新搜索，或稍后再试")
-                    )
+                    VStack(spacing: 8) {
+                        Image(systemName: "music.note.slash")
+                            .font(.title2)
+                            .foregroundStyle(Color.sonaSecondaryText)
+                        Text("没有可用的备选音源")
+                            .font(.subheadline.weight(.semibold))
+                        Text(loadError ?? "请稍后再试")
+                            .font(.caption)
+                            .foregroundStyle(Color.sonaSecondaryText)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 112)
                 } else {
-                    List {
-                        Section {
-                            ForEach(candidates) { candidate in
-                                DownloadCandidateRow(
-                                    candidate: candidate,
-                                    isQueuing: replacingCandidateID == candidate.id,
-                                    downloadState: candidate.downloadState
-                                ) {
-                                    Task { await replace(with: candidate) }
-                                }
+                    VStack(spacing: 0) {
+                        ForEach(Array(candidates.prefix(3).enumerated()), id: \.element.id) {
+                            index, candidate in
+                            DownloadCandidateRow(
+                                candidate: candidate,
+                                isQueuing: replacingCandidateID == candidate.id,
+                                downloadState: candidate.downloadState
+                            ) {
+                                Task { await replace(with: candidate) }
                             }
-                        } header: {
-                            Text("选择后将替换原任务，并保持原歌单位置")
+                            if index < min(candidates.count, 3) - 1 {
+                                Divider()
+                                    .overlay(Color.white.opacity(0.08))
+                                    .padding(.leading, 84)
+                            }
                         }
                     }
-                    .listStyle(.plain)
                 }
-            }
-            .background(Color.sonaBackground)
-            .navigationTitle("选择备选音源")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    ModalDismissButton("关闭")
-                }
-            }
-            .safeAreaInset(edge: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(task.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text("\(task.artist) · \(task.sourceName)")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.sonaSecondaryText)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color.sonaSurface)
-            }
-            .task { await load() }
-            .alert("操作失败", isPresented: Binding(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )) {
-                Button("好", role: .cancel) {}
-            } message: {
-                Text(errorMessage ?? "未知错误")
             }
         }
-    }
-
-    private func load() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-        do {
-            let sourceIDs = sources
-                .map(\.id)
-                .filter { $0 != "SpotifyMusicClient" }
-            let response = try await APIClient.shared.searchMusicDownloads(
-                query: "\(task.title) \(task.artist)",
-                sources: sourceIDs
-            )
-            candidates = response.items.filter {
-                $0.source != "SpotifyMusicClient"
-                    && $0.candidateId != task.candidateId
-            }
-        } catch is CancellationError {
-            return
-        } catch let error as URLError where error.code == .cancelled {
-            return
-        } catch {
-            errorMessage = error.localizedDescription
+        .frame(maxWidth: 560)
+        .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 18))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 10)
+        .alert("操作失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "未知错误")
         }
     }
 
@@ -1726,7 +1793,6 @@ private struct DownloadAlternativePickerView: View {
                 taskID: task.id, candidate: candidate
             )
             replaced(updated)
-            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
