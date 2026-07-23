@@ -1,48 +1,31 @@
 import SwiftUI
 
-struct StablePlaylistArtworkMenu<MenuLabel: View>: View, Equatable {
-    let playlistID: String
+struct PlaylistArtworkPopup: View {
     let hasSourceArtwork: Bool
     let hasManualArtwork: Bool
     let upload: () -> Void
     let useSourceArtwork: () -> Void
     let clearManualArtwork: () -> Void
-    let menuLabel: MenuLabel
-
-    init(
-        playlistID: String,
-        hasSourceArtwork: Bool,
-        hasManualArtwork: Bool,
-        upload: @escaping () -> Void,
-        useSourceArtwork: @escaping () -> Void,
-        clearManualArtwork: @escaping () -> Void,
-        @ViewBuilder label: () -> MenuLabel
-    ) {
-        self.playlistID = playlistID
-        self.hasSourceArtwork = hasSourceArtwork
-        self.hasManualArtwork = hasManualArtwork
-        self.upload = upload
-        self.useSourceArtwork = useSourceArtwork
-        self.clearManualArtwork = clearManualArtwork
-        self.menuLabel = label()
-    }
-
-    static func == (
-        lhs: StablePlaylistArtworkMenu<MenuLabel>,
-        rhs: StablePlaylistArtworkMenu<MenuLabel>
-    ) -> Bool {
-        lhs.playlistID == rhs.playlistID
-            && lhs.hasSourceArtwork == rhs.hasSourceArtwork
-            && lhs.hasManualArtwork == rhs.hasManualArtwork
-    }
 
     var body: some View {
-        Menu {
-            Button("上传图片", systemImage: "photo.badge.plus", action: upload)
-            Label("也可从歌曲右侧菜单指定", systemImage: "music.note")
+        VStack(spacing: 0) {
+            popupButton("上传图片", systemImage: "photo.badge.plus", action: upload)
+            HStack(spacing: 14) {
+                Image(systemName: "music.note")
+                    .frame(width: 24)
+                Text("也可从歌曲右侧菜单指定")
+                Spacer()
+            }
+            .font(.subheadline)
+            .foregroundStyle(Color.sonaSecondaryText)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 54)
+
             if hasSourceArtwork {
                 Divider()
-                Button(
+                    .overlay(Color.white.opacity(0.08))
+                    .padding(.horizontal, 16)
+                popupButton(
                     "使用源订阅封面",
                     systemImage: "photo.on.rectangle",
                     action: useSourceArtwork
@@ -50,15 +33,40 @@ struct StablePlaylistArtworkMenu<MenuLabel: View>: View, Equatable {
             }
             if hasManualArtwork {
                 Divider()
-                Button(
+                    .overlay(Color.white.opacity(0.08))
+                    .padding(.horizontal, 16)
+                popupButton(
                     "恢复自动轮换",
                     systemImage: "arrow.triangle.2.circlepath",
                     action: clearManualArtwork
                 )
             }
-        } label: {
-            menuLabel
         }
+        .frame(maxWidth: 340)
+        .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 22))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 10)
+    }
+
+    private func popupButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .frame(width: 24)
+                Text(title)
+                Spacer()
+            }
+            .font(.body)
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 58)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

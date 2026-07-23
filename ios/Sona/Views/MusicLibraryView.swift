@@ -949,6 +949,7 @@ private struct ManagedPlaylistDetailView: View {
     @State private var editingMetadataTrack: Track?
     @State private var playlistHeaderColor = Color(red: 0.08, green: 0.22, blue: 0.16)
     @State private var showsArtworkPicker = false
+    @State private var showsArtworkMenu = false
     @State private var artworkPhotoItem: PhotosPickerItem?
     let playlistID: String
 
@@ -1064,6 +1065,39 @@ private struct ManagedPlaylistDetailView: View {
                 DirectoryImportProgressOverlay(message: importProgressMessage)
             }
         }
+        .overlay {
+            if showsArtworkMenu {
+                ZStack {
+                    Color.black.opacity(0.24)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { showsArtworkMenu = false }
+                    PlaylistArtworkPopup(
+                        hasSourceArtwork: playlist?.sourceArtworkURL != nil,
+                        hasManualArtwork: playlist?.artworkTrackID != nil,
+                        upload: {
+                            showsArtworkMenu = false
+                            showsArtworkPicker = true
+                        },
+                        useSourceArtwork: {
+                            showsArtworkMenu = false
+                            Task {
+                                await personal.useSourcePlaylistArtwork(playlistID: playlistID)
+                            }
+                        },
+                        clearManualArtwork: {
+                            showsArtworkMenu = false
+                            Task {
+                                await personal.clearPlaylistArtwork(playlistID: playlistID)
+                            }
+                        }
+                    )
+                    .padding(24)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.16), value: showsArtworkMenu)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(detailNavigationBarVisibility, for: .navigationBar)
@@ -1412,22 +1446,12 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private var playlistArtworkMenu: some View {
-        StablePlaylistArtworkMenu(
-            playlistID: playlistID,
-            hasSourceArtwork: playlist?.sourceArtworkURL != nil,
-            hasManualArtwork: playlist?.artworkTrackID != nil,
-            upload: { showsArtworkPicker = true },
-            useSourceArtwork: {
-                Task { await personal.useSourcePlaylistArtwork(playlistID: playlistID) }
-            },
-            clearManualArtwork: {
-                Task { await personal.clearPlaylistArtwork(playlistID: playlistID) }
-            }
-        ) {
+        Button {
+            showsArtworkMenu = true
+        } label: {
             Label("设置歌单封面", systemImage: "photo")
                 .frame(width: 24)
         }
-        .equatable()
     }
 
     private func playRandom() {

@@ -549,6 +549,7 @@ struct SonaTrackListView: View {
     @State private var madeForYouHeaderColor = Color(red: 0.24, green: 0.12, blue: 0.18)
     @State private var playlistHeaderColor = Color(red: 0.08, green: 0.22, blue: 0.16)
     @State private var showsArtworkPicker = false
+    @State private var showsArtworkMenu = false
     @State private var artworkPhotoItem: PhotosPickerItem?
     let collection: SonaCollection
     let playbackQueue: [Track]?
@@ -997,6 +998,41 @@ struct SonaTrackListView: View {
                 DirectoryImportProgressOverlay(message: importProgressMessage)
             }
         }
+        .overlay {
+            if showsArtworkMenu {
+                ZStack {
+                    Color.black.opacity(0.24)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { showsArtworkMenu = false }
+                    PlaylistArtworkPopup(
+                        hasSourceArtwork: playlist?.sourceArtworkURL != nil,
+                        hasManualArtwork: playlist?.artworkTrackID != nil,
+                        upload: {
+                            showsArtworkMenu = false
+                            showsArtworkPicker = true
+                        },
+                        useSourceArtwork: {
+                            showsArtworkMenu = false
+                            guard let playlist else { return }
+                            Task {
+                                await personal.useSourcePlaylistArtwork(playlistID: playlist.id)
+                            }
+                        },
+                        clearManualArtwork: {
+                            showsArtworkMenu = false
+                            guard let playlist else { return }
+                            Task {
+                                await personal.clearPlaylistArtwork(playlistID: playlist.id)
+                            }
+                        }
+                    )
+                    .padding(24)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.16), value: showsArtworkMenu)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(detailNavigationBarVisibility, for: .navigationBar)
         .toolbar {
@@ -1195,27 +1231,15 @@ struct SonaTrackListView: View {
     }
 
     private var playlistArtworkMenu: some View {
-        StablePlaylistArtworkMenu(
-            playlistID: playlist?.id ?? "",
-            hasSourceArtwork: playlist?.sourceArtworkURL != nil,
-            hasManualArtwork: playlist?.artworkTrackID != nil,
-            upload: { showsArtworkPicker = true },
-            useSourceArtwork: {
-                guard let playlist else { return }
-                Task { await personal.useSourcePlaylistArtwork(playlistID: playlist.id) }
-            },
-            clearManualArtwork: {
-                guard let playlist else { return }
-                Task { await personal.clearPlaylistArtwork(playlistID: playlist.id) }
-            }
-        ) {
+        Button {
+            showsArtworkMenu = true
+        } label: {
             Image(systemName: "photo")
                 .font(.title3)
                 .foregroundStyle(.white)
                 .frame(width: 36, height: 36)
                 .background(.white.opacity(0.1), in: Circle())
         }
-        .equatable()
         .buttonStyle(.plain)
         .accessibilityLabel("设置歌单封面")
     }
