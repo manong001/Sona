@@ -66,6 +66,9 @@ _LIVE_VERSION_PATTERN = re.compile(
     r"|演唱会(?:版)?|现场(?:版)?",
     re.IGNORECASE,
 )
+_BRACKETED_TITLE_NOTE_PATTERN = re.compile(
+    r"\([^()]*\)|\[[^\[\]]*\]|【[^【】]*】|《[^《》]*》|「[^「」]*」|『[^『』]*』"
+)
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {"mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif", "ogg", "opus", "ape", "wv", "tta"}
 )
@@ -1403,6 +1406,14 @@ def _best_ranked_playlist_match(
         exact_title = candidate_title == normalized_title
         artist_matches = _artists_match(candidate.artist, artist)
         localized_artist = _artists_may_be_localized(candidate.artist, artist)
+        candidate_title_without_notes = _normalize_track_title(
+            candidate.title, omit_bracketed_notes=True,
+        )
+        title_without_notes = (
+            bool(candidate_title_without_notes)
+            and candidate_title_without_notes
+            == _normalize_track_title(title, omit_bracketed_notes=True)
+        )
         live_title = (
             _is_live_version(candidate.title)
             and _normalize_track_title(candidate.title, omit_live_marker=True)
@@ -1424,13 +1435,19 @@ def _best_ranked_playlist_match(
         if (
             not (
                 (exact_title and (artist_matches or localized_artist))
+                or (title_without_notes and (artist_matches or localized_artist))
                 or (title_alias and artist_matches)
                 or (live_title and artist_matches)
             )
             or duration_difference > duration_tolerance
         ):
             continue
-        title_rank = 0 if exact_title else (2 if live_title else 1)
+        title_rank = (
+            0 if exact_title
+            else 3 if live_title
+            else 1 if title_without_notes
+            else 2
+        )
         score = (
             title_rank,
             0 if artist_matches else 1,
@@ -1503,12 +1520,24 @@ def _normalize_track_text(value: str) -> str:
     return re.sub(r"[^\w\u4e00-\u9fff]", "", simplified).casefold()
 
 
-def _normalize_track_title(value: str, *, omit_live_marker: bool = False) -> str:
-    if not omit_live_marker:
+def _normalize_track_title(
+    value: str,
+    *,
+    omit_live_marker: bool = False,
+    omit_bracketed_notes: bool = False,
+) -> str:
+    if not omit_live_marker and not omit_bracketed_notes:
         return _normalize_track_text(value)
     compatible = unicodedata.normalize("NFKC", value)
     simplified = _TRADITIONAL_TO_SIMPLIFIED.convert(compatible)
-    return _normalize_track_text(_LIVE_VERSION_PATTERN.sub("", simplified))
+    if omit_live_marker:
+        simplified = _LIVE_VERSION_PATTERN.sub("", simplified)
+    if omit_bracketed_notes:
+        previous = None
+        while previous != simplified:
+            previous = simplified
+            simplified = _BRACKETED_TITLE_NOTE_PATTERN.sub("", simplified)
+    return _normalize_track_text(simplified)
 
 
 def _is_live_version(value: str) -> bool:

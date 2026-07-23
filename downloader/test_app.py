@@ -955,6 +955,24 @@ class DownloaderApiTest(unittest.TestCase):
 
         self.assertIs(candidates[0], match)
 
+    def test_playlist_match_ignores_bracketed_title_notes(self):
+        candidates = [
+            BackendCandidate(
+                "QQMusicClient", "无名的人", "毛不易", "", "flac",
+                244_000, 1_000, 1_411, 44_100, None, None,
+                SimpleNamespace(tag="without-movie-note"),
+            ),
+        ]
+
+        match = _best_ranked_playlist_match(
+            candidates,
+            "無名的人（電影《雄獅少年》主題曲）",
+            "Mao Buyi",
+            244_000,
+        )
+
+        self.assertIs(candidates[0], match)
+
     def test_playlist_match_accepts_original_artist_with_collaborators(self):
         candidates = [
             BackendCandidate(
