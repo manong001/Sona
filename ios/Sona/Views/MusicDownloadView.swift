@@ -31,16 +31,24 @@ struct MusicDownloadView: View {
     @State private var alternativeSearchTasks: [String: Task<Void, Never>] = [:]
 
     private let candidatePageSize = 20
+    private let showsSectionPicker: Bool
+
+    init(initialSection: Int = 0, showsSectionPicker: Bool = true) {
+        _selectedSection = State(initialValue: initialSection)
+        self.showsSectionPicker = showsSectionPicker
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("内容", selection: $selectedSection) {
-                Text("搜索").tag(0)
-                Text("下载任务").tag(1)
+            if showsSectionPicker {
+                Picker("内容", selection: $selectedSection) {
+                    Text("搜索").tag(0)
+                    Text("下载任务").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
 
             if selectedSection == 0 {
                 searchContent
@@ -337,6 +345,7 @@ struct MusicDownloadView: View {
         let sourceIDs = sources
             .map(\.id)
             .filter { $0 != "SpotifyMusicClient" }
+        let searchQuery = alternativeSearchQuery(for: task)
         alternativeSearchTasks[task.id] = Task {
             defer {
                 alternativeLoadingTaskIDs.remove(task.id)
@@ -352,7 +361,7 @@ struct MusicDownloadView: View {
                     group.addTask {
                         do {
                             let response = try await APIClient.shared.searchMusicDownloads(
-                                query: "\(task.title) \(task.artist)",
+                                query: searchQuery,
                                 sources: source.isEmpty ? [] : [source],
                                 timeout: 30
                             )
@@ -394,6 +403,28 @@ struct MusicDownloadView: View {
                 alternativeLoadErrors[task.id] = firstError
             }
         }
+    }
+
+    private func alternativeSearchQuery(for task: MusicDownloadTask) -> String {
+        let artist = task.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleBudget = max(20, 110 - artist.utf16.count - 1)
+        let title = utf16Prefix(
+            task.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            maxLength: titleBudget
+        )
+        return utf16Prefix("\(title) \(artist)", maxLength: 110)
+    }
+
+    private func utf16Prefix(_ value: String, maxLength: Int) -> String {
+        var result = ""
+        var length = 0
+        for character in value {
+            let characterLength = String(character).utf16.count
+            guard length + characterLength <= maxLength else { break }
+            result.append(character)
+            length += characterLength
+        }
+        return result
     }
 
     private var sortedTasks: [MusicDownloadTask] {
@@ -622,53 +653,43 @@ struct PlaylistSubscriptionsView: View {
     @State private var renamingSubscription: PlaylistSubscription?
     @State private var inspectingSubscription: PlaylistSubscription?
     @State private var errorMessage: String?
+    @State private var selectedSection = 0
     let changed: () -> Void
 
     var body: some View {
         NavigationStack {
-            Group {
-                if isLoading && subscriptions.isEmpty {
-                    ProgressView("正在载入订阅…")
-                } else if subscriptions.isEmpty {
-                    ContentUnavailableView(
-                        "还没有在线歌单订阅",
-                        systemImage: "link.badge.plus",
-                        description: Text("订阅公开歌单后，Sona 会按周期匹配本地曲库。")
-                    )
-                    .desktopEmptyState()
+            VStack(spacing: 0) {
+                Picker("内容", selection: $selectedSection) {
+                    Text("歌单订阅").tag(0)
+                    Text("下载任务").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                if selectedSection == 0 {
+                    subscriptionContent
                 } else {
-                    List {
-                        ForEach(subscriptions) { subscription in
-                            subscriptionRow(subscription)
-                                .swipeActions {
-                                    Button(role: .destructive) {
-                                        Task { await delete(subscription) }
-                                    } label: {
-                                        Label("取消订阅", systemImage: "trash")
-                                    }
-                                    .tint(.red)
-                                }
-                        }
-                    }
-                    .listStyle(.plain)
+                    MusicDownloadView(initialSection: 1, showsSectionPicker: false)
                 }
             }
             .background(Color.sonaBackground)
-            .navigationTitle("在线歌单订阅")
+            .navigationTitle(selectedSection == 0 ? "在线歌单订阅" : "音乐下载")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     ModalDismissButton("关闭")
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("添加", systemImage: "plus") { showsCreate = true }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if selectedSection == 0 {
+                        Button("添加", systemImage: "plus") { showsCreate = true }
+                    }
                 }
             }
             .task { await load() }
             .task(id: hasActiveDownloads) {
                 await monitorDownloads()
             }
-            .refreshable { await load() }
             .sheet(isPresented: $showsCreate) {
                 CreatePlaylistSubscriptionView { subscription in
                     subscriptions.removeAll { $0.id == subscription.id }
@@ -708,6 +729,36 @@ struct PlaylistSubscriptionsView: View {
             } message: {
                 Text(errorMessage ?? "未知错误")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var subscriptionContent: some View {
+        if isLoading && subscriptions.isEmpty {
+            ProgressView("正在载入订阅…")
+        } else if subscriptions.isEmpty {
+            ContentUnavailableView(
+                "还没有在线歌单订阅",
+                systemImage: "link.badge.plus",
+                description: Text("订阅公开歌单后，Sona 会按周期匹配本地曲库。")
+            )
+            .desktopEmptyState()
+        } else {
+            List {
+                ForEach(subscriptions) { subscription in
+                    subscriptionRow(subscription)
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                Task { await delete(subscription) }
+                            } label: {
+                                Label("取消订阅", systemImage: "trash")
+                            }
+                            .tint(.red)
+                        }
+                }
+            }
+            .listStyle(.plain)
+            .refreshable { await load() }
         }
     }
 

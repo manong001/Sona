@@ -7,9 +7,9 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.util.List;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,8 +18,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
-@Validated
 @RestController
 @RequestMapping("/api/v1/downloads")
 class DownloadController {
@@ -37,9 +37,14 @@ class DownloadController {
 
     @GetMapping("/search")
     SearchResponse search(
-        @RequestParam @NotBlank @Size(max = 120) String q,
+        @RequestParam String q,
         @RequestParam(required = false) String sources
     ) {
+        if (q == null || q.isBlank() || q.length() > 120) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST, "搜索词长度必须为 1 到 120 个字符"
+            );
+        }
         var selectedSources = sources == null || sources.isBlank()
             ? List.<String>of()
             : List.of(sources.split(",")).stream().map(String::strip).filter(value -> !value.isEmpty()).toList();
