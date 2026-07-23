@@ -93,8 +93,22 @@ class MusicDlGateway implements DownloaderGateway {
             .contentLength(requestBody.length)
             .accept(MediaType.APPLICATION_JSON)
             .body(requestBody)
-            .retrieve()
-            .body(DownloadEnvelope.class);
+            .exchange((request, sidecarResponse) -> {
+                var responseBody = sidecarResponse.getBody().readAllBytes();
+                if (sidecarResponse.getStatusCode().isError()) {
+                    throw new IllegalStateException(downloadError(responseBody));
+                }
+                if (responseBody.length == 0) {
+                    return null;
+                }
+                try {
+                    return objectMapper.readValue(responseBody, DownloadEnvelope.class);
+                } catch (JacksonException exception) {
+                    throw new IllegalStateException(
+                        "下载服务返回了无效数据", exception
+                    );
+                }
+            });
         return response == null || response.files() == null ? List.of() : response.files();
     }
 
@@ -198,6 +212,18 @@ class MusicDlGateway implements DownloaderGateway {
         return statusCode.is4xxClientError()
             ? "歌单链接无法解析"
             : "歌单解析服务暂时不可用";
+    }
+
+    private String downloadError(byte[] responseBody) {
+        try {
+            var response = objectMapper.readValue(responseBody, ErrorEnvelope.class);
+            if (response != null && response.error() != null && !response.error().isBlank()) {
+                return response.error();
+            }
+        } catch (JacksonException ignored) {
+            // Fall through to the stable client-facing message.
+        }
+        return "下载服务暂时不可用";
     }
 
     private RestClient client(String baseUrl, Duration readTimeout) {

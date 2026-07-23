@@ -614,6 +614,100 @@ class DownloaderApiTest(unittest.TestCase):
             queries,
         )
 
+    def test_spotify_playlist_download_accepts_a_localized_title_alias(self):
+        downloaded = []
+
+        class InlineDownloadRunner:
+            def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):
+                downloaded.append(opaque.tag)
+                return ["download/CHOOM.flac"]
+
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "CHOOM", "BABYMONSTER", "", "mp3",
+            178_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:choom"),
+        )
+        localized = BackendCandidate(
+            "QQMusicClient", "춤 (CHOOM)", "BABYMONSTER", "", "flac",
+            178_000, 1_000, 1_411, 44_100, None, None,
+            SimpleNamespace(tag="choom"),
+        )
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = ("QQMusicClient",)
+            backend._music_dir = Path(directory)
+            backend._state_dir = Path(directory)
+            backend._download_runner = InlineDownloadRunner()
+            backend._search_for_download = lambda query, sources: [localized]
+
+            self.assertEqual(["download/CHOOM.flac"], backend.download(spotify))
+
+        self.assertEqual(["choom"], downloaded)
+
+    def test_spotify_playlist_download_prefers_the_top_ranked_localized_artist(self):
+        downloaded = []
+
+        class InlineDownloadRunner:
+            def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):
+                downloaded.append(opaque.tag)
+                return ["download/Good Goodbye.flac"]
+
+        def result(source, title, artist, duration, tag):
+            return BackendCandidate(
+                source, title, artist, "", "flac", duration, 1_000,
+                1_411, 44_100, None, None, SimpleNamespace(tag=tag),
+            )
+
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "Good Goodbye", "HWASA", "", "mp3",
+            223_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:good-goodbye"),
+        )
+        matches = [
+            result("MiguMusicClient", "Too Good To Say Goodbye", "Bruno Mars", 282_000, "migu-1"),
+            result("MiguMusicClient", "Goodnight Goodbye", "John Newman", 223_000, "migu-2"),
+            result("MiguMusicClient", "Good Goodbye", "ONE OK ROCK", 224_000, "wrong-migu"),
+            result("NeteaseMusicClient", "Good Goodbye (Sped Up)", "K-demon", 205_000, "netease-1"),
+            result("NeteaseMusicClient", "Good Goodbye", "Grrreta", 222_000, "wrong-netease"),
+            result("KuwoMusicClient", "Good Goodbye", "화사", 223_000, "hwasa"),
+        ]
+        with TemporaryDirectory() as directory:
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._allowed_sources = (
+                "MiguMusicClient", "NeteaseMusicClient", "KuwoMusicClient",
+            )
+            backend._music_dir = Path(directory)
+            backend._state_dir = Path(directory)
+            backend._download_runner = InlineDownloadRunner()
+            backend._search_for_download = lambda query, sources: matches
+
+            self.assertEqual(["download/Good Goodbye.flac"], backend.download(spotify))
+
+        self.assertEqual(["hwasa"], downloaded)
+
+    def test_spotify_playlist_download_rejects_ambiguous_same_rank_candidates(self):
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "Same Name", "Original Artist", "", "mp3",
+            180_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:ambiguous"),
+        )
+        matches = [
+            BackendCandidate(
+                "NeteaseMusicClient", "Same Name", "Other Artist", "", "flac",
+                180_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
+            ),
+            BackendCandidate(
+                "KuwoMusicClient", "Same Name", "Another Artist", "", "flac",
+                181_000, 1_000, 1_411, 44_100, None, None, SimpleNamespace(),
+            ),
+        ]
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("NeteaseMusicClient", "KuwoMusicClient")
+        backend._search_for_download = lambda query, sources: matches
+
+        with self.assertRaisesRegex(RuntimeError, "未在已启用音源中找到歌单歌曲"):
+            backend.download(spotify)
+
     def test_public_playlist_item_resolves_by_source_identifier_before_search(self):
         class InlineDownloadRunner:
             def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):

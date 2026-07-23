@@ -700,6 +700,7 @@ class MusicDlBackend:
             preferred_sources = (candidate.source,) if use_original_source else self._allowed_sources
             query = f"{candidate.title} {candidate.artist}"
             matches = self._search_for_download(query, preferred_sources)
+            searched_matches = list(matches)
             resolved = next((
                 item for item in matches
                 if _matches_track(item, candidate.title, candidate.artist, candidate.duration_ms)
@@ -713,6 +714,7 @@ class MusicDlBackend:
                 )
                 if fallback_sources:
                     matches = self._search_for_download(query, fallback_sources)
+                    searched_matches.extend(matches)
                     resolved = next((
                         item for item in matches
                         if _matches_track(
@@ -722,6 +724,13 @@ class MusicDlBackend:
                         item for item in matches
                         if _matches_track(item, candidate.title, candidate.artist, None)
                     ), None)
+            if resolved is None:
+                resolved = _best_ranked_playlist_match(
+                    searched_matches,
+                    candidate.title,
+                    candidate.artist,
+                    candidate.duration_ms,
+                )
             if resolved is None:
                 raise RuntimeError("未在已启用音源中找到歌单歌曲")
             return self.download(resolved, task_id)
@@ -1196,12 +1205,71 @@ def _supports_resolver(resolver: str, candidate: BackendCandidate) -> bool:
 
 
 def _matches_track(candidate: BackendCandidate, title: str, artist: str, duration_ms: int | None) -> bool:
-    normalize = lambda value: re.sub(r"[^\w\u4e00-\u9fff]", "", value).casefold()
-    if normalize(candidate.title) != normalize(title):
+    if _normalize_track_text(candidate.title) != _normalize_track_text(title):
         return False
-    if normalize(artist) not in normalize(candidate.artist) and normalize(candidate.artist) not in normalize(artist):
+    if not _artists_match(candidate.artist, artist):
         return False
     return not duration_ms or not candidate.duration_ms or abs(candidate.duration_ms - duration_ms) <= 5_000
+
+
+def _best_ranked_playlist_match(
+    candidates: list[BackendCandidate],
+    title: str,
+    artist: str,
+    duration_ms: int | None,
+) -> BackendCandidate | None:
+    if not duration_ms:
+        return None
+    normalized_title = _normalize_track_text(title)
+    source_positions: dict[str, int] = {}
+    ranked: list[tuple[tuple[int, int, int, int], BackendCandidate]] = []
+    for candidate in candidates:
+        position = source_positions.get(candidate.source, 0)
+        source_positions[candidate.source] = position + 1
+        if not candidate.duration_ms:
+            continue
+        candidate_title = _normalize_track_text(candidate.title)
+        exact_title = candidate_title == normalized_title
+        artist_matches = _artists_match(candidate.artist, artist)
+        title_alias = (
+            min(len(candidate_title), len(normalized_title)) >= 4
+            and (
+                candidate_title in normalized_title
+                or normalized_title in candidate_title
+            )
+        )
+        duration_difference = abs(candidate.duration_ms - duration_ms)
+        if (
+            not (exact_title or (title_alias and artist_matches))
+            or duration_difference > 5_000
+        ):
+            continue
+        score = (
+            0 if artist_matches else 1,
+            0 if exact_title else 1,
+            position,
+            duration_difference,
+        )
+        ranked.append((score, candidate))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda value: value[0])
+    if len(ranked) > 1 and ranked[0][0][:3] == ranked[1][0][:3]:
+        return None
+    return ranked[0][1]
+
+
+def _normalize_track_text(value: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff]", "", value).casefold()
+
+
+def _artists_match(first: str, second: str) -> bool:
+    normalized_first = _normalize_track_text(first)
+    normalized_second = _normalize_track_text(second)
+    return (
+        normalized_first in normalized_second
+        or normalized_second in normalized_first
+    )
 
 
 def _opaque_value(opaque: Any, name: str) -> str:

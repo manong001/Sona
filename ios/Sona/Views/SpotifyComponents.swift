@@ -1135,6 +1135,7 @@ struct SonaTrackListView: View {
                     .accessibilityLabel(isSelecting ? "完成" : "多选")
                 }
             }
+            .buttonStyle(.plain)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             Spacer()

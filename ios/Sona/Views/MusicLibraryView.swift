@@ -1177,6 +1177,7 @@ private struct ManagedPlaylistDetailView: View {
                 .accessibilityLabel("随机播放")
                 .disabled(tracks.isEmpty)
             }
+            .buttonStyle(.plain)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             Spacer()
