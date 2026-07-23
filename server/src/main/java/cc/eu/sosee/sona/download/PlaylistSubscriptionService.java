@@ -55,13 +55,16 @@ class PlaylistSubscriptionService {
         var values = subscriptions.findAll(userId);
         for (var subscription : values) {
             if (!syncing.contains(subscription.id())) {
+                downloadService.reconcileCompletedPlaylistDownloads(
+                    subscription.playlistId()
+                );
                 playlistImportService.replaceTracks(
                     userId, subscription.playlistId(),
                     subscriptions.matchedTrackIds(subscription.id())
                 );
             }
         }
-        return values;
+        return subscriptions.findAll(userId);
     }
 
     synchronized PlaylistSubscriptionRepository.Subscription create(
@@ -240,6 +243,9 @@ class PlaylistSubscriptionService {
             return subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
         }
         try {
+            downloadService.reconcileCompletedPlaylistDownloads(
+                subscription.playlistId()
+            );
             var preview = downloadService.parsePlaylist(subscription.sourceUrl());
             if (useRemoteName && preview.name() != null && !preview.name().isBlank()) {
                 var remoteName = preview.name().strip();

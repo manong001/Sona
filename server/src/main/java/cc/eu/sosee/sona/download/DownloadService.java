@@ -23,16 +23,19 @@ class DownloadService {
     private final DownloadTaskRepository repository;
     private final TaskExecutor taskExecutor;
     private final PlaylistDownloadImportService playlistImportService;
+    private final PlaylistSubscriptionRepository subscriptionRepository;
 
     DownloadService(
         DownloaderGateway gateway,
         DownloadTaskRepository repository,
         PlaylistDownloadImportService playlistImportService,
+        PlaylistSubscriptionRepository subscriptionRepository,
         @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
         this.gateway = gateway;
         this.repository = repository;
         this.playlistImportService = playlistImportService;
+        this.subscriptionRepository = subscriptionRepository;
         this.taskExecutor = taskExecutor;
     }
 
@@ -138,6 +141,25 @@ class DownloadService {
         return Optional.of(task);
     }
 
+    void reconcileCompletedPlaylistDownloads(String targetPlaylistId) {
+        for (var task : repository.findCompletedByTargetPlaylist(targetPlaylistId)) {
+            List<String> trackIds;
+            try {
+                trackIds = playlistImportService.findDownloadedTrackIds(task.files());
+            } catch (IllegalStateException exception) {
+                LOGGER.debug("Skip reconciliation for missing downloaded files: taskId={}", task.id(), exception);
+                continue;
+            }
+            for (var trackId : trackIds) {
+                if (subscriptionRepository.bindDownloadedTrack(
+                    targetPlaylistId, task.title(), task.artist(), trackId
+                )) {
+                    break;
+                }
+            }
+        }
+    }
+
     private Optional<DownloadTaskState> existingState(DownloadCandidate candidate) {
         if (repository.existsInLibrary(candidate)) {
             return Optional.of(DownloadTaskState.COMPLETED);
@@ -207,7 +229,16 @@ class DownloadService {
             if (task.targetPlaylistId() == null) {
                 playlistImportService.scanDownloadedFiles(files);
             } else {
-                playlistImportService.addDownloadedFiles(task.targetPlaylistId(), files);
+                var trackIds = playlistImportService.addDownloadedFiles(
+                    task.targetPlaylistId(), files
+                );
+                for (var trackId : trackIds) {
+                    if (subscriptionRepository.bindDownloadedTrack(
+                        task.targetPlaylistId(), task.title(), task.artist(), trackId
+                    )) {
+                        break;
+                    }
+                }
             }
             repository.update(task.id(), DownloadTaskState.COMPLETED, files, null);
         } catch (Exception exception) {

@@ -158,6 +158,19 @@ class DownloadTaskRepository {
             .optional();
     }
 
+    List<DownloadTask> findCompletedByTargetPlaylist(String targetPlaylistId) {
+        return jdbcClient.sql("""
+                SELECT * FROM download_tasks
+                WHERE target_playlist_id = :targetPlaylistId
+                  AND state = 'COMPLETED'
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 500
+                """)
+            .param("targetPlaylistId", targetPlaylistId)
+            .query(this::map)
+            .list();
+    }
+
     boolean delete(String id, String requestedBy) {
         return jdbcClient.sql("DELETE FROM download_tasks WHERE id = :id AND requested_by = :requestedBy")
             .param("id", id)

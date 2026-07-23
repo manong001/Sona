@@ -159,6 +159,42 @@ class PlaylistSubscriptionRepository {
             .update() == 1;
     }
 
+    boolean bindDownloadedTrack(
+        String playlistId, String title, String artist, String trackId
+    ) {
+        return jdbcClient.sql("""
+                UPDATE playlist_subscription_items
+                SET matched_track_id = :trackId, state = 'MATCHED'
+                WHERE rowid = (
+                    SELECT items.rowid
+                    FROM playlist_subscription_items items
+                    JOIN playlist_subscriptions subscriptions
+                      ON subscriptions.id = items.subscription_id
+                    WHERE subscriptions.playlist_id = :playlistId
+                      AND items.matched_track_id IS NULL
+                      AND trim(items.title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                      AND replace(trim(items.artist), '、', '/') COLLATE NOCASE =
+                          replace(trim(:artist), '、', '/') COLLATE NOCASE
+                      AND EXISTS (
+                          SELECT 1 FROM playlist_tracks
+                          WHERE playlist_id = :playlistId AND track_id = :trackId
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM playlist_subscription_items other
+                          WHERE other.subscription_id = items.subscription_id
+                            AND other.matched_track_id = :trackId
+                      )
+                    ORDER BY items.position
+                    LIMIT 1
+                )
+                """)
+            .param("playlistId", playlistId)
+            .param("title", title.strip())
+            .param("artist", artist.strip())
+            .param("trackId", trackId)
+            .update() == 1;
+    }
+
     void updateItemState(String subscriptionId, String itemKey, String state) {
         jdbcClient.sql("""
                 UPDATE playlist_subscription_items SET state = :state

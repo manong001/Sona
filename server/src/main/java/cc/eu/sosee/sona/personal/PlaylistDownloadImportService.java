@@ -39,16 +39,23 @@ public class PlaylistDownloadImportService {
         return new Target(playlist.id(), playlist.name());
     }
 
-    public void addDownloadedFiles(String playlistId, List<String> relativeFiles) {
+    public List<String> addDownloadedFiles(String playlistId, List<String> relativeFiles) {
         var files = relativeFiles.stream().map(this::resolveFile).distinct().toList();
         scanFiles(files);
-        if (repository.addPlaylistTracksByPaths(playlistId, files) == 0) {
+        var trackIds = repository.addPlaylistTracksByPaths(playlistId, files);
+        if (trackIds.isEmpty()) {
             throw new IllegalStateException("歌曲已下载，但扫描后未找到可加入歌单的曲目");
         }
+        return trackIds;
     }
 
     public void scanDownloadedFiles(List<String> relativeFiles) {
         scanFiles(relativeFiles.stream().map(this::resolveFile).distinct().toList());
+    }
+
+    public List<String> findDownloadedTrackIds(List<String> relativeFiles) {
+        var files = relativeFiles.stream().map(this::resolveFile).distinct().toList();
+        return repository.trackIdsByPaths(files);
     }
 
     private void scanFiles(List<Path> files) {

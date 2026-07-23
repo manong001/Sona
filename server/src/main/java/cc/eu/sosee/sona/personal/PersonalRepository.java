@@ -771,19 +771,25 @@ class PersonalRepository {
     }
 
     @Transactional
-    int addPlaylistTracksByPaths(String playlistId, List<Path> paths) {
-        if (paths.isEmpty()) {
-            return 0;
-        }
-        var trackIds = jdbcClient.sql("SELECT id FROM tracks WHERE path IN (:paths)")
-            .param("paths", paths.stream().map(path -> path.toAbsolutePath().normalize().toString()).toList())
-            .query(String.class)
-            .list();
+    List<String> addPlaylistTracksByPaths(String playlistId, List<Path> paths) {
+        var trackIds = trackIdsByPaths(paths);
         for (var trackId : trackIds) {
             insertPlaylistTrack(playlistId, trackId);
         }
         applyPlaylistPoolType(playlistId, trackIds);
-        return trackIds.size();
+        return trackIds;
+    }
+
+    List<String> trackIdsByPaths(List<Path> paths) {
+        if (paths.isEmpty()) {
+            return List.of();
+        }
+        return jdbcClient.sql("SELECT id FROM tracks WHERE path IN (:paths)")
+            .param("paths", paths.stream().map(path ->
+                path.toAbsolutePath().normalize().toString()
+            ).toList())
+            .query(String.class)
+            .list();
     }
 
     @Transactional
