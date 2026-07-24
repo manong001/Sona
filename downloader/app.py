@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import html
 import json
 import multiprocessing
 import os
@@ -1328,7 +1329,7 @@ def _positive_int(value: Any) -> int | None:
 
 
 def _text(value: Any) -> str:
-    return "" if value is None else str(value)
+    return "" if value is None else html.unescape(str(value))
 
 
 def _optional_text(value: Any) -> str | None:

@@ -493,6 +493,33 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(1, len(requested_urls))
         self.assertIsInstance(candidates[0].opaque, PublicPlaylistItem)
 
+    def test_qq_playlist_decodes_html_entities_in_metadata(self):
+        response = {
+            "code": 0,
+            "cdlist": [{
+                "dissname": "高燃进行曲&#9889;&#65039;权威硬曲感觉至上",
+                "songlist": [{
+                    "songmid": "song-mid",
+                    "songname": "歌曲&#9889;&#65039;",
+                    "interval": 185,
+                    "singer": [{"name": "歌手"}],
+                    "albumname": "专辑&amp;精选",
+                }],
+            }],
+        }
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("QQMusicClient",)
+        backend._fetch_json = lambda url, referer=None: response
+        backend._client = lambda sources: self.fail("不应调用 musicdl QQ 解析器")
+
+        name, _, candidates = backend.parse_playlist(
+            "https://y.qq.com/n/ryqq/playlist/7526304337"
+        )
+
+        self.assertEqual("高燃进行曲⚡️权威硬曲感觉至上", name)
+        self.assertEqual("歌曲⚡️", candidates[0].title)
+        self.assertEqual("专辑&精选", candidates[0].album)
+
     def test_qq_playlist_fetches_every_page(self):
         songs = [{
             "songmid": f"song-mid-{index}", "songname": f"QQ 歌曲 {index}",

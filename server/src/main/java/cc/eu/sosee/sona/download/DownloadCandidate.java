@@ -2,6 +2,7 @@ package cc.eu.sosee.sona.download;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.springframework.web.util.HtmlUtils;
 
 public record DownloadCandidate(
     @NotBlank String candidateId,
@@ -19,6 +20,12 @@ public record DownloadCandidate(
     String lyrics,
     DownloadTaskState downloadState
 ) {
+    public DownloadCandidate {
+        title = title == null ? null : HtmlUtils.htmlUnescape(title);
+        artist = artist == null ? null : HtmlUtils.htmlUnescape(artist);
+        album = album == null ? null : HtmlUtils.htmlUnescape(album);
+    }
+
     public DownloadCandidate(
         String candidateId, String source, String sourceName, String title, String artist,
         String album, String extension, String quality, Long durationMs, Long fileSizeBytes,

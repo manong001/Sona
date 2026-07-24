@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.HtmlUtils;
 
 @Repository
 class PlaylistSubscriptionRepository {
@@ -445,7 +446,7 @@ class PlaylistSubscriptionRepository {
         return new Subscription(
             resultSet.getString("id"), resultSet.getString("user_id"),
             resultSet.getString("username"), resultSet.getString("playlist_id"),
-            resultSet.getString("source_url"), resultSet.getString("name"),
+            resultSet.getString("source_url"), decodeHtml(resultSet.getString("name")),
             resultSet.getString("pool_type"), resultSet.getInt("auto_download") == 1,
             resultSet.getInt("strict_mode") == 1, resultSet.getInt("sync_interval_hours"),
             resultSet.getInt("enabled") == 1,
@@ -461,10 +462,14 @@ class PlaylistSubscriptionRepository {
     private Item mapItem(ResultSet resultSet, int rowNumber) throws SQLException {
         return new Item(
             resultSet.getString("item_key"), resultSet.getInt("position"),
-            resultSet.getString("title"), resultSet.getString("artist"),
-            resultSet.getString("album"), resultSet.getString("matched_track_id"),
+            decodeHtml(resultSet.getString("title")), decodeHtml(resultSet.getString("artist")),
+            decodeHtml(resultSet.getString("album")), resultSet.getString("matched_track_id"),
             resultSet.getString("state"), resultSet.getLong("last_seen_at")
         );
+    }
+
+    private String decodeHtml(String value) {
+        return value == null ? null : HtmlUtils.htmlUnescape(value);
     }
 
     record Subscription(

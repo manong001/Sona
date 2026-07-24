@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.HtmlUtils;
 
 @Component
 class PlaylistSubscriptionMatcher {
@@ -54,7 +55,8 @@ class PlaylistSubscriptionMatcher {
         if (value == null) {
             return "";
         }
-        var normalized = Normalizer.normalize(ZhConverterUtil.toSimple(value), Normalizer.Form.NFKC)
+        var decoded = HtmlUtils.htmlUnescape(value);
+        var normalized = Normalizer.normalize(ZhConverterUtil.toSimple(decoded), Normalizer.Form.NFKC)
             .toLowerCase(Locale.ROOT);
         var result = new StringBuilder(normalized.length());
         normalized.codePoints()
