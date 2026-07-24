@@ -193,9 +193,14 @@ class PlaylistSubscriptionService {
     ) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var item = subscriptions.findItem(userId, id, itemKey)
+            .orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.CONFLICT, "候选歌曲不存在或已被其他歌曲使用"
+            ));
         if (!subscriptions.selectMatch(userId, id, itemKey, trackId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "候选歌曲不存在或已被其他歌曲使用");
         }
+        subscriptions.rememberMatch(userId, item.title(), item.artist(), trackId);
         playlistImportService.replaceTracks(
             userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
         );
@@ -376,11 +381,19 @@ class PlaylistSubscriptionService {
                     && !usedTrackIds.contains(existing.matchedTrackId())) {
                     matchedTrackId = existing.matchedTrackId();
                 } else {
-                    var match = subscription.strictMode()
-                        ? matchSession.match(candidate, usedTrackIds)
-                        : matchSession.match(candidate, usedTrackIds, false);
-                    matchedTrackId = match.exactTrackId().orElse(null);
-                    suggestions = match.suggestions();
+                    var rememberedTrackId = subscriptions.findRememberedMatch(
+                        subscription.userId(), candidate.title(), candidate.artist()
+                    ).orElse(null);
+                    if (matchSession.containsTrack(rememberedTrackId)
+                        && !usedTrackIds.contains(rememberedTrackId)) {
+                        matchedTrackId = rememberedTrackId;
+                    } else {
+                        var match = subscription.strictMode()
+                            ? matchSession.match(candidate, usedTrackIds)
+                            : matchSession.match(candidate, usedTrackIds, false);
+                        matchedTrackId = match.exactTrackId().orElse(null);
+                        suggestions = match.suggestions();
+                    }
                 }
                 var state = "MISSING";
                 if (matchedTrackId != null) {

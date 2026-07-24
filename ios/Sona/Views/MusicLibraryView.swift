@@ -207,7 +207,7 @@ struct MusicLibraryView: View {
             .desktopSheetSize(.standard)
         }
         .sheet(isPresented: $showsSubscriptionManager) {
-            PlaylistSubscriptionsView {
+            PlaylistSubscriptionsView(initialSubscriptions: subscriptions) {
                 Task {
                     await loadSubscriptions()
                     await personal.refreshPlaylists()

@@ -20,6 +20,9 @@ class PlaylistSubscriptionMatcher {
 
     private static final int MAX_SUGGESTIONS = 3;
     private static final double MIN_TITLE_SIMILARITY = 0.70;
+    private static final double MIN_AUTOMATIC_TITLE_SIMILARITY = 0.92;
+    private static final double MIN_AUTOMATIC_SCORE_LEAD = 8;
+    private static final long MAX_AUTOMATIC_DURATION_DIFFERENCE_MS = 5_000;
     private static final Pattern ARTIST_SEPARATOR = Pattern.compile(
         "(?i)\\s*(?:、|/|,|，|&|＆|;|；|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*"
     );
@@ -113,13 +116,20 @@ class PlaylistSubscriptionMatcher {
             if (automaticTrack.isPresent()) {
                 return new MatchResult(Optional.of(automaticTrack.get().trackId()), List.of());
             }
-            var suggestions = tracks.stream()
+            var rankedTracks = tracks.stream()
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
                 .map(track -> score(candidate, track))
                 .flatMap(Optional::stream)
                 .sorted(Comparator.comparingDouble(ScoredTrack::score).reversed()
                     .thenComparing(value -> value.track().trackId()))
                 .limit(MAX_SUGGESTIONS)
+                .toList();
+            if (!strictMode && isHighConfidenceAutomaticMatch(candidate, rankedTracks)) {
+                return new MatchResult(
+                    Optional.of(rankedTracks.get(0).track().trackId()), List.of()
+                );
+            }
+            var suggestions = rankedTracks.stream()
                 .map(value -> new Suggestion(
                     value.track().trackId(), value.track().title(), value.track().artist(),
                     value.track().album(), value.track().durationMs(),
@@ -155,6 +165,33 @@ class PlaylistSubscriptionMatcher {
                     (int) Math.round(value.score())
                 ));
         }
+    }
+
+    private boolean isHighConfidenceAutomaticMatch(
+        DownloadCandidate candidate, List<ScoredTrack> rankedTracks
+    ) {
+        if (rankedTracks.isEmpty() || candidate.durationMs() == null || candidate.durationMs() <= 0) {
+            return false;
+        }
+        var best = rankedTracks.get(0);
+        var track = best.track();
+        var sourceArtists = normalizedArtistSet(candidate.artist());
+        if (sourceArtists.isEmpty() || !sourceArtists.equals(normalizedArtistSet(track.artist()))) {
+            return false;
+        }
+        var titleSimilarity = similarity(
+            normalizedTitleForSimilarity(candidate.title()),
+            normalizedTitleForSimilarity(track.title())
+        );
+        if (titleSimilarity < MIN_AUTOMATIC_TITLE_SIMILARITY
+            || track.durationMs() <= 0
+            || Math.abs(candidate.durationMs() - track.durationMs())
+                > MAX_AUTOMATIC_DURATION_DIFFERENCE_MS
+            || hasVersionMismatch(candidate.title(), track.title())) {
+            return false;
+        }
+        return rankedTracks.size() == 1
+            || best.score() - rankedTracks.get(1).score() >= MIN_AUTOMATIC_SCORE_LEAD;
     }
 
     private static boolean isAutomaticMatch(

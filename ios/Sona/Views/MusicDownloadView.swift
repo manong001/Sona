@@ -683,10 +683,10 @@ struct MusicDownloadView: View {
 struct PlaylistSubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var personal: PersonalStore
-    @State private var subscriptions: [PlaylistSubscription] = []
+    @State private var subscriptions: [PlaylistSubscription]
     @State private var syncingIDs: Set<String> = []
     @State private var downloadingMissingIDs: Set<String> = []
-    @State private var isLoading = true
+    @State private var isLoading: Bool
     @State private var showsCreate = false
     @State private var editingSubscription: PlaylistSubscription?
     @State private var inspectingSubscription: PlaylistSubscription?
@@ -694,6 +694,15 @@ struct PlaylistSubscriptionsView: View {
     @State private var errorMessage: String?
     @State private var selectedSection = 0
     let changed: () -> Void
+
+    init(
+        initialSubscriptions: [PlaylistSubscription],
+        changed: @escaping () -> Void
+    ) {
+        _subscriptions = State(initialValue: initialSubscriptions)
+        _isLoading = State(initialValue: initialSubscriptions.isEmpty)
+        self.changed = changed
+    }
 
     var body: some View {
         NavigationStack {

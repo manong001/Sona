@@ -197,6 +197,17 @@ CREATE TABLE IF NOT EXISTS playlist_subscription_items (
     FOREIGN KEY (subscription_id) REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS playlist_match_choices (
+    user_id TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    normalized_artists TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, normalized_title, normalized_artists),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS play_history (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

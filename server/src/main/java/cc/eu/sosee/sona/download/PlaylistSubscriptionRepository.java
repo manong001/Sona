@@ -170,6 +170,40 @@ class PlaylistSubscriptionRepository {
             .update() == 1;
     }
 
+    Optional<String> findRememberedMatch(String userId, String title, String artist) {
+        return jdbcClient.sql("""
+                SELECT choices.track_id
+                FROM playlist_match_choices choices
+                JOIN tracks ON tracks.id = choices.track_id
+                WHERE choices.user_id = :userId
+                  AND choices.normalized_title = :title
+                  AND choices.normalized_artists = :artists
+                """)
+            .param("userId", userId)
+            .param("title", PlaylistSubscriptionMatcher.normalizedText(title))
+            .param("artists", PlaylistSubscriptionMatcher.normalizedArtists(artist))
+            .query(String.class)
+            .optional();
+    }
+
+    void rememberMatch(String userId, String title, String artist, String trackId) {
+        jdbcClient.sql("""
+                INSERT INTO playlist_match_choices (
+                    user_id, normalized_title, normalized_artists, track_id, updated_at
+                ) VALUES (
+                    :userId, :title, :artists, :trackId, :now
+                )
+                ON CONFLICT(user_id, normalized_title, normalized_artists)
+                DO UPDATE SET track_id = excluded.track_id, updated_at = excluded.updated_at
+                """)
+            .param("userId", userId)
+            .param("title", PlaylistSubscriptionMatcher.normalizedText(title))
+            .param("artists", PlaylistSubscriptionMatcher.normalizedArtists(artist))
+            .param("trackId", trackId)
+            .param("now", clock.millis())
+            .update();
+    }
+
     boolean bindDownloadedTrack(
         String playlistId, String title, String artist, String trackId
     ) {
