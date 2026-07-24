@@ -149,9 +149,7 @@ struct SonaTrackSortMenu: View {
             }
         } label: {
             Image(systemName: mode.systemImage)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 24, height: 24)
+                .frame(width: 24)
         }
         .buttonStyle(.bordered)
         .accessibilityLabel("歌曲排序：\(mode.title)")

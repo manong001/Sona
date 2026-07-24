@@ -199,8 +199,11 @@ class DuplicateTrackService {
             case SIMPLIFIED_TITLE -> ZhConverterUtil.toSimple(track.title());
             case TITLE_WITHOUT_BRACKETS -> withoutBracketedContent(track.title());
         };
+        var artist = mode == DuplicateMatchMode.EXACT
+            ? ArtistNames.canonical(track.artist())
+            : ArtistNames.duplicateCanonical(track.artist());
         return new DuplicateKey(
-            TextNormalizer.sortKey(ArtistNames.canonical(track.artist())),
+            TextNormalizer.sortKey(artist),
             TextNormalizer.sortKey(title)
         );
     }

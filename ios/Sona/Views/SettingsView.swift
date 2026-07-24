@@ -896,9 +896,9 @@ private enum DuplicateTrackMatchMode: String, CaseIterable {
         case .exact:
             "歌手和歌曲名完全匹配；一键去重保留音质最高的版本。"
         case .simplifiedTitle:
-            "歌曲名不区分繁体、简体；一键去重优先保留简体版本，再比较音质。"
+            "歌曲名不区分繁体、简体；请逐首确认后去重。"
         case .titleWithoutBrackets:
-            "忽略歌曲名中括号及括号内容；一键去重保留音质最高的版本。"
+            "忽略歌曲名中括号及括号内容；请逐首确认后去重。"
         }
     }
 
@@ -961,7 +961,7 @@ private struct DuplicateTrackManagementView: View {
                 Text("匹配规则")
             }
 
-            if !groups.isEmpty {
+            if !groups.isEmpty && matchMode == .exact {
                 Section {
                     Button {
                         isAutoDeduplicateConfirmationPresented = true
@@ -1283,6 +1283,7 @@ private struct DuplicateTrackManagementView: View {
     }
 
     private func autoDeduplicate() async {
+        guard matchMode == .exact else { return }
         let requestedMode = matchMode
         let replacements = groups.flatMap { group -> [PendingDuplicateReplacement] in
             guard let target = preferredTrack(in: group) else { return [] }
