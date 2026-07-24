@@ -136,6 +136,7 @@ class PlaylistSubscriptionService {
             .toList();
     }
 
+    @Transactional
     ItemPage suggestedItems(String userId, String id, int offset, int limit) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
@@ -148,14 +149,31 @@ class PlaylistSubscriptionService {
         var end = Math.min(offset + limit, suggested.size());
         var session = matcher.open();
         var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
-        var page = suggested.subList(offset, end).stream()
-            .map(item -> new ItemDetail(
+        var page = new ArrayList<ItemDetail>();
+        var matchedAny = false;
+        for (var item : suggested.subList(offset, end)) {
+            var match = subscription.strictMode()
+                ? session.match(asCandidate(item), usedTrackIds)
+                : session.match(asCandidate(item), usedTrackIds, false);
+            var exactTrackId = match.exactTrackId().orElse(null);
+            if (exactTrackId != null && subscriptions.selectMatch(
+                userId, id, item.itemKey(), exactTrackId
+            )) {
+                usedTrackIds.add(exactTrackId);
+                matchedAny = true;
+                continue;
+            }
+            page.add(new ItemDetail(
                 item.itemKey(), item.position(), item.title(), item.artist(), item.album(),
-                item.matchedTrackId(), item.state(),
-                session.match(asCandidate(item), usedTrackIds).suggestions()
-            ))
-            .toList();
-        return new ItemPage(page, end < suggested.size());
+                item.matchedTrackId(), item.state(), match.suggestions()
+            ));
+        }
+        if (matchedAny) {
+            playlistImportService.replaceTracks(
+                userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
+            );
+        }
+        return new ItemPage(List.copyOf(page), end < suggested.size());
     }
 
     @Transactional

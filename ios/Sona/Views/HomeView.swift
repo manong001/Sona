@@ -22,23 +22,28 @@ struct HomeView: View {
     private let chartShortcuts = [
         ChartShortcut(
             region: "ALL", title: "热歌总榜", subtitle: "全站播放热度",
-            systemImage: "flame.fill", color: Color(red: 0.72, green: 0.19, blue: 0.26)
+            badge: "🌐", artwork: "ChartWaveColor",
+            color: Color(red: 0.72, green: 0.19, blue: 0.26)
         ),
         ChartShortcut(
             region: "CN", title: "中文榜", subtitle: "中文热门歌曲",
-            systemImage: "music.mic", color: Color(red: 0.74, green: 0.29, blue: 0.16)
+            badge: "🇨🇳", artwork: "ChartWaveColor",
+            color: Color(red: 0.74, green: 0.29, blue: 0.16)
         ),
         ChartShortcut(
             region: "US", title: "英语榜", subtitle: "英语热门歌曲",
-            systemImage: "star.fill", color: Color(red: 0.20, green: 0.36, blue: 0.72)
+            badge: "🇺🇸", artwork: "ChartWaveBlue",
+            color: Color(red: 0.20, green: 0.36, blue: 0.72)
         ),
         ChartShortcut(
             region: "KR", title: "韩语榜", subtitle: "韩语热门歌曲",
-            systemImage: "waveform", color: Color(red: 0.48, green: 0.24, blue: 0.67)
+            badge: "🇰🇷", artwork: "ChartWavePurple",
+            color: Color(red: 0.48, green: 0.24, blue: 0.67)
         ),
         ChartShortcut(
             region: "JP", title: "日语榜", subtitle: "日语热门歌曲",
-            systemImage: "sparkles", color: Color(red: 0.12, green: 0.52, blue: 0.48)
+            badge: "🇯🇵", artwork: "ChartWaveBlue",
+            color: Color(red: 0.12, green: 0.52, blue: 0.48)
         )
     ]
 
@@ -441,7 +446,8 @@ struct HomeView: View {
                             recommendationTile(
                                 title: chart.title,
                                 subtitle: chart.subtitle,
-                                systemImage: chart.systemImage,
+                                badge: chart.badge,
+                                artwork: chart.artwork,
                                 color: chart.color
                             )
                         }
@@ -456,6 +462,7 @@ struct HomeView: View {
                                 title: genre,
                                 subtitle: "按曲风推荐",
                                 systemImage: "music.note.list",
+                                artwork: genreArtwork(genre),
                                 color: genreColor(genre)
                             )
                         }
@@ -537,28 +544,51 @@ struct HomeView: View {
     }
 
     private func recommendationTile(
-        title: String, subtitle: String, systemImage: String, color: Color
+        title: String, subtitle: String, systemImage: String? = nil,
+        badge: String? = nil, artwork: String, color: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.title2.bold())
-            Spacer()
-            Text(title).font(.headline).lineLimit(1)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.72))
-                .lineLimit(1)
+        ZStack(alignment: .leading) {
+            Rectangle().fill(color.gradient)
+            Image(artwork)
+                .resizable()
+                .scaledToFill()
+                .opacity(0.30)
+                .blendMode(.screen)
+            LinearGradient(
+                colors: [.black.opacity(0.05), .black.opacity(0.48)],
+                startPoint: .top, endPoint: .bottom
+            )
+            VStack(alignment: .leading, spacing: 8) {
+                if let badge {
+                    Text(badge).font(.title2)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.title2.bold())
+                }
+                Spacer()
+                Text(title).font(.headline).lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(1)
+            }
+            .padding(14)
         }
         .foregroundStyle(.white)
-        .padding(14)
         .frame(width: 180, height: 118, alignment: .leading)
-        .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private func genreColor(_ genre: String) -> Color {
         let colors: [Color] = [.indigo, .orange, .teal, .purple, .blue, .brown]
         let index = genre.utf8.reduce(0) { ($0 + Int($1)) % colors.count }
         return colors[index]
+    }
+
+    private func genreArtwork(_ genre: String) -> String {
+        let artwork = ["ChartWavePurple", "ChartWaveColor", "ChartWaveBlue"]
+        let index = genre.utf8.reduce(0) { ($0 + Int($1)) % artwork.count }
+        return artwork[index]
     }
 
     @ViewBuilder
@@ -1063,7 +1093,8 @@ private struct ChartShortcut: Identifiable {
     let region: String
     let title: String
     let subtitle: String
-    let systemImage: String
+    let badge: String
+    let artwork: String
     let color: Color
 
     var id: String { region }
