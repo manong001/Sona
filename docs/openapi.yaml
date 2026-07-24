@@ -1015,7 +1015,14 @@ paths:
   /library/tracks/duplicates:
     get:
       operationId: duplicateTracks
-      summary: 按标准化歌手和歌名列出重复歌曲候选及用户引用
+      summary: 按指定匹配规则列出重复歌曲候选及用户引用
+      parameters:
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [EXACT, SIMPLIFIED_TITLE, TITLE_WITHOUT_BRACKETS]
+            default: EXACT
       responses:
         "200":
           description: 重复歌曲候选，仅管理员可访问
@@ -1047,6 +1054,10 @@ paths:
               required: [replacementTrackId]
               properties:
                 replacementTrackId: {type: string}
+                mode:
+                  type: string
+                  enum: [EXACT, SIMPLIFIED_TITLE, TITLE_WITHOUT_BRACKETS]
+                  default: EXACT
       responses:
         "204": {description: 引用迁移且旧资源永久删除成功}
         "400": {description: 目标资源无效或不属于同一重复组}

@@ -878,9 +878,43 @@ private struct AppShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ viewController: UIActivityViewController, context: Context) {}
 }
 
+private enum DuplicateTrackMatchMode: String, CaseIterable {
+    case exact = "EXACT"
+    case simplifiedTitle = "SIMPLIFIED_TITLE"
+    case titleWithoutBrackets = "TITLE_WITHOUT_BRACKETS"
+
+    var title: String {
+        switch self {
+        case .exact: "完全匹配"
+        case .simplifiedTitle: "繁简同名"
+        case .titleWithoutBrackets: "忽略括号"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .exact:
+            "歌手和歌曲名完全匹配；一键去重保留音质最高的版本。"
+        case .simplifiedTitle:
+            "歌曲名不区分繁体、简体；一键去重优先保留简体版本，再比较音质。"
+        case .titleWithoutBrackets:
+            "忽略歌曲名中括号及括号内容；一键去重保留音质最高的版本。"
+        }
+    }
+
+    var retentionSummary: String {
+        switch self {
+        case .exact: "保留质量最高的一首"
+        case .simplifiedTitle: "优先保留简体版本，其次保留质量最高的一首"
+        case .titleWithoutBrackets: "保留质量最高的一首"
+        }
+    }
+}
+
 private struct DuplicateTrackManagementView: View {
     @EnvironmentObject private var mainPlayer: PlayerStore
     @State private var groups: [DuplicateTrackGroup] = []
+    @State private var matchMode = DuplicateTrackMatchMode.exact
     @State private var query = ""
     @State private var replacementSource: DuplicateReplacementSource?
     @State private var pendingReplacement: PendingDuplicateReplacement?
@@ -911,6 +945,22 @@ private struct DuplicateTrackManagementView: View {
 
     var body: some View {
         List {
+            Section {
+                Picker("匹配规则", selection: $matchMode) {
+                    ForEach(DuplicateTrackMatchMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(isAutoDeduplicating)
+
+                Text(matchMode.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("匹配规则")
+            }
+
             if !groups.isEmpty {
                 Section {
                     Button {
@@ -923,7 +973,7 @@ private struct DuplicateTrackManagementView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("一键去重")
                                     .font(.headline)
-                                Text("每组保留质量最高的一首，迁移全部用户信息")
+                                Text("\(matchMode.retentionSummary)，迁移全部用户信息")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -934,7 +984,7 @@ private struct DuplicateTrackManagementView: View {
                         }
                         .padding(.vertical, 6)
                     }
-                    .disabled(isAutoDeduplicating)
+                    .disabled(isAutoDeduplicating || isLoading)
                 }
             }
 
@@ -960,7 +1010,7 @@ private struct DuplicateTrackManagementView: View {
                 Section {
                     ForEach(group.tracks) { item in
                         duplicateItemCard(item, in: group)
-                            .disabled(isAutoDeduplicating)
+                            .disabled(isAutoDeduplicating || isLoading)
                             .listRowInsets(EdgeInsets(
                                 top: 6, leading: 16, bottom: 6, trailing: 16
                             ))
@@ -981,7 +1031,7 @@ private struct DuplicateTrackManagementView: View {
         .overlay {
             if isLoading { ProgressView("正在检查重复歌曲…") }
         }
-        .task { await load() }
+        .task(id: matchMode) { await load() }
         .refreshable { await load() }
         .onDisappear { stopPreview() }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
@@ -1023,12 +1073,12 @@ private struct DuplicateTrackManagementView: View {
             isPresented: $isAutoDeduplicateConfirmationPresented,
             titleVisibility: .visible
         ) {
-            Button("保留最高质量并删除 \(duplicateDeletionCount) 首", role: .destructive) {
+            Button("确认并删除 \(duplicateDeletionCount) 首", role: .destructive) {
                 Task { await autoDeduplicate() }
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将处理全部 \(groups.count) 组重复歌曲。收藏、歌单、播放记录和当前队列会迁移到每组质量最高的歌曲，删除后无法恢复。")
+            Text("将处理全部 \(groups.count) 组重复歌曲，每组\(matchMode.retentionSummary)。收藏、歌单、播放记录和当前队列会完整迁移，删除后无法恢复。")
         }
         .alert(item: $pendingReplacement) { replacement in
             Alert(
@@ -1110,7 +1160,7 @@ private struct DuplicateTrackManagementView: View {
                     Text(item.track.album.isEmpty ? "未知专辑" : item.track.album)
                         .font(.headline)
                         .lineLimit(1)
-                    if highestQualityTrack(in: group)?.id == item.id {
+                    if preferredTrack(in: group)?.id == item.id {
                         Text("默认保留")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(Color.sonaGreen)
@@ -1208,8 +1258,12 @@ private struct DuplicateTrackManagementView: View {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            groups = try await APIClient.shared.duplicateTracks()
+            let requestedMode = matchMode
+            let values = try await APIClient.shared.duplicateTracks(mode: requestedMode.rawValue)
+            guard !Task.isCancelled, matchMode == requestedMode else { return }
+            groups = values
         } catch {
+            guard !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -1219,7 +1273,8 @@ private struct DuplicateTrackManagementView: View {
             stopPreview()
             try await APIClient.shared.replaceDuplicateTrack(
                 id: replacement.source.track.id,
-                replacementTrackID: replacement.target.track.id
+                replacementTrackID: replacement.target.track.id,
+                mode: matchMode.rawValue
             )
             await load()
         } catch {
@@ -1228,8 +1283,9 @@ private struct DuplicateTrackManagementView: View {
     }
 
     private func autoDeduplicate() async {
+        let requestedMode = matchMode
         let replacements = groups.flatMap { group -> [PendingDuplicateReplacement] in
-            guard let target = highestQualityTrack(in: group) else { return [] }
+            guard let target = preferredTrack(in: group) else { return [] }
             return group.tracks
                 .filter { $0.id != target.id }
                 .map { PendingDuplicateReplacement(source: $0, target: target) }
@@ -1248,7 +1304,8 @@ private struct DuplicateTrackManagementView: View {
             do {
                 try await APIClient.shared.replaceDuplicateTrack(
                     id: replacement.source.track.id,
-                    replacementTrackID: replacement.target.track.id
+                    replacementTrackID: replacement.target.track.id,
+                    mode: requestedMode.rawValue
                 )
                 completedDeletionCount += 1
             } catch {
@@ -1263,10 +1320,27 @@ private struct DuplicateTrackManagementView: View {
         await load()
     }
 
-    private func highestQualityTrack(
+    private func preferredTrack(
         in group: DuplicateTrackGroup
     ) -> DuplicateTrackItem? {
-        group.tracks.max { qualityScore($0).lexicographicallyPrecedes(qualityScore($1)) }
+        group.tracks.max {
+            retentionScore($0).lexicographicallyPrecedes(retentionScore($1))
+        }
+    }
+
+    private func retentionScore(_ item: DuplicateTrackItem) -> [Int64] {
+        let simplifiedPreference: Int64
+        if matchMode == .simplifiedTitle {
+            simplifiedPreference = isSimplifiedTitle(item.track.title) ? 1 : 0
+        } else {
+            simplifiedPreference = 0
+        }
+        return [simplifiedPreference] + qualityScore(item)
+    }
+
+    private func isSimplifiedTitle(_ title: String) -> Bool {
+        let transform = StringTransform("Traditional-Simplified")
+        return (title.applyingTransform(transform, reverse: false) ?? title) == title
     }
 
     private func qualityScore(_ item: DuplicateTrackItem) -> [Int64] {

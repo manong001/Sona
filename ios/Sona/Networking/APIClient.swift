@@ -405,10 +405,11 @@ final class APIClient {
 
     func tracks(
         query: String, cursor: String?, sort: String = "TITLE",
-        genre: String? = nil, codec: String? = nil, metadataStatus: String? = nil
+        genre: String? = nil, codec: String? = nil, metadataStatus: String? = nil,
+        limit: Int = 50
     ) async throws -> TrackPage {
         var components = URLComponents(url: url(for: "/api/v1/tracks"), resolvingAgainstBaseURL: false)!
-        var queryItems = [URLQueryItem(name: "limit", value: "50")]
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
         queryItems.append(URLQueryItem(name: "childMode", value: childModeValue))
         queryItems.append(URLQueryItem(name: "sort", value: sort))
         if !query.isEmpty {
@@ -528,18 +529,28 @@ final class APIClient {
         return try await request(url: components.url!)
     }
 
-    func duplicateTracks() async throws -> [DuplicateTrackGroup] {
-        try await request(path: "/api/v1/library/tracks/duplicates")
+    func duplicateTracks(mode: String) async throws -> [DuplicateTrackGroup] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/library/tracks/duplicates"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "mode", value: mode)]
+        return try await request(url: components.url!)
     }
 
-    func replaceDuplicateTrack(id: String, replacementTrackID: String) async throws {
+    func replaceDuplicateTrack(
+        id: String,
+        replacementTrackID: String,
+        mode: String
+    ) async throws {
         struct Body: Encodable {
             let replacementTrackId: String
+            let mode: String
         }
         try await requestVoid(
             path: "/api/v1/library/tracks/duplicates/\(id)/replace",
             method: "POST",
-            body: try encoder.encode(Body(replacementTrackId: replacementTrackID))
+            body: try encoder.encode(Body(replacementTrackId: replacementTrackID, mode: mode))
         )
     }
 

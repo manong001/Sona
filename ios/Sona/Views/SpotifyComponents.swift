@@ -23,29 +23,215 @@ enum SonaHapticStrength: String, CaseIterable, Identifiable {
 enum SonaHaptics {
     static let preferenceKey = "hapticStrength"
 
-    static func buttonTap() {
+    static func buttonFeedback() -> SensoryFeedback? {
 #if os(iOS) && !targetEnvironment(macCatalyst)
         let rawValue = UserDefaults.standard.string(forKey: preferenceKey)
             ?? SonaHapticStrength.medium.rawValue
-        guard let strength = SonaHapticStrength(rawValue: rawValue),
-              strength != .off else { return }
-        let generator: UIImpactFeedbackGenerator
-        let intensity: CGFloat
-        switch strength {
+        switch SonaHapticStrength(rawValue: rawValue) {
         case .off:
-            return
+            return nil
         case .light:
-            generator = UIImpactFeedbackGenerator(style: .light)
-            intensity = 0.45
+            return .impact(weight: .light, intensity: 0.45)
         case .medium:
-            generator = UIImpactFeedbackGenerator(style: .medium)
-            intensity = 0.72
+            return .impact(weight: .medium, intensity: 0.72)
         case .heavy:
-            generator = UIImpactFeedbackGenerator(style: .heavy)
-            intensity = 1
+            return .impact(weight: .heavy)
+        case nil:
+            return nil
         }
-        generator.impactOccurred(intensity: intensity)
+#else
+        return nil
 #endif
+    }
+
+    static func selectionChanged() {
+#if os(iOS) && !targetEnvironment(macCatalyst)
+        let rawValue = UserDefaults.standard.string(forKey: preferenceKey)
+            ?? SonaHapticStrength.medium.rawValue
+        guard SonaHapticStrength(rawValue: rawValue) != .off else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+#endif
+    }
+}
+
+enum SonaTrackSortMode: String, CaseIterable {
+    case original
+    case alphabetical
+
+    var title: String {
+        switch self {
+        case .original: "默认顺序"
+        case .alphabetical: "首字母排序"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .original: "line.3.horizontal"
+        case .alphabetical: "textformat.abc"
+        }
+    }
+}
+
+struct SonaAlphabeticalTrackSection: Identifiable {
+    let id: String
+    let tracks: [Track]
+}
+
+func sonaAlphabeticalTrackSections(_ tracks: [Track]) -> [SonaAlphabeticalTrackSection] {
+    let sorted = tracks.enumerated().map { index, track in
+        (
+            index: index,
+            section: sonaTrackInitial(track.title),
+            key: sonaTrackAlphabeticalKey(track.title),
+            track: track
+        )
+    }
+    .sorted { lhs, rhs in
+        let comparison = lhs.key.localizedStandardCompare(rhs.key)
+        if comparison == .orderedSame { return lhs.index < rhs.index }
+        return comparison == .orderedAscending
+    }
+
+    var grouped: [String: [Track]] = [:]
+    for value in sorted {
+        grouped[value.section, default: []].append(value.track)
+    }
+    return grouped.keys
+        .sorted { sonaAlphabetOrder($0) < sonaAlphabetOrder($1) }
+        .map { SonaAlphabeticalTrackSection(id: $0, tracks: grouped[$0] ?? []) }
+}
+
+func sonaTrackSortSignature(_ tracks: [Track]) -> Int {
+    var hasher = Hasher()
+    for track in tracks {
+        hasher.combine(track.id)
+        hasher.combine(track.title)
+    }
+    return hasher.finalize()
+}
+
+private func sonaTrackInitial(_ title: String) -> String {
+    let value = sonaTrackAlphabeticalKey(title)
+    guard let scalar = value.unicodeScalars.first else { return "#" }
+    let initial = String(scalar).uppercased()
+    return initial.range(of: "^[A-Z]$", options: .regularExpression) == nil ? "#" : initial
+}
+
+private func sonaTrackAlphabeticalKey(_ title: String) -> String {
+    let latin = title.applyingTransform(.toLatin, reverse: false) ?? title
+    let folded = latin.folding(
+        options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+        locale: Locale(identifier: "zh_CN")
+    )
+    return String(folded.drop { character in
+        character.unicodeScalars.allSatisfy {
+            !CharacterSet.alphanumerics.contains($0)
+        }
+    })
+}
+
+private func sonaAlphabetOrder(_ value: String) -> Int {
+    guard value != "#", let scalar = value.unicodeScalars.first else { return 0 }
+    return Int(scalar.value) - Int(UnicodeScalar("A").value) + 1
+}
+
+struct SonaTrackSortMenu: View {
+    @Binding var mode: SonaTrackSortMode
+
+    var body: some View {
+        Menu {
+            Picker("歌曲排序", selection: $mode) {
+                ForEach(SonaTrackSortMode.allCases, id: \.self) { option in
+                    Label(option.title, systemImage: option.systemImage)
+                        .tag(option)
+                }
+            }
+        } label: {
+            Image(systemName: mode.systemImage)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel("歌曲排序：\(mode.title)")
+    }
+}
+
+struct SonaAlphabetIndexBar: View {
+    private static let alphabet = ["#"] + (65...90).compactMap {
+        UnicodeScalar($0).map(String.init)
+    }
+
+    let availableSections: Set<String>
+    let onSelect: (String) -> Void
+    @State private var activeLetter: String?
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .trailing) {
+                if let activeLetter {
+                    Text(activeLetter)
+                        .font(.title.bold())
+                        .foregroundStyle(.white)
+                        .frame(width: 54, height: 54)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .offset(x: -38)
+                }
+
+                VStack(spacing: 0) {
+                    ForEach(Self.alphabet, id: \.self) { letter in
+                        Text(letter)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(
+                                availableSections.contains(letter)
+                                    ? Color.sonaGreen : Color.white.opacity(0.24)
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .frame(width: 28)
+                .padding(.vertical, 6)
+                .background(.black.opacity(0.18), in: Capsule())
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            selectLetter(at: value.location.y, height: proxy.size.height)
+                        }
+                        .onEnded { value in
+                            selectLetter(at: value.location.y, height: proxy.size.height)
+                            activeLetter = nil
+                        }
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        }
+        .frame(width: 92)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("字母快速索引")
+        .accessibilityValue(activeLetter ?? "")
+    }
+
+    private func selectLetter(at y: CGFloat, height: CGFloat) {
+        guard height > 0 else { return }
+        let itemHeight = height / CGFloat(Self.alphabet.count)
+        let index = min(
+            Self.alphabet.count - 1,
+            max(0, Int(y / max(itemHeight, 1)))
+        )
+        guard let letter = nearestAvailableLetter(to: index),
+              letter != activeLetter else { return }
+        activeLetter = letter
+        SonaHaptics.selectionChanged()
+        onSelect(letter)
+    }
+
+    private func nearestAvailableLetter(to index: Int) -> String? {
+        Self.alphabet.indices
+            .filter { availableSections.contains(Self.alphabet[$0]) }
+            .min { abs($0 - index) < abs($1 - index) }
+            .map { Self.alphabet[$0] }
     }
 }
 
@@ -53,6 +239,7 @@ struct Button<Content: View>: View {
     private let role: ButtonRole?
     private let action: () -> Void
     private let content: Content
+    @State private var hapticTrigger = false
 
     init(
         role: ButtonRole? = nil,
@@ -66,10 +253,13 @@ struct Button<Content: View>: View {
 
     var body: some View {
         SwiftUI.Button(role: role) {
-            SonaHaptics.buttonTap()
+            hapticTrigger.toggle()
             action()
         } label: {
             content
+        }
+        .sensoryFeedback(trigger: hapticTrigger) {
+            SonaHaptics.buttonFeedback()
         }
     }
 }
@@ -669,6 +859,9 @@ struct SonaTrackListView: View {
     @State private var showsArtworkPicker = false
     @State private var showsArtworkMenu = false
     @State private var artworkPhotoItem: PhotosPickerItem?
+    @State private var trackSortMode = SonaTrackSortMode.original
+    @State private var alphabeticalSections: [SonaAlphabeticalTrackSection] = []
+    @State private var isPreparingAlphabeticalSort = false
     let collection: SonaCollection
     let playbackQueue: [Track]?
     let dailyRecommendationQueues: [[Track]]?
@@ -735,6 +928,15 @@ struct SonaTrackListView: View {
         return playlist?.trackIDs.count ?? tracks.count
     }
 
+    private var displayedTracks: [Track] {
+        guard trackSortMode == .alphabetical else { return tracks }
+        return alphabeticalSections.flatMap(\.tracks)
+    }
+
+    private var trackSortSignature: Int {
+        sonaTrackSortSignature(tracks)
+    }
+
     private var playlistBottomContentMargin: CGFloat {
 #if targetEnvironment(macCatalyst)
         24
@@ -745,9 +947,9 @@ struct SonaTrackListView: View {
 
     private var queue: [Track] {
         if prioritizedQueueTitle != nil {
-            return tracks
+            return displayedTracks
         }
-        guard let playbackQueue, !playbackQueue.isEmpty else { return tracks }
+        guard let playbackQueue, !playbackQueue.isEmpty else { return displayedTracks }
         return playbackQueue
     }
 
@@ -955,8 +1157,10 @@ struct SonaTrackListView: View {
             )
             .ignoresSafeArea()
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ZStack(alignment: .trailing) {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
                     VStack(spacing: 18) {
                         detailArtwork
                             .shadow(color: .black.opacity(0.45), radius: 20, y: 10)
@@ -974,6 +1178,7 @@ struct SonaTrackListView: View {
                             Text("\(trackCount) 首歌曲")
                                 .font(.caption)
                                 .foregroundStyle(Color.sonaSecondaryText)
+                            SonaTrackSortMenu(mode: $trackSortMode)
                             if canEditPlaylistArtwork {
                                 playlistArtworkMenu
                             }
@@ -999,10 +1204,13 @@ struct SonaTrackListView: View {
                                 if collection.id == "liked-songs" {
                                     Task {
                                         let allTracks = await personal.loadAllFavoriteTracks()
-                                        playCollection(allTracks, shuffled: false)
+                                        playCollection(
+                                            orderedForCurrentSort(allTracks),
+                                            shuffled: false
+                                        )
                                     }
                                 } else {
-                                    playCollection(tracks, shuffled: false)
+                                    playCollection(displayedTracks, shuffled: false)
                                 }
                             } label: {
                                 if collection.id == "liked-songs" {
@@ -1042,74 +1250,51 @@ struct SonaTrackListView: View {
                             .padding(.vertical, 18)
                     }
 
-                    ForEach(tracks) { track in
-                        HStack {
-                            if isSelecting {
-                                Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(Color.sonaGreen)
-                            }
-                            TrackRow(
-                                track: track,
-                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                                isFavorite: personal.favoriteIDs.contains(track.id),
-                                moreActionTitle: playlistArtworkActionTitle(for: track),
-                                moreActionSystemImage: playlist?.artworkTrackID == track.id
-                                    ? "checkmark.circle.fill" : "photo",
-                                moreActionDisabled: playlist?.artworkTrackID == track.id,
-                                moreAction: playlistArtworkAction(for: track),
-                                deleteTitle: canRemoveTracksFromPlaylist
-                                    ? "从歌单中移除" : nil,
-                                deleteAction: removeFromPlaylistAction(for: track),
-                                tapAction: {
-                                    if isSelecting {
-                                        if !selectedIDs.insert(track.id).inserted {
-                                            selectedIDs.remove(track.id)
-                                        }
-                                    } else {
-                                        play(track)
-                                    }
-                                }
-                            )
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .contextMenu {
-                            if session.currentUser?.isAdmin == true {
-                                Button("编辑歌曲名和歌手", systemImage: "pencil") {
-                                    editingTrack = track
+                        if trackSortMode == .alphabetical {
+                            ForEach(alphabeticalSections) { section in
+                                alphabeticalSectionHeader(section.id)
+                                    .id(alphabeticalAnchor(section.id))
+                                ForEach(section.tracks) { track in
+                                    trackRow(track)
                                 }
                             }
-                            Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
-                                player.playNext(track)
-                            }
-                            Button("添加到播放队列", systemImage: "text.badge.plus") {
-                                player.addToQueue(track)
+                        } else {
+                            ForEach(tracks) { track in
+                                trackRow(track)
                             }
                         }
-                        .task {
-                            if collection.id == "liked-songs" {
-                                await personal.loadNextFavoritePageIfNeeded(currentTrack: track)
-                            } else if loadsMoreFromLibrary {
-                                await library.loadNextPageIfNeeded(currentTrack: track)
-                            }
+
+                        if isPreparingAlphabeticalSort {
+                            ProgressView("正在准备字母索引…")
+                                .padding(.vertical, 18)
+                        } else if collection.id == "liked-songs" && personal.isLoadingMoreFavorites {
+                            ProgressView("载入更多…")
+                                .padding(.vertical, 18)
+                        } else if loadsMoreFromLibrary && library.isLoadingMore {
+                            ProgressView("载入更多…")
+                                .padding(.vertical, 18)
+                        }
                         }
                     }
+                    .scrollIndicators(trackSortMode == .alphabetical ? .hidden : .automatic)
+                    .contentMargins(
+                        .bottom,
+                        playlistBottomContentMargin,
+                        for: .scrollContent
+                    )
+                    .safeAreaPadding(.top, detailScrollTopPadding)
 
-                    if collection.id == "liked-songs" && personal.isLoadingMoreFavorites {
-                        ProgressView("载入更多…")
-                            .padding(.vertical, 18)
-                    } else if loadsMoreFromLibrary && library.isLoadingMore {
-                        ProgressView("载入更多…")
-                            .padding(.vertical, 18)
+                    if trackSortMode == .alphabetical, !alphabeticalSections.isEmpty {
+                        SonaAlphabetIndexBar(
+                            availableSections: Set(alphabeticalSections.map(\.id))
+                        ) { section in
+                            proxy.scrollTo(alphabeticalAnchor(section), anchor: .top)
+                        }
+                        .padding(.top, 88)
+                        .padding(.bottom, playlistBottomContentMargin)
                     }
                 }
             }
-            .contentMargins(
-                .bottom,
-                playlistBottomContentMargin,
-                for: .scrollContent
-            )
-            .safeAreaPadding(.top, detailScrollTopPadding)
 
             #if targetEnvironment(macCatalyst)
             macDetailToolbar
@@ -1210,6 +1395,15 @@ struct SonaTrackListView: View {
         .task(id: playlist?.trackIDs) {
             await loadMissingPlaylistTracks()
         }
+        .onChange(of: trackSortMode) { _, mode in
+            guard mode == .alphabetical else { return }
+            Task { await prepareAlphabeticalSort() }
+        }
+        .onChange(of: trackSortSignature) { _, _ in
+            guard trackSortMode == .alphabetical,
+                  !isPreparingAlphabeticalSort else { return }
+            alphabeticalSections = sonaAlphabeticalTrackSections(tracks)
+        }
         .sheet(item: $editingTrack) { track in
             TrackIdentityEditorView(track: track) { updated in
                 editedTracks[updated.id] = updated
@@ -1242,6 +1436,100 @@ struct SonaTrackListView: View {
         } message: {
             Text(importMessage ?? "")
         }
+    }
+
+    private func alphabeticalAnchor(_ section: String) -> String {
+        "track-section-\(section)"
+    }
+
+    private func alphabeticalSectionHeader(_ section: String) -> some View {
+        Text(section)
+            .font(.headline.bold())
+            .foregroundStyle(Color.sonaGreen)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
+    private func trackRow(_ track: Track) -> some View {
+        HStack {
+            if isSelecting {
+                Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(Color.sonaGreen)
+            }
+            TrackRow(
+                track: track,
+                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                isFavorite: personal.favoriteIDs.contains(track.id),
+                moreActionTitle: playlistArtworkActionTitle(for: track),
+                moreActionSystemImage: playlist?.artworkTrackID == track.id
+                    ? "checkmark.circle.fill" : "photo",
+                moreActionDisabled: playlist?.artworkTrackID == track.id,
+                moreAction: playlistArtworkAction(for: track),
+                deleteTitle: canRemoveTracksFromPlaylist ? "从歌单中移除" : nil,
+                deleteAction: removeFromPlaylistAction(for: track),
+                tapAction: {
+                    if isSelecting {
+                        if !selectedIDs.insert(track.id).inserted {
+                            selectedIDs.remove(track.id)
+                        }
+                    } else {
+                        play(track)
+                    }
+                }
+            )
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .contextMenu {
+            if session.currentUser?.isAdmin == true {
+                Button("编辑歌曲名和歌手", systemImage: "pencil") {
+                    editingTrack = track
+                }
+            }
+            Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                player.playNext(track)
+            }
+            Button("添加到播放队列", systemImage: "text.badge.plus") {
+                player.addToQueue(track)
+            }
+        }
+        .task {
+            guard trackSortMode == .original else { return }
+            if collection.id == "liked-songs" {
+                await personal.loadNextFavoritePageIfNeeded(currentTrack: track)
+            } else if loadsMoreFromLibrary {
+                await library.loadNextPageIfNeeded(currentTrack: track)
+            }
+        }
+    }
+
+    private func prepareAlphabeticalSort() async {
+        isPreparingAlphabeticalSort = true
+        defer { isPreparingAlphabeticalSort = false }
+
+        if collection.id == "liked-songs" {
+            let values = await personal.loadAllFavoriteTracks()
+            alphabeticalSections = sonaAlphabeticalTrackSections(
+                values
+                    .map { editedTracks[$0.id] ?? $0 }
+                    .filter { !personal.hiddenTrackIDs.contains($0.id) }
+            )
+            return
+        }
+        if playlist != nil {
+            await loadMissingPlaylistTracks()
+        } else if loadsMoreFromLibrary {
+            alphabeticalSections = await library.prepareAlphabeticalIndex()
+            return
+        }
+        alphabeticalSections = sonaAlphabeticalTrackSections(tracks)
+    }
+
+    private func orderedForCurrentSort(_ values: [Track]) -> [Track] {
+        guard trackSortMode == .alphabetical else { return values }
+        return sonaAlphabeticalTrackSections(values).flatMap(\.tracks)
     }
 
     #if targetEnvironment(macCatalyst)

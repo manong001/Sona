@@ -61,15 +61,22 @@ class LibraryTrackController {
     }
 
     @GetMapping("/duplicates")
-    List<DuplicateTrackService.DuplicateTrackGroup> duplicates() {
-        return duplicateTrackService.findDuplicates();
+    List<DuplicateTrackService.DuplicateTrackGroup> duplicates(
+        @RequestParam(defaultValue = "EXACT") DuplicateTrackService.DuplicateMatchMode mode
+    ) {
+        return duplicateTrackService.findDuplicates(mode);
     }
 
     @PostMapping("/duplicates/{id}/replace")
     ResponseEntity<Void> replaceDuplicate(
         @PathVariable String id, @Valid @RequestBody DuplicateReplacementRequest request
     ) throws IOException {
-        duplicateTrackService.replaceAndDelete(id, request.replacementTrackId());
+        duplicateTrackService.replaceAndDelete(
+            id, request.replacementTrackId(),
+            request.mode() == null
+                ? DuplicateTrackService.DuplicateMatchMode.EXACT
+                : request.mode()
+        );
         return ResponseEntity.noContent().build();
     }
 
@@ -197,7 +204,10 @@ class LibraryTrackController {
     ) {
     }
 
-    record DuplicateReplacementRequest(@NotBlank String replacementTrackId) {
+    record DuplicateReplacementRequest(
+        @NotBlank String replacementTrackId,
+        DuplicateTrackService.DuplicateMatchMode mode
+    ) {
     }
     record MetadataEditRequest(
         @NotBlank @jakarta.validation.constraints.Size(max = 200) String title,

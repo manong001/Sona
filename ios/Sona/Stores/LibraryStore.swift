@@ -17,6 +17,8 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var genreFilter: String?
     @Published private(set) var codecFilter: String?
     @Published private(set) var metadataFilter: String?
+    @Published private(set) var alphabeticalSections: [SonaAlphabeticalTrackSection] = []
+    @Published private(set) var isPreparingAlphabeticalIndex = false
 
     private let api: APIClient
     private var trackLookup = LibraryTrackLookup([])
@@ -25,6 +27,8 @@ final class LibraryStore: ObservableObject {
     private var searchCursor: String?
     private var searchGeneration = 0
     private var artworkPrefetchTask: Task<Void, Never>?
+    private var alphabeticalIndexSignature: Int?
+    private var alphabeticalIndexGeneration = 0
 
     init(api: APIClient = .shared) {
         self.api = api
@@ -43,7 +47,13 @@ final class LibraryStore: ObservableObject {
             tracks = page.items
             nextCursor = page.nextCursor
             loadedQuery = query
+            invalidateAlphabeticalIndex()
             prefetchArtwork(for: tracks)
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Task(priority: .utility) { [weak self] in
+                    _ = await self?.prepareAlphabeticalIndex()
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -69,7 +79,8 @@ final class LibraryStore: ObservableObject {
     }
 
     func loadNextPage() async {
-        guard !isLoading, !isLoadingMore, let cursor = nextCursor else { return }
+        guard !isLoading, !isLoadingMore, !isPreparingAlphabeticalIndex,
+              let cursor = nextCursor else { return }
         isLoadingMore = true
         errorMessage = nil
         defer { isLoadingMore = false }
@@ -81,6 +92,7 @@ final class LibraryStore: ObservableObject {
             let loadedIDs = Set(tracks.map(\.id))
             tracks.append(contentsOf: page.items.filter { !loadedIDs.contains($0.id) })
             nextCursor = page.nextCursor
+            invalidateAlphabeticalIndex()
             prefetchArtwork(for: tracks)
         } catch {
             errorMessage = error.localizedDescription
@@ -206,18 +218,109 @@ final class LibraryStore: ObservableObject {
     }
 
     func applyTrackUpdate(_ track: Track) {
+        let shouldRebuildAlphabeticalIndex = alphabeticalIndexSignature != nil
         if let index = tracks.firstIndex(where: { $0.id == track.id }) {
             tracks[index] = track
         }
         if let index = searchResults.firstIndex(where: { $0.id == track.id }) {
             searchResults[index] = track
         }
+        invalidateAlphabeticalIndex()
+        if shouldRebuildAlphabeticalIndex {
+            Task(priority: .utility) { [weak self] in
+                _ = await self?.prepareAlphabeticalIndex()
+            }
+        }
         prefetchArtwork(for: [track])
     }
 
     func removeTrack(id: String) {
+        let shouldRebuildAlphabeticalIndex = alphabeticalIndexSignature != nil
         tracks.removeAll { $0.id == id }
         searchResults.removeAll { $0.id == id }
+        invalidateAlphabeticalIndex()
+        if shouldRebuildAlphabeticalIndex {
+            Task(priority: .utility) { [weak self] in
+                _ = await self?.prepareAlphabeticalIndex()
+            }
+        }
+    }
+
+    func prepareAlphabeticalIndex() async -> [SonaAlphabeticalTrackSection] {
+        if isPreparingAlphabeticalIndex {
+            await waitForAlphabeticalIndex()
+            return alphabeticalSections
+        }
+        while isLoading || isLoadingMore {
+            guard !Task.isCancelled else { return alphabeticalSections }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        if isPreparingAlphabeticalIndex {
+            await waitForAlphabeticalIndex()
+            return alphabeticalSections
+        }
+
+        let currentSignature = sonaTrackSortSignature(tracks)
+        if nextCursor == nil, alphabeticalIndexSignature == currentSignature {
+            return alphabeticalSections
+        }
+
+        isPreparingAlphabeticalIndex = true
+        defer { isPreparingAlphabeticalIndex = false }
+
+        while !Task.isCancelled {
+            let sourceGeneration = alphabeticalIndexGeneration
+            var allTracks = tracks
+            var cursor = nextCursor
+            do {
+                while let currentCursor = cursor {
+                    let page = try await api.tracks(
+                        query: loadedQuery, cursor: currentCursor, sort: sort,
+                        genre: genreFilter, codec: codecFilter,
+                        metadataStatus: metadataFilter, limit: 100
+                    )
+                    let loadedIDs = Set(allTracks.map(\.id))
+                    allTracks.append(contentsOf: page.items.filter {
+                        !loadedIDs.contains($0.id)
+                    })
+                    cursor = page.nextCursor
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+                return alphabeticalSections
+            }
+            guard sourceGeneration == alphabeticalIndexGeneration else { continue }
+
+            tracks = allTracks
+            nextCursor = nil
+            invalidateAlphabeticalIndex()
+
+            let generation = alphabeticalIndexGeneration
+            let snapshot = tracks
+            let signature = sonaTrackSortSignature(snapshot)
+            let sections = await Task.detached(priority: .utility) {
+                sonaAlphabeticalTrackSections(snapshot)
+            }.value
+            guard generation == alphabeticalIndexGeneration, nextCursor == nil else {
+                continue
+            }
+            alphabeticalSections = sections
+            alphabeticalIndexSignature = signature
+            return sections
+        }
+        return alphabeticalSections
+    }
+
+    private func waitForAlphabeticalIndex() async {
+        while isPreparingAlphabeticalIndex, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    private func invalidateAlphabeticalIndex() {
+        alphabeticalIndexGeneration += 1
+        alphabeticalIndexSignature = nil
+        alphabeticalSections = []
     }
 
     private func prefetchArtwork(for tracks: [Track]) {

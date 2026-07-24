@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.library;
 
+import com.github.houbb.opencc4j.util.ZhConverterUtil;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -10,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,17 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @Service
 class DuplicateTrackService {
 
+    enum DuplicateMatchMode {
+        EXACT,
+        SIMPLIFIED_TITLE,
+        TITLE_WITHOUT_BRACKETS
+    }
+
+    private static final Pattern BRACKETED_CONTENT = Pattern.compile(
+        "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*]|【[^【】]*】"
+            + "|\\{[^{}]*}|「[^「」]*」|『[^『』]*』"
+    );
+
     private final TrackStore trackStore;
     private final JdbcClient jdbcClient;
 
@@ -30,12 +43,13 @@ class DuplicateTrackService {
     }
 
     List<DuplicateTrackGroup> findDuplicates() {
+        return findDuplicates(DuplicateMatchMode.EXACT);
+    }
+
+    List<DuplicateTrackGroup> findDuplicates(DuplicateMatchMode mode) {
         var grouped = new LinkedHashMap<DuplicateKey, List<TrackRecord>>();
         for (var track : trackStore.findManaged(null)) {
-            var artist = ArtistNames.canonical(track.artist());
-            var key = new DuplicateKey(
-                TextNormalizer.sortKey(artist), TextNormalizer.sortKey(track.title())
-            );
+            var key = duplicateKey(track, mode);
             if (key.artist().isBlank() || key.title().isBlank()
                 || "unknown artist".equals(key.artist())
                 || "unknown title".equals(key.title())) {
@@ -61,6 +75,13 @@ class DuplicateTrackService {
 
     @Transactional
     void replaceAndDelete(String sourceId, String targetId) throws IOException {
+        replaceAndDelete(sourceId, targetId, DuplicateMatchMode.EXACT);
+    }
+
+    @Transactional
+    void replaceAndDelete(
+        String sourceId, String targetId, DuplicateMatchMode mode
+    ) throws IOException {
         if (sourceId.equals(targetId)) {
             throw new ResponseStatusException(BAD_REQUEST, "Replacement track must be different");
         }
@@ -68,7 +89,7 @@ class DuplicateTrackService {
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
         var target = trackStore.findById(targetId)
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Replacement track not found"));
-        if (!duplicateKey(source).equals(duplicateKey(target))) {
+        if (!duplicateKey(source, mode).equals(duplicateKey(target, mode))) {
             throw new ResponseStatusException(BAD_REQUEST, "Tracks are not duplicates");
         }
 
@@ -172,11 +193,26 @@ class DuplicateTrackService {
         }
     }
 
-    private DuplicateKey duplicateKey(TrackRecord track) {
+    private DuplicateKey duplicateKey(TrackRecord track, DuplicateMatchMode mode) {
+        var title = switch (mode) {
+            case EXACT -> track.title();
+            case SIMPLIFIED_TITLE -> ZhConverterUtil.toSimple(track.title());
+            case TITLE_WITHOUT_BRACKETS -> withoutBracketedContent(track.title());
+        };
         return new DuplicateKey(
             TextNormalizer.sortKey(ArtistNames.canonical(track.artist())),
-            TextNormalizer.sortKey(track.title())
+            TextNormalizer.sortKey(title)
         );
+    }
+
+    private String withoutBracketedContent(String value) {
+        var result = value;
+        String previous;
+        do {
+            previous = result;
+            result = BRACKETED_CONTENT.matcher(result).replaceAll("");
+        } while (!result.equals(previous));
+        return result;
     }
 
     private DuplicateTrackGroup group(

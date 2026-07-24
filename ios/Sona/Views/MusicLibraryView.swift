@@ -968,6 +968,8 @@ private struct ManagedPlaylistDetailView: View {
     @State private var showsArtworkPicker = false
     @State private var showsArtworkMenu = false
     @State private var artworkPhotoItem: PhotosPickerItem?
+    @State private var trackSortMode = SonaTrackSortMode.original
+    @State private var alphabeticalSections: [SonaAlphabeticalTrackSection] = []
     let playlistID: String
 
     private var playlist: Playlist? {
@@ -976,6 +978,15 @@ private struct ManagedPlaylistDetailView: View {
 
     private var tracks: [Track] {
         playlist?.trackIDs.compactMap { library.track(id: $0) ?? loadedTracks[$0] } ?? []
+    }
+
+    private var displayedTracks: [Track] {
+        guard trackSortMode == .alphabetical else { return tracks }
+        return alphabeticalSections.flatMap(\.tracks)
+    }
+
+    private var trackSortSignature: Int {
+        sonaTrackSortSignature(tracks)
     }
 
     private var playlistArtworkURL: String? {
@@ -996,83 +1007,48 @@ private struct ManagedPlaylistDetailView: View {
         ZStack {
             Color.sonaBackground.ignoresSafeArea()
             playlistHeroGradient.ignoresSafeArea()
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    VStack(spacing: 0) {
-                        playlistHero
-                        playlistActions
+            ScrollViewReader { proxy in
+                ZStack(alignment: .trailing) {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            VStack(spacing: 0) {
+                                playlistHero
+                                playlistActions
+                            }
+                            if trackSortMode == .alphabetical {
+                                ForEach(alphabeticalSections) { section in
+                                    alphabeticalSectionHeader(section.id)
+                                        .id(alphabeticalAnchor(section.id))
+                                    ForEach(section.tracks) { track in
+                                        playlistTrackRow(track)
+                                    }
+                                }
+                            } else {
+                                ForEach(tracks) { track in
+                                    playlistTrackRow(track)
+                                }
+                            }
+                        }
                     }
-                    ForEach(tracks) { track in
-                        HStack {
-                            if isSelecting {
-                                Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(Color.sonaGreen)
-                            }
-                            TrackRow(
-                                track: track,
-                                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                                isFavorite: personal.favoriteIDs.contains(track.id),
-                                moreActionTitle: playlistArtworkActionTitle(for: track),
-                                moreActionSystemImage: playlist?.artworkTrackID == track.id
-                                    ? "checkmark.circle.fill" : "photo",
-                                moreActionDisabled: playlist?.artworkTrackID == track.id,
-                                moreAction: playlistArtworkAction(for: track),
-                                deleteTitle: playlist?.isDirectoryPlaylist == true ? nil : "从歌单中移除",
-                                deleteAction: playlist?.isDirectoryPlaylist == true ? nil : {
-                                    Task {
-                                        await personal.setTrack(
-                                            track.id, in: playlistID, isIncluded: false
-                                        )
-                                    }
-                                },
-                                tapAction: {
-                                    if isSelecting {
-                                        if !selectedIDs.insert(track.id).inserted {
-                                            selectedIDs.remove(track.id)
-                                        }
-                                    } else {
-                                        player.play(
-                                            track: track,
-                                            queue: tracks,
-                                            prioritizedQueueTitle: playlist?.name ?? "歌单",
-                                            queueContextID: playlistID,
-                                            offlineURLProvider: offline.localURL(for:)
-                                        )
-                                    }
-                                }
-                            )
+                    .scrollIndicators(trackSortMode == .alphabetical ? .hidden : .automatic)
+                    .contentMargins(
+                        .bottom,
+                        playlistBottomContentMargin,
+                        for: .scrollContent
+                    )
+                    .safeAreaPadding(.top, detailScrollTopPadding)
+
+                    if trackSortMode == .alphabetical, !alphabeticalSections.isEmpty {
+                        SonaAlphabetIndexBar(
+                            availableSections: Set(alphabeticalSections.map(\.id))
+                        ) { section in
+                            proxy.scrollTo(alphabeticalAnchor(section), anchor: .top)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .contextMenu {
-                            if session.currentUser?.isAdmin == true {
-                                Button("编辑歌曲名和歌手", systemImage: "pencil") {
-                                    editingTrack = track
-                                }
-                                if playlist?.isDirectoryPlaylist == true,
-                                   track.metadataStatus == "NEEDS_REVIEW" {
-                                    Button("编辑完整元数据", systemImage: "slider.horizontal.3") {
-                                        editingMetadataTrack = track
-                                    }
-                                }
-                            }
-                            if playlist?.isDirectoryPlaylist != true {
-                                Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
-                                    Task {
-                                        await personal.setTrack(track.id, in: playlistID, isIncluded: false)
-                                    }
-                                }
-                            }
-                        }
+                        .padding(.top, 88)
+                        .padding(.bottom, playlistBottomContentMargin)
                     }
                 }
             }
-            .contentMargins(
-                .bottom,
-                playlistBottomContentMargin,
-                for: .scrollContent
-            )
-            .safeAreaPadding(.top, detailScrollTopPadding)
 
             #if targetEnvironment(macCatalyst)
             macDetailToolbar
@@ -1144,6 +1120,14 @@ private struct ManagedPlaylistDetailView: View {
             Task { await uploadPlaylistArtwork(from: item) }
         }
         .task(id: playlist?.trackIDs) { await loadMissingTracks() }
+        .onChange(of: trackSortMode) { _, mode in
+            guard mode == .alphabetical else { return }
+            alphabeticalSections = sonaAlphabeticalTrackSections(tracks)
+        }
+        .onChange(of: trackSortSignature) { _, _ in
+            guard trackSortMode == .alphabetical else { return }
+            alphabeticalSections = sonaAlphabeticalTrackSections(tracks)
+        }
         .sheet(item: $editingDirectoryPlaylist) { playlist in
             DirectoryPlaylistEditor(playlist: playlist) { name, poolType in
                 guard await personal.updateDirectoryPlaylist(
@@ -1194,6 +1178,82 @@ private struct ManagedPlaylistDetailView: View {
             Button("好") { importMessage = nil }
         } message: {
             Text(importMessage ?? "")
+        }
+    }
+
+    private func alphabeticalAnchor(_ section: String) -> String {
+        "managed-track-section-\(section)"
+    }
+
+    private func alphabeticalSectionHeader(_ section: String) -> some View {
+        Text(section)
+            .font(.headline.bold())
+            .foregroundStyle(Color.sonaGreen)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
+    private func playlistTrackRow(_ track: Track) -> some View {
+        HStack {
+            if isSelecting {
+                Image(systemName: selectedIDs.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(Color.sonaGreen)
+            }
+            TrackRow(
+                track: track,
+                showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                isFavorite: personal.favoriteIDs.contains(track.id),
+                moreActionTitle: playlistArtworkActionTitle(for: track),
+                moreActionSystemImage: playlist?.artworkTrackID == track.id
+                    ? "checkmark.circle.fill" : "photo",
+                moreActionDisabled: playlist?.artworkTrackID == track.id,
+                moreAction: playlistArtworkAction(for: track),
+                deleteTitle: playlist?.isDirectoryPlaylist == true ? nil : "从歌单中移除",
+                deleteAction: playlist?.isDirectoryPlaylist == true ? nil : {
+                    Task {
+                        await personal.setTrack(track.id, in: playlistID, isIncluded: false)
+                    }
+                },
+                tapAction: {
+                    if isSelecting {
+                        if !selectedIDs.insert(track.id).inserted {
+                            selectedIDs.remove(track.id)
+                        }
+                    } else {
+                        player.play(
+                            track: track,
+                            queue: displayedTracks,
+                            prioritizedQueueTitle: playlist?.name ?? "歌单",
+                            queueContextID: playlistID,
+                            offlineURLProvider: offline.localURL(for:)
+                        )
+                    }
+                }
+            )
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .contextMenu {
+            if session.currentUser?.isAdmin == true {
+                Button("编辑歌曲名和歌手", systemImage: "pencil") {
+                    editingTrack = track
+                }
+                if playlist?.isDirectoryPlaylist == true,
+                   track.metadataStatus == "NEEDS_REVIEW" {
+                    Button("编辑完整元数据", systemImage: "slider.horizontal.3") {
+                        editingMetadataTrack = track
+                    }
+                }
+            }
+            if playlist?.isDirectoryPlaylist != true {
+                Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
+                    Task {
+                        await personal.setTrack(track.id, in: playlistID, isIncluded: false)
+                    }
+                }
+            }
         }
     }
 
@@ -1350,6 +1410,8 @@ private struct ManagedPlaylistDetailView: View {
     private var playlistActions: some View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
+                SonaTrackSortMenu(mode: $trackSortMode)
+
                 if canEditPlaylistArtwork {
                     playlistArtworkMenu
                 }
@@ -1472,7 +1534,7 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private func playRandom() {
-        let queue = tracks.shuffled()
+        let queue = displayedTracks.shuffled()
         guard let first = queue.first else { return }
         player.play(
             track: first,
@@ -1484,10 +1546,10 @@ private struct ManagedPlaylistDetailView: View {
     }
 
     private func playAll() {
-        guard let first = tracks.first else { return }
+        guard let first = displayedTracks.first else { return }
         player.play(
             track: first,
-            queue: tracks,
+            queue: displayedTracks,
             prioritizedQueueTitle: playlist?.name ?? "歌单",
             queueContextID: playlistID,
             offlineURLProvider: offline.localURL(for:)

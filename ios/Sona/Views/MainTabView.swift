@@ -169,6 +169,9 @@ struct MainTabView: View {
             if library.tracks.isEmpty {
                 await library.refresh()
             }
+            Task(priority: .utility) {
+                _ = await library.prepareAlphabeticalIndex()
+            }
             await personal.refresh()
             await player.startCarPlayPlaybackIfNeeded()
             await player.prepareRandomQueueIfNeeded { offline.localURL(for: $0) }
