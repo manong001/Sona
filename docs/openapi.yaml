@@ -743,6 +743,7 @@ paths:
       parameters:
         - name: region
           in: query
+          description: 榜单语言；为兼容现有客户端，CN/US/KR/JP 分别表示中文、英语、韩语、日语
           schema: {type: string, enum: [ALL, CN, KR, US, JP], default: ALL}
         - name: childMode
           in: query

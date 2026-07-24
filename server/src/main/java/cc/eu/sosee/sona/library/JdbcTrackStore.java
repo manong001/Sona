@@ -644,7 +644,13 @@ class JdbcTrackStore implements TrackStore {
     public List<ChartTrackData> findChart(
         String region, String userId, boolean childOnly, int limit
     ) {
-        var regionFilter = "ALL".equals(region) ? "" : " AND tracks.region = :region\n";
+        var language = switch (region) {
+            case "CN" -> "ZH";
+            case "US" -> "LATIN";
+            case "KR" -> "KO";
+            case "JP" -> "JA";
+            default -> null;
+        };
         var statement = jdbcClient.sql("""
                 SELECT tracks.*, COALESCE(stats.play_count, 0) AS chart_play_count
                 FROM tracks
@@ -655,22 +661,21 @@ class JdbcTrackStore implements TrackStore {
                     SELECT 1 FROM hidden_tracks
                     WHERE hidden_tracks.user_id = :userId AND hidden_tracks.track_id = tracks.id
                   )
-                """ + regionFilter + """
                 ORDER BY COALESCE(stats.play_count, 0) DESC,
                   CASE WHEN COALESCE(stats.play_count, 0) > 0
                     THEN stats.completion_percent_sum / stats.play_count ELSE 0 END DESC,
                   tracks.normalized_title, tracks.id
-                LIMIT :limit
+                LIMIT :queryLimit
                 """)
             .param("userId", userId)
             .param("visiblePool", libraryPool(childOnly))
-            .param("limit", limit);
-        if (!"ALL".equals(region)) {
-            statement = statement.param("region", region);
-        }
+            .param("queryLimit", language == null ? limit : Integer.MAX_VALUE);
         return statement.query((resultSet, rowNumber) -> new ChartTrackData(
             mapTrack(resultSet, rowNumber), resultSet.getLong("chart_play_count")
-        )).list();
+        )).list().stream()
+            .filter(item -> language == null || TrackLanguage.detect(item.track()).equals(language))
+            .limit(limit)
+            .toList();
     }
 
     @Override

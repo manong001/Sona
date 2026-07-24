@@ -25,19 +25,19 @@ struct HomeView: View {
             systemImage: "flame.fill", color: Color(red: 0.72, green: 0.19, blue: 0.26)
         ),
         ChartShortcut(
-            region: "CN", title: "华语榜", subtitle: "华语热门歌曲",
+            region: "CN", title: "中文榜", subtitle: "中文热门歌曲",
             systemImage: "music.mic", color: Color(red: 0.74, green: 0.29, blue: 0.16)
         ),
         ChartShortcut(
-            region: "US", title: "美国榜", subtitle: "美国热门歌曲",
+            region: "US", title: "英语榜", subtitle: "英语热门歌曲",
             systemImage: "star.fill", color: Color(red: 0.20, green: 0.36, blue: 0.72)
         ),
         ChartShortcut(
-            region: "KR", title: "韩国榜", subtitle: "韩国热门歌曲",
+            region: "KR", title: "韩语榜", subtitle: "韩语热门歌曲",
             systemImage: "waveform", color: Color(red: 0.48, green: 0.24, blue: 0.67)
         ),
         ChartShortcut(
-            region: "JP", title: "日本榜", subtitle: "日本热门歌曲",
+            region: "JP", title: "日语榜", subtitle: "日语热门歌曲",
             systemImage: "sparkles", color: Color(red: 0.12, green: 0.52, blue: 0.48)
         )
     ]
@@ -979,7 +979,7 @@ private struct ChartsView: View {
     @State private var errorMessage: String?
 
     private let regions = [
-        ("ALL", "总榜"), ("CN", "华语"), ("US", "美国"), ("KR", "韩国"), ("JP", "日本")
+        ("ALL", "总榜"), ("CN", "中文"), ("US", "英语"), ("KR", "韩语"), ("JP", "日语")
     ]
 
     init(initialRegion: String = "ALL") {
