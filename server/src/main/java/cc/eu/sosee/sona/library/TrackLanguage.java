@@ -37,23 +37,11 @@ final class TrackLanguage {
             if (counts.han > 0) return "ZH";
             return counts.latin > 0 ? "LATIN" : null;
         }
-
-        var language = "LATIN";
-        var score = counts.latin;
-        if (counts.han > score) {
-            language = "ZH";
-            score = counts.han;
-        }
-        if (counts.hangul > score) {
-            language = "KO";
-            score = counts.hangul;
-        }
-        var japaneseScore = counts.kana == 0 ? 0 : counts.kana + counts.han;
-        if (japaneseScore > score) {
-            language = "JA";
-            score = japaneseScore;
-        }
-        return score == 0 ? null : language;
+        if (counts.hangul > 0) return "KO";
+        if (counts.kana > counts.han) return "JA";
+        if (counts.han > 0) return "ZH";
+        if (counts.kana > 0) return "JA";
+        return counts.latin > 0 ? "LATIN" : null;
     }
 
     private static String firstText(String... values) {
