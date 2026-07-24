@@ -23,6 +23,7 @@ import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.HtmlUtils;
 
 @Repository
 class PersonalRepository {
@@ -1283,6 +1284,10 @@ class PersonalRepository {
         String artworkTrackId, String sourceArtworkUrl, long createdAt, boolean featured,
         String directoryPath, String poolType, boolean shownOnHome, Integer homePosition
     ) {
+        PlaylistData {
+            name = name == null ? null : HtmlUtils.htmlUnescape(name);
+        }
+
         PlaylistData(
             String id, String name, List<String> trackIds, List<String> artworkUrls,
             String artworkTrackId, long createdAt, boolean featured,
