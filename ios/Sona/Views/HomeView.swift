@@ -933,6 +933,7 @@ private struct GenreRecommendationView: View {
                 .listStyle(.plain)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.sonaBackground)
         .navigationTitle(genre)
         .toolbar {

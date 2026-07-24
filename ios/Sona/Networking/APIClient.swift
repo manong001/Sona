@@ -807,13 +807,14 @@ final class APIClient {
 
     func createPlaylistSubscription(
         sourceURL: String, name: String?, poolType: String,
-        autoDownload: Bool, syncIntervalHours: Int
+        autoDownload: Bool, strictMode: Bool, syncIntervalHours: Int
     ) async throws -> PlaylistSubscription {
         struct Body: Encodable {
             let sourceUrl: String
             let name: String?
             let poolType: String
             let autoDownload: Bool
+            let strictMode: Bool
             let syncIntervalHours: Int
         }
         return try await request(
@@ -821,7 +822,8 @@ final class APIClient {
             method: "POST",
             body: try encoder.encode(Body(
                 sourceUrl: sourceURL, name: name, poolType: poolType,
-                autoDownload: autoDownload, syncIntervalHours: syncIntervalHours
+                autoDownload: autoDownload, strictMode: strictMode,
+                syncIntervalHours: syncIntervalHours
             )),
             timeout: 30
         )
@@ -871,6 +873,16 @@ final class APIClient {
         )
     }
 
+    func downloadSuggestedPlaylistSubscriptionOriginals(
+        id: String
+    ) async throws -> PlaylistSubscriptionOriginalDownloadResult {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/matches/download-originals",
+            method: "POST",
+            timeout: 300
+        )
+    }
+
     func selectPlaylistSubscriptionMatch(
         id: String, itemKey: String, trackId: String
     ) async throws -> PlaylistSubscription {
@@ -892,23 +904,22 @@ final class APIClient {
         )
     }
 
-    func renamePlaylistSubscription(id: String, name: String) async throws -> PlaylistSubscription {
-        struct Body: Encodable { let name: String }
+    func updatePlaylistSubscription(
+        id: String, name: String, strictMode: Bool, syncIntervalHours: Int
+    ) async throws -> PlaylistSubscription {
+        struct Body: Encodable {
+            let name: String
+            let strictMode: Bool
+            let syncIntervalHours: Int
+        }
         return try await request(
             path: "/api/v1/me/playlist-subscriptions/\(id)",
             method: "PATCH",
-            body: try encoder.encode(Body(name: name))
-        )
-    }
-
-    func updatePlaylistSubscriptionStrictMode(
-        id: String, strictMode: Bool
-    ) async throws -> PlaylistSubscription {
-        struct Body: Encodable { let strictMode: Bool }
-        return try await request(
-            path: "/api/v1/me/playlist-subscriptions/\(id)/strict-mode",
-            method: "PATCH",
-            body: try encoder.encode(Body(strictMode: strictMode))
+            body: try encoder.encode(Body(
+                name: name,
+                strictMode: strictMode,
+                syncIntervalHours: syncIntervalHours
+            ))
         )
     }
 

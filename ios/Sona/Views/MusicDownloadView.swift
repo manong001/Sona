@@ -686,10 +686,9 @@ struct PlaylistSubscriptionsView: View {
     @State private var subscriptions: [PlaylistSubscription] = []
     @State private var syncingIDs: Set<String> = []
     @State private var downloadingMissingIDs: Set<String> = []
-    @State private var updatingStrictModeIDs: Set<String> = []
     @State private var isLoading = true
     @State private var showsCreate = false
-    @State private var renamingSubscription: PlaylistSubscription?
+    @State private var editingSubscription: PlaylistSubscription?
     @State private var inspectingSubscription: PlaylistSubscription?
     @State private var errorMessage: String?
     @State private var selectedSection = 0
@@ -712,6 +711,7 @@ struct PlaylistSubscriptionsView: View {
                     MusicDownloadView(initialSection: 1, showsSectionPicker: false)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.sonaBackground)
             .navigationTitle(selectedSection == 0 ? "在线歌单订阅" : "音乐下载")
             .navigationBarTitleDisplayMode(.inline)
@@ -738,10 +738,14 @@ struct PlaylistSubscriptionsView: View {
                 }
                 .desktopSheetSize(.standard)
             }
-            .sheet(item: $renamingSubscription) { subscription in
-                RenamePlaylistSubscriptionView(subscription: subscription) { name in
-                    let updated = try await APIClient.shared.renamePlaylistSubscription(
-                        id: subscription.id, name: name
+            .sheet(item: $editingSubscription) { subscription in
+                EditPlaylistSubscriptionView(subscription: subscription) {
+                    name, strictMode, syncIntervalHours in
+                    let updated = try await APIClient.shared.updatePlaylistSubscription(
+                        id: subscription.id,
+                        name: name,
+                        strictMode: strictMode,
+                        syncIntervalHours: syncIntervalHours
                     )
                     if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
                         subscriptions[index] = updated
@@ -802,105 +806,139 @@ struct PlaylistSubscriptionsView: View {
     }
 
     private func subscriptionRow(_ subscription: PlaylistSubscription) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            ArtworkView(path: artworkURL(for: subscription), cornerRadius: 6, thumbnailSize: 256)
-                .frame(width: 72, height: 72)
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(subscription.name).font(.headline)
-                        Text("\(poolTitle(subscription.poolType)) · 每 \(subscription.syncIntervalHours) 小时同步")
-                            .font(.caption)
-                            .foregroundStyle(Color.sonaSecondaryText)
-                    }
-                    Spacer()
-                    Button {
-                        renamingSubscription = subscription
-                    } label: {
-                        Image(systemName: "pencil")
-                    }
-                    .buttonStyle(.plain)
-                    Button {
-                        Task { await sync(subscription) }
-                    } label: {
-                        if syncingIDs.contains(subscription.id) {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(syncingIDs.contains(subscription.id))
-                }
-                Text("共 \(subscription.itemCount) 首 · 已匹配 \(subscription.matchedCount) · 缺少 \(subscription.missingCount)")
-                    .font(.subheadline)
-                Toggle(
-                    "严格模式",
-                    isOn: Binding(
-                        get: { subscription.strictMode },
-                        set: { value in
-                            Task { await updateStrictMode(subscription, value: value) }
-                        }
-                    )
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
+                ArtworkView(
+                    path: artworkURL(for: subscription),
+                    cornerRadius: 10,
+                    thumbnailSize: 256
                 )
-                .font(.subheadline)
-                .tint(Color.sonaGreen)
-                .disabled(updatingStrictModeIDs.contains(subscription.id))
-                if subscription.lastSyncedAt == nil && subscription.lastError == nil {
-                    Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
+                .frame(width: 76, height: 76)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(subscription.name)
+                            .font(.headline)
+                            .lineLimit(2)
+                        Spacer(minLength: 8)
+                        Button {
+                            editingSubscription = subscription
+                        } label: {
+                            Image(systemName: "pencil")
+                                .frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("修改订阅信息")
+                        Button {
+                            Task { await sync(subscription) }
+                        } label: {
+                            if syncingIDs.contains(subscription.id) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(width: 28, height: 28)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .frame(width: 28, height: 28)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(syncingIDs.contains(subscription.id))
+                        .accessibilityLabel("立即同步")
+                    }
+
+                    Text(
+                        "\(poolTitle(subscription.poolType)) · 每 \(subscription.syncIntervalHours) 小时同步"
+                    )
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
-                } else if subscription.downloadingCount > 0 {
-                    Label(downloadStatus(subscription), systemImage: "arrow.down.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.sonaGreen)
-                } else if subscription.autoDownload {
-                    Label("缺少音源时自动下载", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.sonaGreen)
-                }
-                if let error = subscription.lastError, !error.isEmpty {
-                    Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
-                }
-                if subscription.missingCount > 0 {
-                    Button {
-                        Task { await downloadMissing(subscription) }
-                    } label: {
-                        Label(
-                            downloadingMissingIDs.contains(subscription.id)
-                                ? "正在添加到下载列表…"
-                                : "下载缺少的 \(subscription.missingCount) 首",
-                            systemImage: "arrow.down.circle.fill"
+
+                    HStack(spacing: 12) {
+                        subscriptionMetric(
+                            "\(subscription.itemCount) 首",
+                            systemImage: "music.note.list",
+                            color: Color.sonaSecondaryText
                         )
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.sonaGreen)
-                    .disabled(
-                        syncingIDs.contains(subscription.id)
-                            || downloadingMissingIDs.contains(subscription.id)
-                    )
-                }
-                if (subscription.suggestedCount ?? 0) > 0 {
-                    Button {
-                        inspectingSubscription = subscription
-                    } label: {
-                        Label(
-                            "确认相似歌曲 \(subscription.suggestedCount ?? 0) 首",
-                            systemImage: "questionmark.circle"
+                        subscriptionMetric(
+                            "\(subscription.matchedCount) 已匹配",
+                            systemImage: "checkmark.circle.fill",
+                            color: Color.sonaGreen
                         )
-                        .frame(maxWidth: .infinity)
+                        if subscription.missingCount > 0 {
+                            subscriptionMetric(
+                                "\(subscription.missingCount) 缺少",
+                                systemImage: "exclamationmark.circle.fill",
+                                color: .orange
+                            )
+                        }
                     }
-                    .buttonStyle(.bordered)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 }
             }
+
+            if subscription.lastSyncedAt == nil && subscription.lastError == nil {
+                Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+            } else if subscription.downloadingCount > 0 {
+                Label(downloadStatus(subscription), systemImage: "arrow.down.circle")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaGreen)
+            } else if subscription.autoDownload {
+                Label("缺少音源时自动下载", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaGreen)
+            }
+
+            if let error = subscription.lastError, !error.isEmpty {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+
+            if subscription.missingCount > 0 {
+                Button {
+                    Task { await downloadMissing(subscription) }
+                } label: {
+                    Label(
+                        downloadingMissingIDs.contains(subscription.id)
+                            ? "正在添加到下载列表…"
+                            : "下载缺少的 \(subscription.missingCount) 首",
+                        systemImage: "arrow.down.circle.fill"
+                    )
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 36)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .tint(Color.sonaGreen)
+                .disabled(
+                    syncingIDs.contains(subscription.id)
+                        || downloadingMissingIDs.contains(subscription.id)
+                )
+            }
+
+            if (subscription.suggestedCount ?? 0) > 0 {
+                Button {
+                    inspectingSubscription = subscription
+                } label: {
+                    Label(
+                        "确认相似歌曲 \(subscription.suggestedCount ?? 0) 首",
+                        systemImage: "questionmark.circle"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+            }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .listRowBackground(Color.sonaBackground)
         .contextMenu {
-            Button("修改名称", systemImage: "pencil") {
-                renamingSubscription = subscription
+            Button("修改订阅信息", systemImage: "pencil") {
+                editingSubscription = subscription
             }
             Button("立即同步", systemImage: "arrow.clockwise") {
                 Task { await sync(subscription) }
@@ -909,6 +947,14 @@ struct PlaylistSubscriptionsView: View {
                 Task { await delete(subscription) }
             }
         }
+    }
+
+    private func subscriptionMetric(
+        _ title: String, systemImage: String, color: Color
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(color)
     }
 
     private func load() async {
@@ -989,24 +1035,6 @@ struct PlaylistSubscriptionsView: View {
         }
     }
 
-    private func updateStrictMode(
-        _ subscription: PlaylistSubscription, value: Bool
-    ) async {
-        guard updatingStrictModeIDs.insert(subscription.id).inserted else { return }
-        defer { updatingStrictModeIDs.remove(subscription.id) }
-        do {
-            let updated = try await APIClient.shared.updatePlaylistSubscriptionStrictMode(
-                id: subscription.id, strictMode: value
-            )
-            if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
-                subscriptions[index] = updated
-            }
-            changed()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     private func delete(_ subscription: PlaylistSubscription) async {
         do {
             try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
@@ -1048,8 +1076,11 @@ private struct PlaylistSubscriptionItemsView: View {
     @State private var isLoadingMore = false
     @State private var hasMore = false
     @State private var isApplyingBestMatches = false
+    @State private var isDownloadingSuggestedOriginals = false
     @State private var canApplyBestMatches = true
     @State private var showsBestMatchConfirmation = false
+    @State private var showsOriginalDownloadConfirmation = false
+    @State private var pendingSuggestedCount: Int?
     @State private var resultMessage: String?
     @State private var errorMessage: String?
 
@@ -1069,9 +1100,20 @@ private struct PlaylistSubscriptionItemsView: View {
                     .desktopEmptyState()
                 } else {
                     List {
+                        bulkOriginalDownloadButton
+                            .listRowInsets(EdgeInsets(
+                                top: 12, leading: 16, bottom: 8, trailing: 16
+                            ))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+
                         ForEach(items) { item in
                             itemRow(item)
-                                .listRowBackground(Color.sonaBackground)
+                                .listRowInsets(EdgeInsets(
+                                    top: 6, leading: 16, bottom: 6, trailing: 16
+                                ))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
                         if hasMore {
                             Button {
@@ -1087,13 +1129,16 @@ private struct PlaylistSubscriptionItemsView: View {
                                     Spacer()
                                 }
                             }
-                            .listRowBackground(Color.sonaBackground)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                             .disabled(isLoadingMore)
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.sonaBackground)
             .navigationTitle("匹配订阅歌曲")
             .navigationBarTitleDisplayMode(.inline)
@@ -1111,7 +1156,11 @@ private struct PlaylistSubscriptionItemsView: View {
                             Label("一键匹配", systemImage: "wand.and.stars")
                         }
                     }
-                    .disabled(isApplyingBestMatches || !canApplyBestMatches)
+                    .disabled(
+                        isApplyingBestMatches
+                            || isDownloadingSuggestedOriginals
+                            || !canApplyBestMatches
+                    )
                 }
             }
             .task { await load(reset: true) }
@@ -1130,6 +1179,20 @@ private struct PlaylistSubscriptionItemsView: View {
                         : "宽松模式允许候选包含额外合唱歌手。"
                 )
             }
+            .confirmationDialog(
+                "全部判定为未匹配并下载原曲？",
+                isPresented: $showsOriginalDownloadConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("下载全部待确认原曲", role: .destructive) {
+                    Task { await downloadSuggestedOriginals() }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text(
+                    "将忽略所有待确认候选，并把 \(suggestedCount) 首远端原曲加入下载队列。"
+                )
+            }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -1138,7 +1201,7 @@ private struct PlaylistSubscriptionItemsView: View {
             } message: {
                 Text(errorMessage ?? "未知错误")
             }
-            .alert("一键匹配完成", isPresented: Binding(
+            .alert("批量处理完成", isPresented: Binding(
                 get: { resultMessage != nil },
                 set: { if !$0 { resultMessage = nil } }
             )) {
@@ -1149,46 +1212,122 @@ private struct PlaylistSubscriptionItemsView: View {
         }
     }
 
+    private var suggestedCount: Int {
+        pendingSuggestedCount ?? subscription.suggestedCount ?? items.count
+    }
+
+    private var bulkOriginalDownloadButton: some View {
+        Button {
+            showsOriginalDownloadConfirmation = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.title2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("全部都不匹配，下载原曲")
+                        .font(.subheadline.weight(.semibold))
+                    Text("一次处理全部 \(suggestedCount) 首待确认歌曲")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+                Spacer(minLength: 8)
+                if isDownloadingSuggestedOriginals {
+                    ProgressView()
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(.orange.opacity(0.35), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isApplyingBestMatches || isDownloadingSuggestedOriginals)
+    }
+
     @ViewBuilder
     private func itemRow(_ item: PlaylistSubscriptionItem) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title).font(.headline)
-                    Text(item.artist).font(.subheadline).foregroundStyle(Color.sonaSecondaryText)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("原歌曲")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.sonaSecondaryText)
+                    Text(item.title)
+                        .font(.headline)
+                    Text(item.artist)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.sonaSecondaryText)
                 }
                 Spacer()
                 stateLabel(item.state)
             }
             if item.state == "SUGGESTED" {
+                Divider()
+                Text("候选歌曲")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.sonaSecondaryText)
+
                 ForEach(item.suggestions) { suggestion in
                     Button {
                         Task { await select(suggestion, for: item) }
                     } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion.title).foregroundStyle(.primary)
+                        HStack(spacing: 12) {
+                            Image(systemName: "music.note")
+                                .foregroundStyle(Color.sonaGreen)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(suggestion.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
                                 Text("\(suggestion.artist) · \(suggestion.durationText)")
                                     .font(.caption)
                                     .foregroundStyle(Color.sonaSecondaryText)
                             }
                             Spacer()
-                            Image(systemName: "checkmark.circle")
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title3)
                                 .foregroundStyle(Color.sonaGreen)
                         }
+                        .padding(12)
+                        .background(
+                            Color.sonaBackground,
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
                     }
                     .buttonStyle(.plain)
                     .disabled(workingItemKeys.contains(item.itemKey))
                 }
-                Button(role: .destructive) {
+                Button {
                     Task { await download(item) }
                 } label: {
-                    Label("都不对，下载原曲", systemImage: "arrow.down.circle")
+                    HStack {
+                        Label("候选都不对", systemImage: "arrow.down.circle")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text("下载原曲")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        .orange.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 12)
+                    )
                 }
+                .buttonStyle(.plain)
                 .disabled(workingItemKeys.contains(item.itemKey))
             }
         }
-        .padding(.vertical, 5)
+        .padding(14)
+        .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func stateLabel(_ state: String) -> some View {
@@ -1198,7 +1337,12 @@ private struct PlaylistSubscriptionItemsView: View {
         case "DOWNLOADING": ("下载中", Color.sonaGreen)
         default: ("缺少", Color.sonaSecondaryText)
         }
-        return Text(value.0).font(.caption).foregroundStyle(value.1)
+        return Text(value.0)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(value.1)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(value.1.opacity(0.12), in: Capsule())
     }
 
     private func load(reset: Bool) async {
@@ -1244,9 +1388,31 @@ private struct PlaylistSubscriptionItemsView: View {
                 id: subscription.id
             )
             updated(result.subscription)
-            canApplyBestMatches = (result.subscription.suggestedCount ?? 0) > 0
+            pendingSuggestedCount = result.subscription.suggestedCount
+            canApplyBestMatches = suggestedCount > 0
             await load(reset: true)
             resultMessage = "已自动匹配 \(result.matchedCount) 首，其余歌曲保留待确认。"
+        } catch {
+            errorMessage = message(for: error)
+        }
+    }
+
+    private func downloadSuggestedOriginals() async {
+        guard !isDownloadingSuggestedOriginals else { return }
+        isDownloadingSuggestedOriginals = true
+        defer { isDownloadingSuggestedOriginals = false }
+        do {
+            let result = try await APIClient.shared
+                .downloadSuggestedPlaylistSubscriptionOriginals(id: subscription.id)
+            updated(result.subscription)
+            pendingSuggestedCount = result.subscription.suggestedCount
+            canApplyBestMatches = suggestedCount > 0
+            await load(reset: true)
+            if result.skippedCount == 0 {
+                resultMessage = "已将 \(result.queuedCount) 首原曲加入下载队列。"
+            } else {
+                resultMessage = "已加入 \(result.queuedCount) 首，另有 \(result.skippedCount) 首已在队列中或远端歌单已变化。"
+            }
         } catch {
             errorMessage = message(for: error)
         }
@@ -1270,6 +1436,7 @@ private struct PlaylistSubscriptionItemsView: View {
                 id: subscription.id, itemKey: item.itemKey, trackId: suggestion.trackId
             )
             updated(subscription)
+            pendingSuggestedCount = subscription.suggestedCount
             await load(reset: true)
         } catch {
             errorMessage = error.localizedDescription
@@ -1284,6 +1451,7 @@ private struct PlaylistSubscriptionItemsView: View {
                 id: subscription.id, itemKey: item.itemKey
             )
             updated(subscription)
+            pendingSuggestedCount = subscription.suggestedCount
             await load(reset: true)
         } catch {
             errorMessage = error.localizedDescription
@@ -1291,18 +1459,25 @@ private struct PlaylistSubscriptionItemsView: View {
     }
 }
 
-private struct RenamePlaylistSubscriptionView: View {
+private struct EditPlaylistSubscriptionView: View {
     @Environment(\.dismiss) private var dismiss
     let subscription: PlaylistSubscription
-    let saved: (String) async throws -> Void
+    let saved: (String, Bool, Int) async throws -> Void
     @State private var name: String
+    @State private var strictMode: Bool
+    @State private var syncIntervalHours: Int
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(subscription: PlaylistSubscription, saved: @escaping (String) async throws -> Void) {
+    init(
+        subscription: PlaylistSubscription,
+        saved: @escaping (String, Bool, Int) async throws -> Void
+    ) {
         self.subscription = subscription
         self.saved = saved
         _name = State(initialValue: subscription.name)
+        _strictMode = State(initialValue: subscription.strictMode)
+        _syncIntervalHours = State(initialValue: subscription.syncIntervalHours)
     }
 
     var body: some View {
@@ -1311,13 +1486,26 @@ private struct RenamePlaylistSubscriptionView: View {
                 Section("歌单名称") {
                     TextField("歌单名称", text: $name)
                 }
+                Section("同步设置") {
+                    Picker("同步频率", selection: $syncIntervalHours) {
+                        Text("每 6 小时").tag(6)
+                        Text("每 12 小时").tag(12)
+                        Text("每天").tag(24)
+                        Text("每 3 天").tag(72)
+                    }
+                    Toggle("严格模式", isOn: $strictMode)
+                        .tint(Color.sonaGreen)
+                }
                 Section {
-                    Text("只修改 Sona 中的名称，不会修改来源平台的公开歌单。")
+                    Text(
+                        "严格模式仅自动采用歌名、歌手完全一致的歌曲。"
+                        + "这些设置只影响 Sona，不会修改来源平台的公开歌单。"
+                    )
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
                 }
             }
-            .navigationTitle("修改订阅歌单")
+            .navigationTitle("修改订阅信息")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1348,7 +1536,7 @@ private struct RenamePlaylistSubscriptionView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            try await saved(normalizedName)
+            try await saved(normalizedName, strictMode, syncIntervalHours)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
@@ -1362,6 +1550,7 @@ struct CreatePlaylistSubscriptionView: View {
     @State private var name = ""
     @State private var poolType = "NORMAL"
     @State private var autoDownload = false
+    @State private var strictMode = true
     @State private var syncIntervalHours = 24
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -1388,11 +1577,17 @@ struct CreatePlaylistSubscriptionView: View {
                         Text("每天").tag(24)
                         Text("每 3 天").tag(72)
                     }
+                    Toggle("严格模式", isOn: $strictMode)
+                        .tint(Color.sonaGreen)
                     Toggle("缺少音源时自动下载", isOn: $autoDownload)
                 } header: {
                     Text("同步设置")
                 } footer: {
-                    Text("关闭自动下载时只匹配本地曲库；外部歌单删除歌曲时，只移除歌单关系，不删除本地音频。")
+                    Text(
+                        "严格模式仅自动采用歌名、歌手完全一致的歌曲。"
+                        + "关闭自动下载时只匹配本地曲库；外部歌单删除歌曲时，"
+                        + "只移除歌单关系，不删除本地音频。"
+                    )
                 }
             }
             .navigationTitle("添加歌单订阅")
@@ -1443,6 +1638,7 @@ struct CreatePlaylistSubscriptionView: View {
                 name: trimmedName,
                 poolType: poolType,
                 autoDownload: autoDownload,
+                strictMode: strictMode,
                 syncIntervalHours: syncIntervalHours
             )
             created(subscription)

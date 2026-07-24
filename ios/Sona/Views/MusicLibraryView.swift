@@ -1967,6 +1967,7 @@ private struct ServerDirectoryLevel: View {
                 .desktopEmptyState()
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.sonaBackground)
         .navigationTitle(listing?.name ?? "服务器音乐目录")
         .navigationBarTitleDisplayMode(.inline)

@@ -47,7 +47,8 @@ class PlaylistSubscriptionController {
     ) {
         return ResponseEntity.accepted().body(service.create(
             user.id(), user.username(), request.sourceUrl(), request.name(), request.poolType(),
-            request.autoDownload(), request.syncIntervalHours()
+            request.autoDownload(), request.strictMode() == null || request.strictMode(),
+            request.syncIntervalHours()
         ));
     }
 
@@ -93,6 +94,14 @@ class PlaylistSubscriptionController {
         return service.applyBestMatches(user.id(), id);
     }
 
+    @PostMapping("/{id}/matches/download-originals")
+    PlaylistSubscriptionService.OriginalDownloadResult downloadSuggestedOriginals(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return service.downloadSuggestedOriginals(user.id(), id);
+    }
+
     @PostMapping("/{id}/items/{itemKey}/match")
     PlaylistSubscriptionRepository.Subscription selectMatch(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -113,12 +122,14 @@ class PlaylistSubscriptionController {
     }
 
     @PatchMapping("/{id}")
-    PlaylistSubscriptionRepository.Subscription rename(
+    PlaylistSubscriptionRepository.Subscription update(
         @AuthenticationPrincipal AuthenticatedUser user,
         @PathVariable String id,
-        @Valid @RequestBody RenameRequest request
+        @Valid @RequestBody UpdateRequest request
     ) {
-        return service.rename(user.id(), id, request.name());
+        return service.updateSettings(
+            user.id(), id, request.name(), request.strictMode(), request.syncIntervalHours()
+        );
     }
 
     @PatchMapping("/{id}/strict-mode")
@@ -150,11 +161,16 @@ class PlaylistSubscriptionController {
         @Size(max = 80) String name,
         @NotBlank String poolType,
         boolean autoDownload,
+        Boolean strictMode,
         @Min(1) @Max(168) int syncIntervalHours
     ) {
     }
 
-    record RenameRequest(@NotBlank @Size(max = 80) String name) {
+    record UpdateRequest(
+        @NotBlank @Size(max = 80) String name,
+        Boolean strictMode,
+        @Min(1) @Max(168) Integer syncIntervalHours
+    ) {
     }
 
     record StrictModeRequest(boolean strictMode) {

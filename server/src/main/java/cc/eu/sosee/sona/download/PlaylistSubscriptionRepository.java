@@ -25,6 +25,16 @@ class PlaylistSubscriptionRepository {
         String userId, String playlistId, String sourceUrl, String name,
         String poolType, boolean autoDownload, int syncIntervalHours
     ) {
+        return create(
+            userId, playlistId, sourceUrl, name, poolType,
+            autoDownload, true, syncIntervalHours
+        );
+    }
+
+    Subscription create(
+        String userId, String playlistId, String sourceUrl, String name,
+        String poolType, boolean autoDownload, boolean strictMode, int syncIntervalHours
+    ) {
         var now = clock.millis();
         var id = UUID.randomUUID().toString();
         jdbcClient.sql("""
@@ -33,7 +43,7 @@ class PlaylistSubscriptionRepository {
                     strict_mode, sync_interval_hours, enabled, created_at, updated_at
                 ) VALUES (
                     :id, :userId, :playlistId, :sourceUrl, :name, :poolType, :autoDownload,
-                    1, :syncIntervalHours, 1, :now, :now
+                    :strictMode, :syncIntervalHours, 1, :now, :now
                 )
                 """)
             .param("id", id)
@@ -43,6 +53,7 @@ class PlaylistSubscriptionRepository {
             .param("name", name)
             .param("poolType", poolType)
             .param("autoDownload", autoDownload ? 1 : 0)
+            .param("strictMode", strictMode ? 1 : 0)
             .param("syncIntervalHours", syncIntervalHours)
             .param("now", now)
             .update();
@@ -276,6 +287,23 @@ class PlaylistSubscriptionRepository {
                 WHERE id = :id
                 """)
             .param("strictMode", strictMode ? 1 : 0)
+            .param("now", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
+    void updateSettings(
+        String id, String name, boolean strictMode, int syncIntervalHours
+    ) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET name = :name, strict_mode = :strictMode,
+                    sync_interval_hours = :syncIntervalHours, updated_at = :now
+                WHERE id = :id
+                """)
+            .param("name", name)
+            .param("strictMode", strictMode ? 1 : 0)
+            .param("syncIntervalHours", syncIntervalHours)
             .param("now", clock.millis())
             .param("id", id)
             .update();

@@ -71,6 +71,16 @@ class PlaylistSubscriptionService {
         String userId, String username, String sourceUrl, String requestedName,
         String poolType, boolean autoDownload, int syncIntervalHours
     ) {
+        return create(
+            userId, username, sourceUrl, requestedName, poolType,
+            autoDownload, true, syncIntervalHours
+        );
+    }
+
+    synchronized PlaylistSubscriptionRepository.Subscription create(
+        String userId, String username, String sourceUrl, String requestedName,
+        String poolType, boolean autoDownload, boolean strictMode, int syncIntervalHours
+    ) {
         var normalizedPoolType = normalizePoolType(poolType);
         if (subscriptions.findAll(userId).stream().anyMatch(item -> item.sourceUrl().equals(sourceUrl.strip()))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "已经订阅过这个歌单");
@@ -79,10 +89,15 @@ class PlaylistSubscriptionService {
             ? "订阅歌单"
             : requestedName.strip();
         var target = playlistImportService.create(userId, name, normalizedPoolType);
-        var subscription = subscriptions.create(
-            userId, target.id(), sourceUrl.strip(), name, normalizedPoolType,
-            autoDownload, syncIntervalHours
-        );
+        var subscription = strictMode
+            ? subscriptions.create(
+                userId, target.id(), sourceUrl.strip(), name, normalizedPoolType,
+                autoDownload, syncIntervalHours
+            )
+            : subscriptions.create(
+                userId, target.id(), sourceUrl.strip(), name, normalizedPoolType,
+                autoDownload, false, syncIntervalHours
+            );
         playlistImportService.addToHome(userId, target.id());
         submitInitialSync(subscription, requestedName == null || requestedName.isBlank());
         return subscription;
@@ -196,6 +211,28 @@ class PlaylistSubscriptionService {
         return subscriptions.find(userId, id).orElseThrow();
     }
 
+    @Transactional
+    PlaylistSubscriptionRepository.Subscription updateSettings(
+        String userId, String id, String name, Boolean strictMode, Integer syncIntervalHours
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var effectiveInterval = syncIntervalHours == null
+            ? subscription.syncIntervalHours()
+            : syncIntervalHours;
+        if (effectiveInterval < 1 || effectiveInterval > 168) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "同步频率无效");
+        }
+        var normalizedName = name.strip();
+        playlistImportService.rename(userId, subscription.playlistId(), normalizedName);
+        subscriptions.updateSettings(
+            subscription.id(), normalizedName,
+            strictMode == null ? subscription.strictMode() : strictMode,
+            effectiveInterval
+        );
+        return subscriptions.find(userId, id).orElseThrow();
+    }
+
     synchronized PlaylistSubscriptionRepository.Subscription downloadItem(
         String userId, String id, String itemKey
     ) {
@@ -220,6 +257,44 @@ class PlaylistSubscriptionService {
         }
         subscriptions.updateItemState(id, itemKey, "DOWNLOADING");
         return subscriptions.find(userId, id).orElseThrow();
+    }
+
+    synchronized OriginalDownloadResult downloadSuggestedOriginals(
+        String userId, String id
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var candidates = candidatesByKey(
+            downloadService.parsePlaylist(subscription.sourceUrl())
+        );
+        var queuedCount = 0;
+        var skippedCount = 0;
+        for (var item : subscriptions.findItems(subscription.id())) {
+            if (item.matchedTrackId() != null || !"SUGGESTED".equals(item.state())) {
+                continue;
+            }
+            var candidate = candidates.get(item.itemKey());
+            if (candidate == null) {
+                skippedCount++;
+                continue;
+            }
+            var queued = subscription.strictMode()
+                ? downloadService.queueForPlaylist(
+                    candidate, subscription.username(), subscription.playlistId()
+                )
+                : downloadService.queueForPlaylist(
+                    candidate, subscription.username(), subscription.playlistId(), false
+                );
+            if (queued.isEmpty()) {
+                skippedCount++;
+                continue;
+            }
+            subscriptions.updateItemState(id, item.itemKey(), "DOWNLOADING");
+            queuedCount++;
+        }
+        return new OriginalDownloadResult(
+            subscriptions.find(userId, id).orElseThrow(), queuedCount, skippedCount
+        );
     }
 
     @Transactional
@@ -418,6 +493,12 @@ class PlaylistSubscriptionService {
 
     record BestMatchResult(
         PlaylistSubscriptionRepository.Subscription subscription, int matchedCount
+    ) {
+    }
+
+    record OriginalDownloadResult(
+        PlaylistSubscriptionRepository.Subscription subscription,
+        int queuedCount, int skippedCount
     ) {
     }
 

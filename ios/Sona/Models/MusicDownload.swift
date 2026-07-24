@@ -102,6 +102,12 @@ struct PlaylistSubscriptionBestMatchResult: Decodable {
     let matchedCount: Int
 }
 
+struct PlaylistSubscriptionOriginalDownloadResult: Decodable {
+    let subscription: PlaylistSubscription
+    let queuedCount: Int
+    let skippedCount: Int
+}
+
 struct PlaylistSubscriptionMatchSuggestion: Decodable, Identifiable {
     let trackId: String
     let title: String
