@@ -23,6 +23,10 @@ public interface DownloaderGateway {
         return download(candidateId);
     }
 
+    default List<String> download(String candidateId, String taskId, boolean strictMode) {
+        return download(candidateId, taskId);
+    }
+
     default void cancel(String taskId) {
     }
 

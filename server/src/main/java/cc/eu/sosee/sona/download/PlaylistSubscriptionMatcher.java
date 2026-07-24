@@ -23,9 +23,6 @@ class PlaylistSubscriptionMatcher {
     private static final Pattern ARTIST_SEPARATOR = Pattern.compile(
         "(?i)\\s*(?:、|/|,|，|&|＆|;|；|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*"
     );
-    private static final Pattern TITLE_SUFFIX = Pattern.compile(
-        "\\s*(?:[\\(（\\[【\\{《<]|[-‐‑‒–—―－@＠#＃|｜/／~～:：+＋=＝_＿·•]).*$"
-    );
     private static final Set<String> VERSION_MARKERS = Set.of(
         "live", "remix", "instrumental", "acoustic", "伴奏", "现场", "翻唱", "纯音乐"
     );
@@ -79,17 +76,16 @@ class PlaylistSubscriptionMatcher {
     final class Session {
 
         private final List<LocalTrack> tracks;
-        private final Map<String, List<LocalTrack>> exact = new HashMap<>();
-        private final Map<String, List<LocalTrack>> strictTitles = new HashMap<>();
+        private final Map<String, List<LocalTrack>> normalizedTitles = new HashMap<>();
         private final Set<String> trackIds;
 
         private Session(List<LocalTrack> tracks) {
             this.tracks = tracks;
             this.trackIds = tracks.stream().map(LocalTrack::trackId).collect(java.util.stream.Collectors.toSet());
             for (var track : tracks) {
-                exact.computeIfAbsent(exactKey(track.title(), track.artist()), ignored -> new ArrayList<>())
-                    .add(track);
-                strictTitles.computeIfAbsent(strictTitle(track.title()), ignored -> new ArrayList<>())
+                normalizedTitles.computeIfAbsent(
+                    normalizedText(track.title()), ignored -> new ArrayList<>()
+                )
                     .add(track);
             }
         }
@@ -99,16 +95,23 @@ class PlaylistSubscriptionMatcher {
         }
 
         MatchResult match(DownloadCandidate candidate) {
-            return match(candidate, Set.of());
+            return match(candidate, Set.of(), true);
         }
 
         MatchResult match(DownloadCandidate candidate, Set<String> excludedTrackIds) {
-            var exactTracks = exact.getOrDefault(exactKey(candidate.title(), candidate.artist()), List.of());
-            var exactTrack = exactTracks.stream()
+            return match(candidate, excludedTrackIds, true);
+        }
+
+        MatchResult match(
+            DownloadCandidate candidate, Set<String> excludedTrackIds, boolean strictMode
+        ) {
+            var automaticTrack = normalizedTitles
+                .getOrDefault(normalizedText(candidate.title()), List.of()).stream()
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
+                .filter(track -> isAutomaticMatch(candidate, track, strictMode))
                 .findFirst();
-            if (exactTrack.isPresent()) {
-                return new MatchResult(Optional.of(exactTrack.get().trackId()), List.of());
+            if (automaticTrack.isPresent()) {
+                return new MatchResult(Optional.of(automaticTrack.get().trackId()), List.of());
             }
             var suggestions = tracks.stream()
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
@@ -129,12 +132,19 @@ class PlaylistSubscriptionMatcher {
         Optional<Suggestion> bestStrictMatch(
             DownloadCandidate candidate, Set<String> excludedTrackIds
         ) {
-            var title = strictTitle(candidate.title());
+            return bestStrictMatch(candidate, excludedTrackIds, true);
+        }
+
+        Optional<Suggestion> bestStrictMatch(
+            DownloadCandidate candidate, Set<String> excludedTrackIds, boolean strictMode
+        ) {
+            var title = normalizedText(candidate.title());
             if (title.isEmpty()) {
                 return Optional.empty();
             }
-            return strictTitles.getOrDefault(title, List.of()).stream()
+            return normalizedTitles.getOrDefault(title, List.of()).stream()
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
+                .filter(track -> isAutomaticMatch(candidate, track, strictMode))
                 .map(track -> new ScoredTrack(track, strictScore(candidate, track)))
                 .sorted(Comparator.comparingDouble(ScoredTrack::score).reversed()
                     .thenComparing(value -> value.track().trackId()))
@@ -145,6 +155,21 @@ class PlaylistSubscriptionMatcher {
                     (int) Math.round(value.score())
                 ));
         }
+    }
+
+    private static boolean isAutomaticMatch(
+        DownloadCandidate candidate, LocalTrack track, boolean strictMode
+    ) {
+        return normalizedText(candidate.title()).equals(normalizedText(track.title()))
+            && artistsMatch(candidate.artist(), track.artist(), strictMode);
+    }
+
+    private static boolean artistsMatch(String source, String local, boolean strictMode) {
+        var sourceArtists = normalizedArtistSet(source);
+        var localArtists = normalizedArtistSet(local);
+        return !sourceArtists.isEmpty() && (strictMode
+            ? localArtists.equals(sourceArtists)
+            : localArtists.containsAll(sourceArtists));
     }
 
     private double strictScore(DownloadCandidate candidate, LocalTrack track) {
@@ -207,20 +232,6 @@ class PlaylistSubscriptionMatcher {
         return normalizedText(normalized);
     }
 
-    private static String strictTitle(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        var normalized = Normalizer.normalize(
-            ZhConverterUtil.toSimple(value), Normalizer.Form.NFKC
-        ).toLowerCase(Locale.ROOT);
-        var suffix = TITLE_SUFFIX.matcher(normalized);
-        if (suffix.find()) {
-            normalized = normalized.substring(0, suffix.start());
-        }
-        return normalizedText(normalized);
-    }
-
     private static boolean hasMarker(String title, String marker) {
         if (marker.chars().allMatch(character -> character < 128)) {
             return Pattern.compile("\\b" + Pattern.quote(marker) + "\\b").matcher(title).find();
@@ -229,17 +240,18 @@ class PlaylistSubscriptionMatcher {
     }
 
     private static double artistOverlap(String left, String right) {
-        var leftArtists = Set.of(normalizedArtists(left).split("/"));
-        var rightArtists = Set.of(normalizedArtists(right).split("/"));
-        if (leftArtists.contains("") || rightArtists.contains("")) {
+        var leftArtists = normalizedArtistSet(left);
+        var rightArtists = normalizedArtistSet(right);
+        if (leftArtists.isEmpty() || rightArtists.isEmpty()) {
             return 0;
         }
         var intersection = leftArtists.stream().filter(rightArtists::contains).count();
         return (double) intersection / Math.max(leftArtists.size(), rightArtists.size());
     }
 
-    private static String exactKey(String title, String artist) {
-        return normalizedText(title) + "\n" + normalizedArtists(artist);
+    private static Set<String> normalizedArtistSet(String value) {
+        var artists = normalizedArtists(value);
+        return artists.isEmpty() ? Set.of() : Set.of(artists.split("/"));
     }
 
     private static double similarity(String left, String right) {

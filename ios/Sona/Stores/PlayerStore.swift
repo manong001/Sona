@@ -46,8 +46,10 @@ final class PlayerStore: ObservableObject {
     private var timeObserver: Any?
     private var itemEndObserver: NSObjectProtocol?
     private var itemFailureObserver: NSObjectProtocol?
+    private var itemStalledObserver: NSObjectProtocol?
     private var audioInterruptionObserver: NSObjectProtocol?
     private var audioRouteChangeObserver: NSObjectProtocol?
+    private var playbackResourceLoader: PlaybackCacheResourceLoader?
     private var resumeAfterInterruption = false
     private var fallbackTrackID: String?
     private var artworkTask: Task<Void, Never>?
@@ -69,10 +71,12 @@ final class PlayerStore: ObservableObject {
     private var wasCarPlayConnected = false
 
     init() {
+        player.automaticallyWaitsToMinimizeStalling = true
         configureAudioSession()
         observeTime()
         observeItemEnd()
         observeItemFailure()
+        observeItemStalled()
         observeAudioInterruptions()
         wasCarPlayConnected = isCarPlayConnected
         observeAudioRouteChanges()
@@ -89,6 +93,9 @@ final class PlayerStore: ObservableObject {
         if let itemFailureObserver {
             NotificationCenter.default.removeObserver(itemFailureObserver)
         }
+        if let itemStalledObserver {
+            NotificationCenter.default.removeObserver(itemStalledObserver)
+        }
         if let audioInterruptionObserver {
             NotificationCenter.default.removeObserver(audioInterruptionObserver)
         }
@@ -100,6 +107,7 @@ final class PlayerStore: ObservableObject {
         stateRestoreTask?.cancel()
         stateSaveTask?.cancel()
         carPlayPlaybackTask?.cancel()
+        playbackResourceLoader?.cancelAll()
     }
 
     var canGoPrevious: Bool {
@@ -188,18 +196,19 @@ final class PlayerStore: ObservableObject {
             fallbackTrackID = nil
         }
         submitCurrentPlayback()
+        playbackResourceLoader?.cancelAll()
+        playbackResourceLoader = nil
         let item: AVPlayerItem
         if let offlineURL = offlineURLProvider?(track) {
             item = AVPlayerItem(url: offlineURL)
         } else {
             let streamURL = activeAPI.url(for: streamURLOverride ?? track.streamURL)
-            let cookies = HTTPCookieStorage.shared.cookies(for: streamURL) ?? []
-            let asset = AVURLAsset(
-                url: streamURL,
-                options: [AVURLAssetHTTPCookiesKey: cookies]
-            )
-            item = AVPlayerItem(asset: asset)
+            let resourceLoader = PlaybackCacheResourceLoader(originalURL: streamURL)
+            playbackResourceLoader = resourceLoader
+            item = AVPlayerItem(asset: resourceLoader.makeAsset())
         }
+        item.preferredForwardBufferDuration = 30
+        item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         player.replaceCurrentItem(with: item)
         currentTrack = track
         refreshRemoteFavoriteState()
@@ -320,6 +329,8 @@ final class PlayerStore: ObservableObject {
 
     private func clearLocalPlayback() {
         player.pause()
+        playbackResourceLoader?.cancelAll()
+        playbackResourceLoader = nil
         player.replaceCurrentItem(with: nil)
         artworkTask?.cancel()
         randomQueueTask?.cancel()
@@ -445,6 +456,22 @@ final class PlayerStore: ObservableObject {
                 }
                 self.fallbackTrackID = track.id
                 self.startPlayback(track, streamURLOverride: "/api/v1/tracks/\(track.id)/fallback-stream")
+            }
+        }
+    }
+
+    private func observeItemStalled() {
+        itemStalledObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemPlaybackStalled,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self,
+                      self.isPlaying,
+                      let item = notification.object as? AVPlayerItem,
+                      item === self.player.currentItem else { return }
+                self.player.play()
             }
         }
     }

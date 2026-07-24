@@ -63,6 +63,7 @@ struct PlaylistSubscription: Decodable, Identifiable {
     let name: String
     let poolType: String
     let autoDownload: Bool
+    let strictMode: Bool
     let syncIntervalHours: Int
     let enabled: Bool
     let lastSyncedAt: Int64?

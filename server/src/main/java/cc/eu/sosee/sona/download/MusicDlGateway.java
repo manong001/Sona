@@ -84,8 +84,13 @@ class MusicDlGateway implements DownloaderGateway {
 
     @Override
     public List<String> download(String candidateId, String taskId) {
+        return download(candidateId, taskId, false);
+    }
+
+    @Override
+    public List<String> download(String candidateId, String taskId, boolean strictMode) {
         requireEnabled();
-        var requestBody = requestBody(new DownloadBody(candidateId, taskId));
+        var requestBody = requestBody(new DownloadBody(candidateId, taskId, strictMode));
         var response = downloadClient.post()
             .uri("/v1/downloads")
             .header("X-Sona-Token", token)
@@ -255,7 +260,7 @@ class MusicDlGateway implements DownloaderGateway {
     private record SearchEnvelope(List<DownloadCandidate> items) {
     }
 
-    private record DownloadBody(String candidateId, String taskId) {
+    private record DownloadBody(String candidateId, String taskId, boolean strictMode) {
     }
 
     private record PlaylistBody(String url) {

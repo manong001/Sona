@@ -141,6 +141,19 @@ class DownloadService {
         return Optional.of(task);
     }
 
+    synchronized Optional<DownloadTask> queueForPlaylist(
+        DownloadCandidate candidate, String requestedBy, String targetPlaylistId,
+        boolean strictMatch
+    ) {
+        requireEnabled();
+        if (existingState(candidate).isPresent()) {
+            return Optional.empty();
+        }
+        var task = repository.create(candidate, requestedBy, targetPlaylistId, strictMatch);
+        submit(task);
+        return Optional.of(task);
+    }
+
     void reconcileCompletedPlaylistDownloads(String targetPlaylistId) {
         for (var task : repository.findCompletedByTargetPlaylist(targetPlaylistId)) {
             List<String> trackIds;
@@ -274,29 +287,42 @@ class DownloadService {
     }
 
     private List<String> download(DownloadTask task) {
+        var strictMatch = repository.isStrictMatch(task.id());
         try {
-            return gateway.download(task.candidateId(), task.id());
+            return strictMatch
+                ? gateway.download(task.candidateId(), task.id(), true)
+                : gateway.download(task.candidateId(), task.id());
         } catch (DownloadCandidateUnavailableException exception) {
-            var replacement = findReplacementCandidate(task)
+            var replacement = findReplacementCandidate(task, strictMatch)
                 .orElseThrow(() -> new IllegalStateException(
-                    "候选结果已失效，重新搜索后仍未找到匹配歌曲"
+                    strictMatch
+                        ? "严格模式未找到歌名和歌手完全一致的音源，请选择备选音源"
+                        : "候选结果已失效，重新搜索后仍未找到匹配歌曲"
                 ));
             LOGGER.info(
                 "下载候选已失效，任务 {} 改用重新搜索到的候选 {}",
                 task.id(), replacement.candidateId()
             );
-            return gateway.download(replacement.candidateId(), task.id());
+            return strictMatch
+                ? gateway.download(replacement.candidateId(), task.id(), true)
+                : gateway.download(replacement.candidateId(), task.id());
         }
     }
 
     private Optional<DownloadCandidate> findReplacementCandidate(DownloadTask task) {
+        return findReplacementCandidate(task, repository.isStrictMatch(task.id()));
+    }
+
+    private Optional<DownloadCandidate> findReplacementCandidate(
+        DownloadTask task, boolean strictMatch
+    ) {
         var query = (task.title() + " " + task.artist()).strip();
         var sameSource = searchCandidates(query, List.of(task.source()));
-        var replacement = bestMatchingCandidate(task, sameSource);
+        var replacement = bestMatchingCandidate(task, sameSource, strictMatch);
         if (replacement.isPresent()) {
             return replacement;
         }
-        return bestMatchingCandidate(task, searchCandidates(query, List.of()));
+        return bestMatchingCandidate(task, searchCandidates(query, List.of()), strictMatch);
     }
 
     private List<DownloadCandidate> searchCandidates(String query, List<String> sources) {
@@ -309,17 +335,22 @@ class DownloadService {
     }
 
     private Optional<DownloadCandidate> bestMatchingCandidate(
-        DownloadTask task, List<DownloadCandidate> candidates
+        DownloadTask task, List<DownloadCandidate> candidates, boolean strictMatch
     ) {
         var title = PlaylistSubscriptionMatcher.normalizedText(task.title());
-        var artist = PlaylistSubscriptionMatcher.normalizedText(task.artist());
+        var artistSet = PlaylistSubscriptionMatcher.normalizedArtists(task.artist());
+        var artistText = PlaylistSubscriptionMatcher.normalizedText(task.artist());
         return candidates.stream()
             .filter(candidate ->
                 title.equals(PlaylistSubscriptionMatcher.normalizedText(candidate.title()))
-                    && artistsOverlap(
-                        artist,
-                        PlaylistSubscriptionMatcher.normalizedText(candidate.artist())
-                    )
+                    && (strictMatch
+                        ? artistSet.equals(PlaylistSubscriptionMatcher.normalizedArtists(
+                            candidate.artist()
+                        ))
+                        : artistsOverlap(
+                            artistText,
+                            PlaylistSubscriptionMatcher.normalizedText(candidate.artist())
+                        ))
             )
             .max(Comparator
                 .comparing((DownloadCandidate candidate) ->

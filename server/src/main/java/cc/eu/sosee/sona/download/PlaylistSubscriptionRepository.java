@@ -30,10 +30,10 @@ class PlaylistSubscriptionRepository {
         jdbcClient.sql("""
                 INSERT INTO playlist_subscriptions (
                     id, user_id, playlist_id, source_url, name, pool_type, auto_download,
-                    sync_interval_hours, enabled, created_at, updated_at
+                    strict_mode, sync_interval_hours, enabled, created_at, updated_at
                 ) VALUES (
                     :id, :userId, :playlistId, :sourceUrl, :name, :poolType, :autoDownload,
-                    :syncIntervalHours, 1, :now, :now
+                    1, :syncIntervalHours, 1, :now, :now
                 )
                 """)
             .param("id", id)
@@ -269,6 +269,18 @@ class PlaylistSubscriptionRepository {
             .update();
     }
 
+    void updateStrictMode(String id, boolean strictMode) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET strict_mode = :strictMode, updated_at = :now
+                WHERE id = :id
+                """)
+            .param("strictMode", strictMode ? 1 : 0)
+            .param("now", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
     void updateArtwork(String id, String artworkUrl) {
         jdbcClient.sql("""
                 UPDATE playlist_subscriptions
@@ -373,7 +385,8 @@ class PlaylistSubscriptionRepository {
             resultSet.getString("username"), resultSet.getString("playlist_id"),
             resultSet.getString("source_url"), resultSet.getString("name"),
             resultSet.getString("pool_type"), resultSet.getInt("auto_download") == 1,
-            resultSet.getInt("sync_interval_hours"), resultSet.getInt("enabled") == 1,
+            resultSet.getInt("strict_mode") == 1, resultSet.getInt("sync_interval_hours"),
+            resultSet.getInt("enabled") == 1,
             nullableLastSyncedAt, resultSet.getString("last_error"),
             resultSet.getLong("created_at"), resultSet.getLong("updated_at"),
             resultSet.getInt("item_count"), resultSet.getInt("matched_count"),
@@ -394,7 +407,8 @@ class PlaylistSubscriptionRepository {
 
     record Subscription(
         String id, String userId, String username, String playlistId, String sourceUrl,
-        String name, String poolType, boolean autoDownload, int syncIntervalHours,
+        String name, String poolType, boolean autoDownload, boolean strictMode,
+        int syncIntervalHours,
         boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
         int itemCount, int matchedCount, int missingCount, int downloadingCount,
         int queuedCount, int runningCount, int suggestedCount
@@ -403,11 +417,26 @@ class PlaylistSubscriptionRepository {
             String id, String userId, String username, String playlistId, String sourceUrl,
             String name, String poolType, boolean autoDownload, int syncIntervalHours,
             boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
+            int itemCount, int matchedCount, int missingCount, int downloadingCount,
+            int queuedCount, int runningCount, int suggestedCount
+        ) {
+            this(
+                id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
+                true, syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
+                itemCount, matchedCount, missingCount, downloadingCount,
+                queuedCount, runningCount, suggestedCount
+            );
+        }
+
+        Subscription(
+            String id, String userId, String username, String playlistId, String sourceUrl,
+            String name, String poolType, boolean autoDownload, int syncIntervalHours,
+            boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
             int itemCount, int matchedCount, int missingCount, int downloadingCount
         ) {
             this(
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
-                syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
+                true, syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
                 itemCount, matchedCount, missingCount, downloadingCount, 0, 0, 0
             );
         }

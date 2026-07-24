@@ -21,6 +21,7 @@ from app import (
     SonaDownloaderServer,
     SpotifyPlaylistItem,
     _best_ranked_playlist_match,
+    _matches_track,
     _spotify_candidates_from_search_response,
 )
 
@@ -987,6 +988,50 @@ class DownloaderApiTest(unittest.TestCase):
         )
 
         self.assertIs(candidates[0], match)
+
+    def test_strict_playlist_match_rejects_additional_collaborators(self):
+        candidate = BackendCandidate(
+            "QQMusicClient", "GOOD GOODBYE", "華莎、JENNIE", "", "flac",
+            238_000, 1_000, 1_411, 44_100, None, None,
+            SimpleNamespace(tag="collaboration"),
+        )
+
+        self.assertFalse(
+            _matches_track(
+                candidate, "Good Goodbye", "华莎", 238_000, strict_mode=True,
+            )
+        )
+
+    def test_strict_playlist_match_ignores_script_and_case(self):
+        candidate = BackendCandidate(
+            "QQMusicClient", "GOOD GOODBYE", "華莎", "", "flac",
+            238_000, 1_000, 1_411, 44_100, None, None,
+            SimpleNamespace(tag="same-track"),
+        )
+
+        self.assertTrue(
+            _matches_track(
+                candidate, "Good Goodbye", "华莎", 238_000, strict_mode=True,
+            )
+        )
+
+    def test_strict_playlist_download_does_not_fall_back_to_a_collaboration(self):
+        spotify = BackendCandidate(
+            "SpotifyMusicClient", "Good Goodbye", "HWASA", "", "mp3",
+            238_000, None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:good-goodbye"),
+        )
+        collaboration = BackendCandidate(
+            "QQMusicClient", "Good Goodbye", "HWASA、JENNIE", "", "flac",
+            238_000, 1_000, 1_411, 44_100, None, None,
+            SimpleNamespace(tag="collaboration"),
+        )
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("QQMusicClient",)
+        backend._search_for_download = lambda query, sources: [collaboration]
+
+        with self.assertRaisesRegex(RuntimeError, "严格模式未找到"):
+            backend.download(spotify, strict_mode=True)
 
     def test_playlist_match_rejects_same_title_from_a_different_artist(self):
         candidates = [

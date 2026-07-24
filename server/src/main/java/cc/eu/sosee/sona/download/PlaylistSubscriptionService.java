@@ -154,7 +154,9 @@ class PlaylistSubscriptionService {
             if (item.matchedTrackId() != null || !"SUGGESTED".equals(item.state())) {
                 continue;
             }
-            var best = session.bestStrictMatch(asCandidate(item), usedTrackIds);
+            var best = subscription.strictMode()
+                ? session.bestStrictMatch(asCandidate(item), usedTrackIds)
+                : session.bestStrictMatch(asCandidate(item), usedTrackIds, false);
             if (best.isPresent() && subscriptions.selectMatch(
                 userId, id, item.itemKey(), best.get().trackId()
             )) {
@@ -185,6 +187,15 @@ class PlaylistSubscriptionService {
         return subscriptions.find(userId, id).orElseThrow();
     }
 
+    PlaylistSubscriptionRepository.Subscription updateStrictMode(
+        String userId, String id, boolean strictMode
+    ) {
+        subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        subscriptions.updateStrictMode(id, strictMode);
+        return subscriptions.find(userId, id).orElseThrow();
+    }
+
     synchronized PlaylistSubscriptionRepository.Subscription downloadItem(
         String userId, String id, String itemKey
     ) {
@@ -197,9 +208,14 @@ class PlaylistSubscriptionService {
         if (candidate == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "远端歌单已变化，请先重新同步");
         }
-        if (downloadService.queueForPlaylist(
-            candidate, subscription.username(), subscription.playlistId()
-        ).isEmpty()) {
+        var queued = subscription.strictMode()
+            ? downloadService.queueForPlaylist(
+                candidate, subscription.username(), subscription.playlistId()
+            )
+            : downloadService.queueForPlaylist(
+                candidate, subscription.username(), subscription.playlistId(), false
+            );
+        if (queued.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "歌曲已入库或已在下载列表");
         }
         subscriptions.updateItemState(id, itemKey, "DOWNLOADING");
@@ -285,7 +301,9 @@ class PlaylistSubscriptionService {
                     && !usedTrackIds.contains(existing.matchedTrackId())) {
                     matchedTrackId = existing.matchedTrackId();
                 } else {
-                    var match = matchSession.match(candidate, usedTrackIds);
+                    var match = subscription.strictMode()
+                        ? matchSession.match(candidate, usedTrackIds)
+                        : matchSession.match(candidate, usedTrackIds, false);
                     matchedTrackId = match.exactTrackId().orElse(null);
                     suggestions = match.suggestions();
                 }
@@ -299,11 +317,17 @@ class PlaylistSubscriptionService {
                 } else if (candidate.downloadState() == DownloadTaskState.QUEUED
                     || candidate.downloadState() == DownloadTaskState.RUNNING) {
                     state = "DOWNLOADING";
-                } else if ((subscription.autoDownload() || downloadMissing)
-                    && downloadService.queueForPlaylist(
-                        candidate, subscription.username(), subscription.playlistId()
-                    ).isPresent()) {
-                    state = "DOWNLOADING";
+                } else if (subscription.autoDownload() || downloadMissing) {
+                    var queued = subscription.strictMode()
+                        ? downloadService.queueForPlaylist(
+                            candidate, subscription.username(), subscription.playlistId()
+                        )
+                        : downloadService.queueForPlaylist(
+                            candidate, subscription.username(), subscription.playlistId(), false
+                        );
+                    if (queued.isPresent()) {
+                        state = "DOWNLOADING";
+                    }
                 }
                 items.add(new PlaylistSubscriptionRepository.Item(
                     itemKey, position, candidate.title().strip(),

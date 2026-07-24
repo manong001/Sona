@@ -24,10 +24,17 @@ class DownloadTaskRepository {
     }
 
     DownloadTask create(DownloadCandidate candidate, String requestedBy) {
-        return create(candidate, requestedBy, null);
+        return create(candidate, requestedBy, null, false);
     }
 
     DownloadTask create(DownloadCandidate candidate, String requestedBy, String targetPlaylistId) {
+        return create(candidate, requestedBy, targetPlaylistId, true);
+    }
+
+    DownloadTask create(
+        DownloadCandidate candidate, String requestedBy, String targetPlaylistId,
+        boolean strictMatch
+    ) {
         var now = clock.millis();
         var task = new DownloadTask(
             UUID.randomUUID().toString(),
@@ -50,10 +57,12 @@ class DownloadTaskRepository {
         jdbcClient.sql("""
                 INSERT INTO download_tasks (
                     id, candidate_id, source, source_name, title, artist, album, quality,
-                    artwork_url, target_playlist_id, requested_by, state, files_json, message, created_at, updated_at
+                    artwork_url, target_playlist_id, strict_match, requested_by, state,
+                    files_json, message, created_at, updated_at
                 ) VALUES (
                     :id, :candidateId, :source, :sourceName, :title, :artist, :album, :quality,
-                    :artworkUrl, :targetPlaylistId, :requestedBy, :state, :files, :message, :createdAt, :updatedAt
+                    :artworkUrl, :targetPlaylistId, :strictMatch, :requestedBy, :state,
+                    :files, :message, :createdAt, :updatedAt
                 )
                 """)
             .param("id", task.id())
@@ -66,6 +75,7 @@ class DownloadTaskRepository {
             .param("quality", task.quality())
             .param("artworkUrl", task.artworkUrl())
             .param("targetPlaylistId", task.targetPlaylistId())
+            .param("strictMatch", strictMatch ? 1 : 0)
             .param("requestedBy", task.requestedBy())
             .param("state", task.state().name())
             .param("files", writeFiles(task.files()))
@@ -74,6 +84,14 @@ class DownloadTaskRepository {
             .param("updatedAt", task.updatedAt())
             .update();
         return task;
+    }
+
+    boolean isStrictMatch(String id) {
+        return jdbcClient.sql("SELECT strict_match FROM download_tasks WHERE id = :id")
+            .param("id", id)
+            .query(Integer.class)
+            .optional()
+            .orElse(0) == 1;
     }
 
     List<DownloadTask> findRecent(String requestedBy) {

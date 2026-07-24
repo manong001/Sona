@@ -776,10 +776,15 @@ class MusicDlBackend:
             raise ValueError("公开歌单接口返回格式无效")
         return value
 
-    def download(self, candidate: BackendCandidate, task_id: str | None = None) -> list[str]:
+    def download(
+        self,
+        candidate: BackendCandidate,
+        task_id: str | None = None,
+        strict_mode: bool = False,
+    ) -> list[str]:
         if isinstance(candidate.opaque, (SpotifyPlaylistItem, PublicPlaylistItem)):
             if resolved := self._resolve_public_playlist_item(candidate):
-                return self.download(resolved, task_id)
+                return self.download(resolved, task_id, strict_mode)
             use_original_source = (
                 isinstance(candidate.opaque, PublicPlaylistItem)
                 and candidate.source in self._allowed_sources
@@ -817,10 +822,16 @@ class MusicDlBackend:
             searched_matches = list(matches)
             resolved = next((
                 item for item in matches
-                if _matches_track(item, candidate.title, candidate.artist, candidate.duration_ms)
+                if _matches_track(
+                    item, candidate.title, candidate.artist, candidate.duration_ms,
+                    strict_mode=strict_mode,
+                )
             ), None) or next((
                 item for item in matches
-                if _matches_track(item, candidate.title, candidate.artist, None)
+                if _matches_track(
+                    item, candidate.title, candidate.artist, None,
+                    strict_mode=strict_mode,
+                )
             ), None)
             if resolved is None and use_original_source:
                 fallback_sources = tuple(
@@ -834,13 +845,17 @@ class MusicDlBackend:
                     resolved = next((
                         item for item in matches
                         if _matches_track(
-                            item, candidate.title, candidate.artist, candidate.duration_ms
+                            item, candidate.title, candidate.artist, candidate.duration_ms,
+                            strict_mode=strict_mode,
                         )
                     ), None) or next((
                         item for item in matches
-                        if _matches_track(item, candidate.title, candidate.artist, None)
+                        if _matches_track(
+                            item, candidate.title, candidate.artist, None,
+                            strict_mode=strict_mode,
+                        )
                     ), None)
-            if resolved is None:
+            if resolved is None and not strict_mode:
                 resolved = _best_ranked_playlist_match(
                     searched_matches,
                     candidate.title,
@@ -848,8 +863,12 @@ class MusicDlBackend:
                     candidate.duration_ms,
                 )
             if resolved is None:
+                if strict_mode:
+                    raise RuntimeError(
+                        "严格模式未找到歌名和歌手完全一致的音源，请在失败任务中选择备选音源"
+                    )
                 raise RuntimeError("未在已启用音源中找到歌单歌曲")
-            return self.download(resolved, task_id)
+            return self.download(resolved, task_id, strict_mode)
         effective_task_id = task_id or str(uuid.uuid4())
         save_path = getattr(candidate.opaque, "save_path", None)
         return self._download_runner.run(
@@ -927,10 +946,17 @@ class AppState:
             items.append(_public_candidate(candidate_id, candidate))
         return items
 
-    def download(self, candidate_id: str, task_id: str | None = None) -> list[str]:
+    def download(
+        self,
+        candidate_id: str,
+        task_id: str | None = None,
+        strict_mode: bool = False,
+    ) -> list[str]:
         candidate = self.cache.get(candidate_id)
         if candidate is None:
             raise LookupError("候选结果不存在或已过期，请重新搜索")
+        if strict_mode:
+            return self.backend.download(candidate, task_id, True)
         return self.backend.download(candidate, task_id)
 
     def cancel_download(self, task_id: str) -> None:
@@ -1114,7 +1140,8 @@ class SonaDownloaderHandler(BaseHTTPRequestHandler):
                 self._error(HTTPStatus.BAD_REQUEST, "candidateId 不能为空")
                 return
             task_id = _text(body.get("taskId")).strip() or None
-            files = self.server.state.download(candidate_id, task_id)
+            strict_mode = bool(body.get("strictMode", False))
+            files = self.server.state.download(candidate_id, task_id, strict_mode)
             self._json(HTTPStatus.OK, {"files": files})
         except LookupError as exception:
             self._error(HTTPStatus.NOT_FOUND, str(exception))
@@ -1378,10 +1405,20 @@ def _supports_resolver(resolver: str, candidate: BackendCandidate) -> bool:
     return resolver == "ikun" and candidate.source in {"KuwoMusicClient", "NeteaseMusicClient"}
 
 
-def _matches_track(candidate: BackendCandidate, title: str, artist: str, duration_ms: int | None) -> bool:
+def _matches_track(
+    candidate: BackendCandidate,
+    title: str,
+    artist: str,
+    duration_ms: int | None,
+    *,
+    strict_mode: bool = False,
+) -> bool:
     if _normalize_track_text(candidate.title) != _normalize_track_text(title):
         return False
-    if not _artists_match(candidate.artist, artist):
+    if strict_mode:
+        if _artist_names(candidate.artist) != _artist_names(artist):
+            return False
+    elif not _artists_match(candidate.artist, artist):
         return False
     return not duration_ms or not candidate.duration_ms or abs(candidate.duration_ms - duration_ms) <= 5_000
 

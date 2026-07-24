@@ -901,6 +901,17 @@ final class APIClient {
         )
     }
 
+    func updatePlaylistSubscriptionStrictMode(
+        id: String, strictMode: Bool
+    ) async throws -> PlaylistSubscription {
+        struct Body: Encodable { let strictMode: Bool }
+        return try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/strict-mode",
+            method: "PATCH",
+            body: try encoder.encode(Body(strictMode: strictMode))
+        )
+    }
+
     func deletePlaylistSubscription(id: String) async throws {
         try await requestVoid(path: "/api/v1/me/playlist-subscriptions/\(id)", method: "DELETE")
     }

@@ -121,6 +121,15 @@ class PlaylistSubscriptionController {
         return service.rename(user.id(), id, request.name());
     }
 
+    @PatchMapping("/{id}/strict-mode")
+    PlaylistSubscriptionRepository.Subscription updateStrictMode(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @Valid @RequestBody StrictModeRequest request
+    ) {
+        return service.updateStrictMode(user.id(), id, request.strictMode());
+    }
+
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -146,6 +155,9 @@ class PlaylistSubscriptionController {
     }
 
     record RenameRequest(@NotBlank @Size(max = 80) String name) {
+    }
+
+    record StrictModeRequest(boolean strictMode) {
     }
 
     record MatchRequest(@NotBlank String trackId) {

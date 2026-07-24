@@ -132,6 +132,11 @@ class SchemaMigration implements ApplicationRunner {
             if (!downloadTaskColumns.contains("target_playlist_id")) {
                 jdbcClient.sql("ALTER TABLE download_tasks ADD COLUMN target_playlist_id TEXT").update();
             }
+            if (!downloadTaskColumns.contains("strict_match")) {
+                jdbcClient.sql(
+                    "ALTER TABLE download_tasks ADD COLUMN strict_match INTEGER NOT NULL DEFAULT 0"
+                ).update();
+            }
             if (downloadTaskColumns.contains("title") && downloadTaskColumns.contains("artist")
                 && downloadTaskColumns.contains("state")) {
                 jdbcClient.sql("""
@@ -207,6 +212,7 @@ class SchemaMigration implements ApplicationRunner {
                     artwork_url TEXT,
                     pool_type TEXT NOT NULL DEFAULT 'NORMAL',
                     auto_download INTEGER NOT NULL DEFAULT 0,
+                    strict_mode INTEGER NOT NULL DEFAULT 1,
                     sync_interval_hours INTEGER NOT NULL DEFAULT 24,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     last_synced_at INTEGER,
@@ -220,6 +226,11 @@ class SchemaMigration implements ApplicationRunner {
                 """).update();
         if (!columns("playlist_subscriptions").contains("artwork_url")) {
             jdbcClient.sql("ALTER TABLE playlist_subscriptions ADD COLUMN artwork_url TEXT").update();
+        }
+        if (!columns("playlist_subscriptions").contains("strict_mode")) {
+            jdbcClient.sql(
+                "ALTER TABLE playlist_subscriptions ADD COLUMN strict_mode INTEGER NOT NULL DEFAULT 1"
+            ).update();
         }
         jdbcClient.sql("""
                 CREATE INDEX IF NOT EXISTS idx_playlist_subscriptions_due

@@ -686,6 +686,7 @@ struct PlaylistSubscriptionsView: View {
     @State private var subscriptions: [PlaylistSubscription] = []
     @State private var syncingIDs: Set<String> = []
     @State private var downloadingMissingIDs: Set<String> = []
+    @State private var updatingStrictModeIDs: Set<String> = []
     @State private var isLoading = true
     @State private var showsCreate = false
     @State private var renamingSubscription: PlaylistSubscription?
@@ -834,6 +835,18 @@ struct PlaylistSubscriptionsView: View {
                 }
                 Text("共 \(subscription.itemCount) 首 · 已匹配 \(subscription.matchedCount) · 缺少 \(subscription.missingCount)")
                     .font(.subheadline)
+                Toggle(
+                    "严格模式",
+                    isOn: Binding(
+                        get: { subscription.strictMode },
+                        set: { value in
+                            Task { await updateStrictMode(subscription, value: value) }
+                        }
+                    )
+                )
+                .font(.subheadline)
+                .tint(Color.sonaGreen)
+                .disabled(updatingStrictModeIDs.contains(subscription.id))
                 if subscription.lastSyncedAt == nil && subscription.lastError == nil {
                     Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption)
@@ -976,6 +989,24 @@ struct PlaylistSubscriptionsView: View {
         }
     }
 
+    private func updateStrictMode(
+        _ subscription: PlaylistSubscription, value: Bool
+    ) async {
+        guard updatingStrictModeIDs.insert(subscription.id).inserted else { return }
+        defer { updatingStrictModeIDs.remove(subscription.id) }
+        do {
+            let updated = try await APIClient.shared.updatePlaylistSubscriptionStrictMode(
+                id: subscription.id, strictMode: value
+            )
+            if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                subscriptions[index] = updated
+            }
+            changed()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func delete(_ subscription: PlaylistSubscription) async {
         do {
             try await APIClient.shared.deletePlaylistSubscription(id: subscription.id)
@@ -1093,7 +1124,11 @@ private struct PlaylistSubscriptionItemsView: View {
                 Button("开始匹配") { Task { await applyBestMatches() } }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("仅采用规范化后歌名完全一致的候选，歌手相同的优先。")
+                Text(
+                    subscription.strictMode
+                        ? "严格模式仅采用歌名、歌手均完全一致的候选。"
+                        : "宽松模式允许候选包含额外合唱歌手。"
+                )
             }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
