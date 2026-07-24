@@ -1266,9 +1266,9 @@ private struct PlaylistSubscriptionItemsView: View {
                         .foregroundStyle(Color.sonaSecondaryText)
                 }
                 Spacer()
-                stateLabel(item.state)
+                stateLabel(item.suggestions.isEmpty ? "MISSING" : item.state)
             }
-            if item.state == "SUGGESTED" {
+            if !item.suggestions.isEmpty {
                 Divider()
                 Text("候选歌曲")
                     .font(.caption.weight(.medium))
@@ -1304,27 +1304,30 @@ private struct PlaylistSubscriptionItemsView: View {
                     .buttonStyle(.plain)
                     .disabled(workingItemKeys.contains(item.itemKey))
                 }
-                Button {
-                    Task { await download(item) }
-                } label: {
-                    HStack {
-                        Label("候选都不对", systemImage: "arrow.down.circle")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text("下载原曲")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        .orange.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(workingItemKeys.contains(item.itemKey))
             }
+            Button {
+                Task { await download(item) }
+            } label: {
+                HStack {
+                    Label(
+                        item.suggestions.isEmpty ? "未匹配" : "候选都不对",
+                        systemImage: "arrow.down.circle"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("下载原曲")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    .orange.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(workingItemKeys.contains(item.itemKey))
         }
         .padding(14)
         .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 16))
