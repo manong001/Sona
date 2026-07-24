@@ -22,27 +22,27 @@ struct HomeView: View {
     private let chartShortcuts = [
         ChartShortcut(
             region: "ALL", title: "热歌总榜", subtitle: "全站播放热度",
-            systemImage: "chart.bar.fill", flagArtwork: nil, artwork: "ChartWaveColor",
+            systemImage: "chart.bar.fill", artwork: "ChartWaveColor",
             color: Color(red: 0.72, green: 0.19, blue: 0.26)
         ),
         ChartShortcut(
             region: "CN", title: "中文榜", subtitle: "中文热门歌曲",
-            systemImage: nil, flagArtwork: "FlagCN", artwork: "ChartWaveColor",
+            systemImage: "chart.bar.fill", artwork: "ChartWaveColor",
             color: Color(red: 0.74, green: 0.29, blue: 0.16)
         ),
         ChartShortcut(
             region: "US", title: "英语榜", subtitle: "英语热门歌曲",
-            systemImage: nil, flagArtwork: "FlagUS", artwork: "ChartWaveBlue",
+            systemImage: "chart.bar.fill", artwork: "ChartWaveBlue",
             color: Color(red: 0.20, green: 0.36, blue: 0.72)
         ),
         ChartShortcut(
             region: "KR", title: "韩语榜", subtitle: "韩语热门歌曲",
-            systemImage: nil, flagArtwork: "FlagKR", artwork: "ChartWavePurple",
+            systemImage: "chart.bar.fill", artwork: "ChartWavePurple",
             color: Color(red: 0.48, green: 0.24, blue: 0.67)
         ),
         ChartShortcut(
             region: "JP", title: "日语榜", subtitle: "日语热门歌曲",
-            systemImage: nil, flagArtwork: "FlagJP", artwork: "ChartWaveBlue",
+            systemImage: "chart.bar.fill", artwork: "ChartWaveBlue",
             color: Color(red: 0.12, green: 0.52, blue: 0.48)
         )
     ]
@@ -447,7 +447,6 @@ struct HomeView: View {
                                 title: chart.title,
                                 subtitle: chart.subtitle,
                                 systemImage: chart.systemImage,
-                                flagArtwork: chart.flagArtwork,
                                 artwork: chart.artwork,
                                 color: chart.color
                             )
@@ -546,20 +545,17 @@ struct HomeView: View {
 
     private func recommendationTile(
         title: String, subtitle: String, systemImage: String? = nil,
-        flagArtwork: String? = nil, artwork: String?, color: Color
+        artwork: String?, color: Color
     ) -> some View {
         ZStack(alignment: .leading) {
-            Rectangle().fill(color.gradient)
-            if let flagArtwork {
-                Image(flagArtwork)
-                    .resizable()
-                    .scaledToFill()
-                    .opacity(0.26)
-            }
+            Rectangle()
+                .fill(color.gradient)
+                .frame(width: 180, height: 118)
             if let artwork {
                 Image(artwork)
                     .resizable()
                     .scaledToFill()
+                    .frame(width: 180, height: 118)
                     .opacity(0.30)
                     .blendMode(.screen)
             }
@@ -1101,7 +1097,6 @@ private struct ChartShortcut: Identifiable {
     let title: String
     let subtitle: String
     let systemImage: String?
-    let flagArtwork: String?
     let artwork: String?
     let color: Color
 
