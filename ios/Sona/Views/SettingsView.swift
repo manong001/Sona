@@ -888,7 +888,12 @@ private struct DuplicateTrackManagementView: View {
     @State private var previewTrackID: String?
     @State private var resumeMainPlayerAfterPreview = false
     @State private var errorMessage: String?
+    @State private var successMessage: String?
     @State private var isLoading = false
+    @State private var isAutoDeduplicating = false
+    @State private var completedDeletionCount = 0
+    @State private var totalDeletionCount = 0
+    @State private var isAutoDeduplicateConfirmationPresented = false
 
     private var filteredGroups: [DuplicateTrackGroup] {
         let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -906,6 +911,33 @@ private struct DuplicateTrackManagementView: View {
 
     var body: some View {
         List {
+            if !groups.isEmpty {
+                Section {
+                    Button {
+                        isAutoDeduplicateConfirmationPresented = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.title3)
+                                .foregroundStyle(Color.sonaGreen)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("一键去重")
+                                    .font(.headline)
+                                Text("每组保留质量最高的一首，迁移全部用户信息")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .disabled(isAutoDeduplicating)
+                }
+            }
+
             if groups.isEmpty && !isLoading {
                 ContentUnavailableView(
                     "没有重复歌曲",
@@ -928,6 +960,7 @@ private struct DuplicateTrackManagementView: View {
                 Section {
                     ForEach(group.tracks) { item in
                         duplicateItemCard(item, in: group)
+                            .disabled(isAutoDeduplicating)
                             .listRowInsets(EdgeInsets(
                                 top: 6, leading: 16, bottom: 6, trailing: 16
                             ))
@@ -985,6 +1018,18 @@ private struct DuplicateTrackManagementView: View {
         } message: {
             Text("收藏、歌单、播放历史和当前队列将迁移到所选资源。")
         }
+        .confirmationDialog(
+            "确认一键去重？",
+            isPresented: $isAutoDeduplicateConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("保留最高质量并删除 \(duplicateDeletionCount) 首", role: .destructive) {
+                Task { await autoDeduplicate() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将处理全部 \(groups.count) 组重复歌曲。收藏、歌单、播放记录和当前队列会迁移到每组质量最高的歌曲，删除后无法恢复。")
+        }
         .alert(item: $pendingReplacement) { replacement in
             Alert(
                 title: Text("替换并永久删除？"),
@@ -996,14 +1041,37 @@ private struct DuplicateTrackManagementView: View {
             )
         }
         .overlay(alignment: .bottom) {
-            if let errorMessage {
-                Text(errorMessage)
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .background(.red, in: Capsule())
-                    .padding(.bottom, 8)
+            VStack(spacing: 8) {
+                if isAutoDeduplicating {
+                    ProgressView(
+                        value: Double(completedDeletionCount),
+                        total: Double(max(totalDeletionCount, 1))
+                    ) {
+                        Text("正在迁移并删除 \(completedDeletionCount)/\(totalDeletionCount)")
+                    }
+                    .padding(12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
+                if let successMessage {
+                    Text(successMessage)
+                        .foregroundStyle(.white)
+                        .padding(8)
+                        .background(Color.sonaGreen, in: Capsule())
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .foregroundStyle(.white)
+                        .padding(8)
+                        .background(.red, in: Capsule())
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
         }
+    }
+
+    private var duplicateDeletionCount: Int {
+        groups.reduce(0) { $0 + max(0, $1.tracks.count - 1) }
     }
 
     private func duplicateGroupHeader(_ group: DuplicateTrackGroup) -> some View {
@@ -1038,9 +1106,19 @@ private struct DuplicateTrackManagementView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.track.album.isEmpty ? "未知专辑" : item.track.album)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(item.track.album.isEmpty ? "未知专辑" : item.track.album)
+                        .font(.headline)
+                        .lineLimit(1)
+                    if highestQualityTrack(in: group)?.id == item.id {
+                        Text("默认保留")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.sonaGreen)
+                            .padding(.horizontal, 7)
+                            .frame(height: 22)
+                            .background(Color.sonaGreen.opacity(0.12), in: Capsule())
+                    }
+                }
                 Text(item.fileName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1147,6 +1225,68 @@ private struct DuplicateTrackManagementView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func autoDeduplicate() async {
+        let replacements = groups.flatMap { group -> [PendingDuplicateReplacement] in
+            guard let target = highestQualityTrack(in: group) else { return [] }
+            return group.tracks
+                .filter { $0.id != target.id }
+                .map { PendingDuplicateReplacement(source: $0, target: target) }
+        }
+        guard !replacements.isEmpty else { return }
+
+        stopPreview()
+        isAutoDeduplicating = true
+        completedDeletionCount = 0
+        totalDeletionCount = replacements.count
+        errorMessage = nil
+        successMessage = nil
+        defer { isAutoDeduplicating = false }
+
+        for replacement in replacements {
+            do {
+                try await APIClient.shared.replaceDuplicateTrack(
+                    id: replacement.source.track.id,
+                    replacementTrackID: replacement.target.track.id
+                )
+                completedDeletionCount += 1
+            } catch {
+                let message = "已完成 \(completedDeletionCount) 首，第 \(completedDeletionCount + 1) 首失败：\(error.localizedDescription)"
+                await load()
+                errorMessage = message
+                return
+            }
+        }
+
+        successMessage = "去重完成：已迁移并删除 \(completedDeletionCount) 首歌曲"
+        await load()
+    }
+
+    private func highestQualityTrack(
+        in group: DuplicateTrackGroup
+    ) -> DuplicateTrackItem? {
+        group.tracks.max { qualityScore($0).lexicographicallyPrecedes(qualityScore($1)) }
+    }
+
+    private func qualityScore(_ item: DuplicateTrackItem) -> [Int64] {
+        [
+            Int64(codecQuality(item.track.codec)),
+            Int64(item.track.bitDepth ?? 0),
+            Int64(item.track.sampleRate ?? 0),
+            item.fileSize,
+        ]
+    }
+
+    private func codecQuality(_ codec: String) -> Int {
+        let value = codec.uppercased()
+        if ["DSD", "DSF", "DFF"].contains(where: value.contains) { return 5 }
+        if ["FLAC", "ALAC", "APE", "WAV", "AIFF", "WV"].contains(where: value.contains) {
+            return 4
+        }
+        if ["OPUS", "AAC", "OGG", "M4A"].contains(where: value.contains) { return 2 }
+        if ["MP3", "WMA"].contains(where: value.contains) { return 1 }
+        return 0
     }
 
     private func usageDescription(_ usage: DuplicateTrackUsage) -> String {

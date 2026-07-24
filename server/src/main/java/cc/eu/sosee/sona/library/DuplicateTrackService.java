@@ -81,9 +81,18 @@ class DuplicateTrackService {
             .param("target", targetId).param("source", sourceId).update();
         jdbcClient.sql("UPDATE playlists SET artwork_track_id = :target WHERE artwork_track_id = :source")
             .param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("""
+                UPDATE playlist_subscription_items
+                SET matched_track_id = :target
+                WHERE matched_track_id = :source
+                """).param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("UPDATE playlist_match_choices SET track_id = :target WHERE track_id = :source")
+            .param("target", targetId).param("source", sourceId).update();
         jdbcClient.sql("UPDATE playback_state SET track_id = :target WHERE track_id = :source")
             .param("target", targetId).param("source", sourceId).update();
         replaceQueueReferences(sourceId, targetId);
+        mergeRandomTrackExposures(sourceId, targetId);
+        copyDirectoryMemberships(sourceId, targetId);
         jdbcClient.sql("""
                 INSERT INTO track_play_stats(
                     track_id, play_count, completion_count, completion_percent_sum
@@ -114,6 +123,32 @@ class DuplicateTrackService {
                 + positionColumns + ", " + timeColumn + " FROM " + table + " WHERE track_id = :source")
             .param("target", targetId).param("source", sourceId).update();
         jdbcClient.sql("DELETE FROM " + table + " WHERE track_id = :source")
+            .param("source", sourceId).update();
+    }
+
+    private void mergeRandomTrackExposures(String sourceId, String targetId) {
+        jdbcClient.sql("""
+                INSERT INTO random_track_exposures(
+                    user_id, scope, track_id, last_cycle, selected_count, last_selected_at
+                )
+                SELECT user_id, scope, :target, last_cycle, selected_count, last_selected_at
+                FROM random_track_exposures WHERE track_id = :source
+                ON CONFLICT(user_id, scope, track_id) DO UPDATE SET
+                    last_cycle = max(last_cycle, excluded.last_cycle),
+                    selected_count = selected_count + excluded.selected_count,
+                    last_selected_at = max(last_selected_at, excluded.last_selected_at)
+                """).param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("DELETE FROM random_track_exposures WHERE track_id = :source")
+            .param("source", sourceId).update();
+    }
+
+    private void copyDirectoryMemberships(String sourceId, String targetId) {
+        jdbcClient.sql("""
+                INSERT OR IGNORE INTO directory_track_memberships(directory_path, track_id)
+                SELECT directory_path, :target
+                FROM directory_track_memberships WHERE track_id = :source
+                """).param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("DELETE FROM directory_track_memberships WHERE track_id = :source")
             .param("source", sourceId).update();
     }
 
