@@ -28,6 +28,7 @@ struct MusicLibraryView: View {
     @State private var isLoadingSubscriptions = false
     @State private var needsSubscriptionRefresh = false
     @State private var subscriptionErrorMessage: String?
+    @State private var pendingSubscriptionCancellation: PlaylistSubscription?
     @State private var playlistName = ""
     @State private var selectedSort = "TITLE"
     @State private var selectedGenre: String?
@@ -229,6 +230,22 @@ struct MusicLibraryView: View {
             Button("取消", role: .cancel) { }
         } message: { playlist in
             Text("将强制覆盖“\(playlist.name)”内所有歌曲的信息，包括人工编辑内容。")
+        }
+        .confirmationDialog(
+            "取消订阅？",
+            isPresented: Binding(
+                get: { pendingSubscriptionCancellation != nil },
+                set: { if !$0 { pendingSubscriptionCancellation = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingSubscriptionCancellation
+        ) { subscription in
+            Button("取消订阅", role: .destructive) {
+                Task { await unsubscribe(subscription) }
+            }
+            Button("保留订阅", role: .cancel) {}
+        } message: { subscription in
+            Text("将停止同步“\(subscription.name)”，已导入歌单的歌曲不会被删除。")
         }
         .alert("歌单刮削", isPresented: Binding(
             get: { forceScrapeMessage != nil },
@@ -617,7 +634,7 @@ struct MusicLibraryView: View {
                                 Task { await syncSubscription(subscription) }
                             }
                             Button("取消订阅", systemImage: "link.badge.minus", role: .destructive) {
-                                Task { await unsubscribe(subscription) }
+                                pendingSubscriptionCancellation = subscription
                             }
                         }
                         if session.currentUser?.isAdmin == true {

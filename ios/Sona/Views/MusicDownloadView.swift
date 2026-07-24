@@ -690,6 +690,7 @@ struct PlaylistSubscriptionsView: View {
     @State private var showsCreate = false
     @State private var editingSubscription: PlaylistSubscription?
     @State private var inspectingSubscription: PlaylistSubscription?
+    @State private var pendingCancellation: PlaylistSubscription?
     @State private var errorMessage: String?
     @State private var selectedSection = 0
     let changed: () -> Void
@@ -764,6 +765,22 @@ struct PlaylistSubscriptionsView: View {
                 }
                 .desktopSheetSize(.large)
             }
+            .confirmationDialog(
+                "取消订阅？",
+                isPresented: Binding(
+                    get: { pendingCancellation != nil },
+                    set: { if !$0 { pendingCancellation = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingCancellation
+            ) { subscription in
+                Button("取消订阅", role: .destructive) {
+                    Task { await delete(subscription) }
+                }
+                Button("保留订阅", role: .cancel) {}
+            } message: { subscription in
+                Text("将停止同步“\(subscription.name)”，已导入歌单的歌曲不会被删除。")
+            }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -792,7 +809,7 @@ struct PlaylistSubscriptionsView: View {
                     subscriptionRow(subscription)
                         .swipeActions {
                             Button(role: .destructive) {
-                                Task { await delete(subscription) }
+                                pendingCancellation = subscription
                             } label: {
                                 Label("取消订阅", systemImage: "trash")
                             }
@@ -944,7 +961,7 @@ struct PlaylistSubscriptionsView: View {
                 Task { await sync(subscription) }
             }
             Button("取消订阅", systemImage: "link.badge.minus", role: .destructive) {
-                Task { await delete(subscription) }
+                pendingCancellation = subscription
             }
         }
     }
