@@ -210,9 +210,12 @@ class PlaylistSubscriptionService {
     PlaylistSubscriptionRepository.Subscription updateStrictMode(
         String userId, String id, boolean strictMode
     ) {
-        subscriptions.find(userId, id)
+        var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         subscriptions.updateStrictMode(id, strictMode);
+        if (!strictMode) {
+            downloadService.disableStrictMatchForPlaylist(subscription.playlistId());
+        }
         return subscriptions.find(userId, id).orElseThrow();
     }
 
@@ -229,12 +232,16 @@ class PlaylistSubscriptionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "同步频率无效");
         }
         var normalizedName = name.strip();
+        var effectiveStrictMode = strictMode == null ? subscription.strictMode() : strictMode;
         playlistImportService.rename(userId, subscription.playlistId(), normalizedName);
         subscriptions.updateSettings(
             subscription.id(), normalizedName,
-            strictMode == null ? subscription.strictMode() : strictMode,
+            effectiveStrictMode,
             effectiveInterval
         );
+        if (!effectiveStrictMode) {
+            downloadService.disableStrictMatchForPlaylist(subscription.playlistId());
+        }
         return subscriptions.find(userId, id).orElseThrow();
     }
 

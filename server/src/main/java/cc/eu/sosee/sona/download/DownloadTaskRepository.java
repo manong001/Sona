@@ -94,6 +94,26 @@ class DownloadTaskRepository {
             .orElse(0) == 1;
     }
 
+    void disableStrictMatchForTargetPlaylist(String targetPlaylistId) {
+        jdbcClient.sql("""
+                UPDATE download_tasks
+                SET strict_match = 0,
+                    message = CASE
+                        WHEN state = 'FAILED'
+                         AND message = '严格模式未找到歌名和歌手完全一致的音源，请选择备选音源'
+                        THEN '已关闭严格模式，请重试下载'
+                        ELSE message
+                    END,
+                    updated_at = :updatedAt
+                WHERE target_playlist_id = :targetPlaylistId
+                  AND strict_match = 1
+                  AND state <> 'COMPLETED'
+                """)
+            .param("targetPlaylistId", targetPlaylistId)
+            .param("updatedAt", clock.millis())
+            .update();
+    }
+
     List<DownloadTask> findRecent(String requestedBy) {
         return jdbcClient.sql("""
                 SELECT * FROM download_tasks
@@ -250,6 +270,7 @@ class DownloadTaskRepository {
                     album = :album,
                     quality = :quality,
                     artwork_url = :artworkUrl,
+                    strict_match = 0,
                     state = 'QUEUED',
                     files_json = '',
                     message = NULL,

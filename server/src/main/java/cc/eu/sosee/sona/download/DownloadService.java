@@ -235,6 +235,10 @@ class DownloadService {
         repository.deleteFailed(requestedBy);
     }
 
+    void disableStrictMatchForPlaylist(String playlistId) {
+        repository.disableStrictMatchForTargetPlaylist(playlistId);
+    }
+
     private void cancel(String taskId) {
         try {
             gateway.cancel(taskId);
