@@ -15,6 +15,7 @@ struct SonaApp: App {
                 .environmentObject(session)
                 .environmentObject(library)
                 .environmentObject(player)
+                .environmentObject(player.progress)
                 .environmentObject(offline)
                 .environmentObject(personal)
                 .environmentObject(social)

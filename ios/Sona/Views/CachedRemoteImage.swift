@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -30,10 +31,7 @@ final class RemoteImageCache: @unchecked Sendable {
     }
 
     func cachedImage(for url: URL) -> UIImage? {
-        if let image = images.object(forKey: url as NSURL) { return image }
-        guard let bytes = cachedData(for: url), let image = UIImage(data: bytes) else { return nil }
-        storeImage(image, for: url)
-        return image
+        images.object(forKey: url as NSURL)
     }
 
     func storeImage(_ image: UIImage, for url: URL) {
@@ -43,7 +41,7 @@ final class RemoteImageCache: @unchecked Sendable {
     func image(for url: URL) async throws -> UIImage {
         if let image = cachedImage(for: url) { return image }
         let bytes = try await data(for: url)
-        guard let image = UIImage(data: bytes) else { throw URLError(.cannotDecodeContentData) }
+        let image = try await Self.decodeImage(bytes, for: url)
         storeImage(image, for: url)
         return image
     }
@@ -88,6 +86,35 @@ final class RemoteImageCache: @unchecked Sendable {
 
     private func cachedData(for url: URL) -> Data? {
         data.object(forKey: url as NSURL) as Data?
+    }
+
+    private static func decodeImage(_ bytes: Data, for url: URL) async throws -> UIImage {
+        let maxPixelSize = URLComponents(
+            url: url,
+            resolvingAgainstBaseURL: false
+        )?.queryItems?.first(where: { $0.name == "size" })?.value.flatMap(Int.init) ?? 768
+
+        return try await Task.detached(priority: .userInitiated) {
+            try autoreleasepool {
+                guard let source = CGImageSourceCreateWithData(bytes as CFData, nil) else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+                let options: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ]
+                guard let image = CGImageSourceCreateThumbnailAtIndex(
+                    source,
+                    0,
+                    options as CFDictionary
+                ) else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+                return UIImage(cgImage: image)
+            }
+        }.value
     }
 }
 

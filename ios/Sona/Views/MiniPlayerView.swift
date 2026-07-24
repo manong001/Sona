@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var playbackTimeline: PlaybackProgress
     @EnvironmentObject private var personal: PersonalStore
     @AppStorage("miniPlayerSide") private var anchoredSide = "right"
     @AppStorage("miniPlayerY") private var storedY = 0.0
@@ -351,8 +352,8 @@ struct MiniPlayerView: View {
     private var currentLyric: String? {
         LyricsParser.activeLine(
             in: lyricLines,
-            at: player.elapsed,
-            duration: player.duration
+            at: playbackTimeline.elapsed,
+            duration: playbackTimeline.duration
         )?.text
     }
 
@@ -435,7 +436,10 @@ struct MiniPlayerView: View {
     }
 
     private var playbackProgress: CGFloat {
-        CGFloat(min(max(player.elapsed / max(player.duration, 1), 0), 1))
+        CGFloat(min(max(
+            playbackTimeline.elapsed / max(playbackTimeline.duration, 1),
+            0
+        ), 1))
     }
 
     private var childTint: Color {

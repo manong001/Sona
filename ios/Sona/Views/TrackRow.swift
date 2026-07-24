@@ -86,6 +86,10 @@ struct TrackRow: View {
     var moreAction: (() -> Void)?
     var deleteTitle: String?
     var deleteAction: (() -> Void)?
+    var showsFavoriteButton = false
+    var favoriteAction: (() -> Void)?
+    var addToPlaylists: [Playlist] = []
+    var addToPlaylistAction: ((Playlist) -> Void)?
     var tapAction: (() -> Void)?
 
     @ViewBuilder
@@ -100,8 +104,40 @@ struct TrackRow: View {
                     trackContent
                 }
 
-                if moreAction != nil || deleteTitle != nil || allowsMoveToTrash {
+                if showsFavoriteButton, let favoriteAction {
+                    Button(action: favoriteAction) {
+                        Image(systemName: isFavorite ? "heart.fill" : "heart")
+                            .font(.title3)
+                            .foregroundStyle(isFavorite ? Color.sonaGreen : Color.sonaSecondaryText)
+                            .frame(width: 36, height: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isFavorite ? "取消收藏 \(track.title)" : "收藏 \(track.title)")
+                }
+
+                if moreAction != nil || deleteTitle != nil
+                    || addToPlaylistAction != nil || allowsMoveToTrash {
                     Menu {
+                        if let addToPlaylistAction {
+                            if addToPlaylists.isEmpty {
+                                Text("请先创建歌单")
+                            } else {
+                                Menu("添加至", systemImage: "text.badge.plus") {
+                                    ForEach(addToPlaylists) { playlist in
+                                        let isIncluded = playlist.trackIDs.contains(track.id)
+                                        Button {
+                                            addToPlaylistAction(playlist)
+                                        } label: {
+                                            Label(
+                                                playlist.name,
+                                                systemImage: isIncluded ? "checkmark" : "music.note.list"
+                                            )
+                                        }
+                                        .disabled(isIncluded)
+                                    }
+                                }
+                            }
+                        }
                         if let moreActionTitle, let moreAction {
                             Button(moreActionTitle, systemImage: moreActionSystemImage) {
                                 moreAction()
@@ -156,7 +192,7 @@ struct TrackRow: View {
 
     private var trackContent: some View {
         HStack(spacing: 12) {
-            ArtworkView(path: track.artworkURL, cornerRadius: 6)
+            ArtworkView(path: track.artworkURL, cornerRadius: 6, thumbnailSize: 192)
                 .frame(width: 52, height: 52)
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)

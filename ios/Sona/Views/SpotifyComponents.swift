@@ -2,6 +2,124 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+enum SonaHapticStrength: String, CaseIterable, Identifiable {
+    case off
+    case light
+    case medium
+    case heavy
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: "关闭"
+        case .light: "轻"
+        case .medium: "中"
+        case .heavy: "重"
+        }
+    }
+}
+
+enum SonaHaptics {
+    static let preferenceKey = "hapticStrength"
+
+    static func buttonTap() {
+#if os(iOS) && !targetEnvironment(macCatalyst)
+        let rawValue = UserDefaults.standard.string(forKey: preferenceKey)
+            ?? SonaHapticStrength.medium.rawValue
+        guard let strength = SonaHapticStrength(rawValue: rawValue),
+              strength != .off else { return }
+        let generator: UIImpactFeedbackGenerator
+        let intensity: CGFloat
+        switch strength {
+        case .off:
+            return
+        case .light:
+            generator = UIImpactFeedbackGenerator(style: .light)
+            intensity = 0.45
+        case .medium:
+            generator = UIImpactFeedbackGenerator(style: .medium)
+            intensity = 0.72
+        case .heavy:
+            generator = UIImpactFeedbackGenerator(style: .heavy)
+            intensity = 1
+        }
+        generator.impactOccurred(intensity: intensity)
+#endif
+    }
+}
+
+struct Button<Content: View>: View {
+    private let role: ButtonRole?
+    private let action: () -> Void
+    private let content: Content
+
+    init(
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void,
+        @ViewBuilder label: () -> Content
+    ) {
+        self.role = role
+        self.action = action
+        content = label()
+    }
+
+    var body: some View {
+        SwiftUI.Button(role: role) {
+            SonaHaptics.buttonTap()
+            action()
+        } label: {
+            content
+        }
+    }
+}
+
+extension Button where Content == Text {
+    init(
+        _ titleKey: LocalizedStringKey,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.init(role: role, action: action) {
+            Text(titleKey)
+        }
+    }
+
+    init<S>(
+        _ title: S,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) where S: StringProtocol {
+        self.init(role: role, action: action) {
+            Text(title)
+        }
+    }
+}
+
+extension Button where Content == Label<Text, Image> {
+    init(
+        _ titleKey: LocalizedStringKey,
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.init(role: role, action: action) {
+            Label(titleKey, systemImage: systemImage)
+        }
+    }
+
+    init<S>(
+        _ title: S,
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) where S: StringProtocol {
+        self.init(role: role, action: action) {
+            Label(title, systemImage: systemImage)
+        }
+    }
+}
+
 struct SonaCollection: Identifiable {
     enum Shape {
         case square
@@ -268,7 +386,7 @@ struct SonaCollectionArtwork: View {
     }
 
     private var requestedThumbnailSize: Int {
-        size <= 80 ? 256 : 768
+        size <= 80 ? 256 : 512
     }
 }
 
@@ -939,6 +1057,9 @@ struct SonaTrackListView: View {
                                     ? "checkmark.circle.fill" : "photo",
                                 moreActionDisabled: playlist?.artworkTrackID == track.id,
                                 moreAction: playlistArtworkAction(for: track),
+                                deleteTitle: canRemoveTracksFromPlaylist
+                                    ? "从歌单中移除" : nil,
+                                deleteAction: removeFromPlaylistAction(for: track),
                                 tapAction: {
                                     if isSelecting {
                                         if !selectedIDs.insert(track.id).inserted {
@@ -1219,6 +1340,23 @@ struct SonaTrackListView: View {
                 await personal.setPlaylistArtwork(
                     playlistID: playlist.id,
                     trackID: track.id
+                )
+            }
+        }
+    }
+
+    private var canRemoveTracksFromPlaylist: Bool {
+        playlist?.isDirectoryPlaylist == false
+    }
+
+    private func removeFromPlaylistAction(for track: Track) -> (() -> Void)? {
+        guard let playlist, !playlist.isDirectoryPlaylist else { return nil }
+        return {
+            Task {
+                await personal.setTrack(
+                    track.id,
+                    in: playlist.id,
+                    isIncluded: false
                 )
             }
         }

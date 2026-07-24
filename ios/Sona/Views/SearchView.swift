@@ -7,6 +7,14 @@ struct SearchView: View {
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var query = ""
+    @State private var onlineCandidates: [DownloadCandidate] = []
+    @State private var queuedCandidateIDs: Set<String> = []
+    @State private var candidateStates: [String: MusicDownloadState] = [:]
+    @State private var isSearchingOnline = false
+    @State private var onlineSearchGeneration = 0
+    @State private var searchErrorMessage: String?
+    @State private var showsAddedToast = false
+    @State private var addedToastTask: Task<Void, Never>?
     let openDrawer: () -> Void
 
     private struct Category: Identifiable {
@@ -88,8 +96,37 @@ struct SearchView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
+        .overlay(alignment: .bottom) {
+            if let searchErrorMessage {
+                Text(searchErrorMessage)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.red.opacity(0.92), in: Capsule())
+                    .padding()
+                    .onTapGesture { self.searchErrorMessage = nil }
+            } else if showsAddedToast {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("已添加到下载任务")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.sonaGreen, in: Capsule())
+                .padding()
+            }
+        }
         .task(id: query) {
             let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            onlineSearchGeneration += 1
+            let generation = onlineSearchGeneration
+            onlineCandidates = []
+            candidateStates = [:]
+            isSearchingOnline = false
+            searchErrorMessage = nil
             guard !value.isEmpty else {
                 library.clearSearch()
                 return
@@ -100,7 +137,12 @@ struct SearchView: View {
                 return
             }
             await library.search(query: value)
+            guard !Task.isCancelled,
+                  query.trimmingCharacters(in: .whitespacesAndNewlines) == value,
+                  library.searchResults.isEmpty else { return }
+            await searchOnline(query: value, generation: generation)
         }
+        .onDisappear { addedToastTask?.cancel() }
     }
 
     private var header: some View {
@@ -194,7 +236,15 @@ struct SearchView: View {
             ProgressView("搜索中…")
                 .frame(maxWidth: .infinity)
                 .padding(.top, 80)
-        } else if filteredTracks.isEmpty {
+        } else if !filteredTracks.isEmpty {
+            localResults
+        } else if !onlineCandidates.isEmpty {
+            onlineResults
+        } else if isSearchingOnline {
+            ProgressView("本地未找到，正在搜索网络歌曲…")
+                .frame(maxWidth: .infinity)
+                .padding(.top, 80)
+        } else {
             VStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 38))
@@ -206,38 +256,183 @@ struct SearchView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 80)
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("歌曲")
-                    .font(.title2.bold())
-                    .padding(.horizontal, 16)
-                ForEach(filteredTracks) { track in
-                    Button {
+        }
+    }
+
+    private var localResults: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("歌曲")
+                .font(.title2.bold())
+                .padding(.horizontal, 16)
+            ForEach(filteredTracks) { track in
+                TrackRow(
+                    track: track,
+                    showsOfflineBadge: offline.downloadedIDs.contains(track.id),
+                    isFavorite: personal.favoriteIDs.contains(track.id),
+                    allowsMoveToTrash: false,
+                    showsFavoriteButton: true,
+                    favoriteAction: {
+                        Task { await personal.toggleFavorite(trackID: track.id) }
+                    },
+                    addToPlaylists: Array(
+                        personal.playlists
+                            .filter { !$0.isDirectoryPlaylist }
+                            .prefix(10)
+                    ),
+                    addToPlaylistAction: { playlist in
+                        Task {
+                            await personal.setTrack(
+                                track.id,
+                                in: playlist.id,
+                                isIncluded: true
+                            )
+                        }
+                    },
+                    tapAction: {
                         player.play(
                             track: track,
                             queue: filteredTracks,
                             offlineURLProvider: offline.localURL(for:)
                         )
-                    } label: {
-                        TrackRow(
-                            track: track,
-                            showsOfflineBadge: offline.downloadedIDs.contains(track.id),
-                            isFavorite: personal.favoriteIDs.contains(track.id)
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
                     }
-                    .buttonStyle(.plain)
-                    .task {
-                        await library.loadNextSearchPageIfNeeded(currentTrack: track)
-                    }
-                }
-                if library.isLoadingMoreSearch {
-                    ProgressView("载入更多…")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                .task {
+                    await library.loadNextSearchPageIfNeeded(currentTrack: track)
                 }
             }
+            if library.isLoadingMoreSearch {
+                ProgressView("载入更多…")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            }
+        }
+    }
+
+    private var onlineResults: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("网络歌曲")
+                    .font(.title2.bold())
+                Spacer()
+                Text("点击下载后自动加入曲库")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+            }
+            .padding(.horizontal, 16)
+            ForEach(onlineCandidates) { candidate in
+                SearchDownloadCandidateRow(
+                    candidate: candidate,
+                    isQueuing: queuedCandidateIDs.contains(candidate.id),
+                    downloadState: downloadState(for: candidate)
+                ) {
+                    Task { await queue(candidate) }
+                }
+            }
+            if isSearchingOnline {
+                ProgressView("正在补充其他平台结果…")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            }
+        }
+    }
+
+    private func searchOnline(query: String, generation: Int) async {
+        isSearchingOnline = true
+        defer {
+            if generation == onlineSearchGeneration {
+                isSearchingOnline = false
+            }
+        }
+        do {
+            let sources = try await APIClient.shared.musicDownloadSources()
+            guard generation == onlineSearchGeneration, !Task.isCancelled else { return }
+            let sourceGroups = sources.isEmpty ? [[]] : sources.map { [$0.id] }
+            var errors: [String] = []
+
+            await withTaskGroup(of: ([DownloadCandidate], String?).self) { group in
+                for sourceGroup in sourceGroups {
+                    group.addTask {
+                        do {
+                            let items = try await APIClient.shared.searchMusicDownloads(
+                                query: query,
+                                sources: sourceGroup,
+                                timeout: 30
+                            ).items
+                            return (items, nil)
+                        } catch is CancellationError {
+                            return ([], nil)
+                        } catch let error as URLError where error.code == .cancelled {
+                            return ([], nil)
+                        } catch {
+                            return ([], error.localizedDescription)
+                        }
+                    }
+                }
+
+                for await (items, error) in group {
+                    guard generation == onlineSearchGeneration,
+                          !Task.isCancelled,
+                          self.query.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                        group.cancelAll()
+                        return
+                    }
+                    var candidateIDs = Set(onlineCandidates.map(\.id))
+                    onlineCandidates.append(contentsOf: items.filter {
+                        candidateIDs.insert($0.id).inserted
+                    })
+                    if !items.isEmpty {
+                        searchErrorMessage = nil
+                    }
+                    if let error { errors.append(error) }
+                }
+            }
+            if onlineCandidates.isEmpty, let error = errors.first {
+                searchErrorMessage = error
+            }
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func queue(_ candidate: DownloadCandidate) async {
+        guard downloadState(for: candidate) == nil else { return }
+        guard queuedCandidateIDs.insert(candidate.id).inserted else { return }
+        searchErrorMessage = nil
+        defer { queuedCandidateIDs.remove(candidate.id) }
+        do {
+            let task = try await APIClient.shared.queueMusicDownload(candidate)
+            candidateStates[candidate.id] = task.state
+            showAddedToast()
+        } catch {
+            searchErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func downloadState(for candidate: DownloadCandidate) -> MusicDownloadState? {
+        if let state = candidateStates[candidate.id] {
+            return state
+        }
+        return candidate.downloadState == .failed ? nil : candidate.downloadState
+    }
+
+    private func showAddedToast() {
+        addedToastTask?.cancel()
+        showsAddedToast = true
+        addedToastTask = Task {
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            showsAddedToast = false
         }
     }
 
@@ -288,5 +483,76 @@ struct SearchView: View {
             tracks: category.tracks,
             shape: .square
         )
+    }
+}
+
+private struct SearchDownloadCandidateRow: View {
+    let candidate: DownloadCandidate
+    let isQueuing: Bool
+    let downloadState: MusicDownloadState?
+    let queue: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CachedRemoteImage(url: candidate.artworkUrl.flatMap(URL.init(string:))) { image in
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } placeholder: {
+                ZStack {
+                    Color.sonaSurface
+                    Image(systemName: "music.note")
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+            }
+            .frame(width: 52, height: 52)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(candidate.title)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                Text([candidate.artist, candidate.album]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Text(candidate.sourceName)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.sonaGreen)
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(Color.sonaGreen.opacity(0.12), in: Capsule())
+                .lineLimit(1)
+            Button(action: queue) {
+                if isQueuing {
+                    ProgressView()
+                        .tint(.sonaGreen)
+                } else if let downloadState {
+                    Image(systemName: downloadState == .completed
+                        ? "checkmark.circle.fill"
+                        : "clock.fill")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(Color.sonaGreen)
+                }
+            }
+            .font(.title2)
+            .buttonStyle(.plain)
+            .disabled(isQueuing || downloadState != nil)
+            .accessibilityLabel(downloadState == .completed
+                ? "已下载 \(candidate.title)"
+                : downloadState != nil
+                    ? "已在下载列表 \(candidate.title)"
+                    : "下载 \(candidate.title)")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .frame(minHeight: 60)
     }
 }

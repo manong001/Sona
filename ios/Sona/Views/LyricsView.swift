@@ -4,11 +4,12 @@ struct LyricsView: View {
     let track: Track
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var playbackProgress: PlaybackProgress
     @State private var lines: [LyricLine] = []
     @State private var errorMessage: String?
 
     private var activeLineID: LyricLine.ID? {
-        LyricsParser.activeLineID(in: lines, at: player.elapsed)
+        LyricsParser.activeLineID(in: lines, at: playbackProgress.elapsed)
     }
 
     var body: some View {

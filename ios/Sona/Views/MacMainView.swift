@@ -478,6 +478,7 @@ private struct MacQueuePanel: View {
 
 private struct MacPlayerBar: View {
     @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var playbackProgress: PlaybackProgress
     @EnvironmentObject private var personal: PersonalStore
     let queueIsVisible: Bool
     let toggleQueue: () -> Void
@@ -552,16 +553,16 @@ private struct MacPlayerBar: View {
             .disabled(player.currentTrack == nil)
 
             HStack(spacing: 9) {
-                Text(time(player.elapsed))
+                Text(time(playbackProgress.elapsed))
                 Slider(
                     value: Binding(
-                        get: { player.elapsed },
+                        get: { playbackProgress.elapsed },
                         set: { player.seek(to: $0) }
                     ),
-                    in: 0...max(player.duration, 1)
+                    in: 0...max(playbackProgress.duration, 1)
                 )
                 .tint(.white)
-                Text(time(player.duration))
+                Text(time(playbackProgress.duration))
             }
             .font(.caption2.monospacedDigit())
             .foregroundStyle(Color.sonaSecondaryText)

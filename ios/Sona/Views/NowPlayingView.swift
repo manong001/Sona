@@ -3,6 +3,7 @@ import SwiftUI
 struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var playbackProgress: PlaybackProgress
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @State private var showsLyrics = false
@@ -106,16 +107,19 @@ struct NowPlayingView: View {
                         VStack(spacing: 5) {
                             Slider(
                                 value: Binding(
-                                    get: { player.elapsed },
+                                    get: { playbackProgress.elapsed },
                                     set: { player.seek(to: $0) }
                                 ),
-                                in: 0...max(player.duration, 1)
+                                in: 0...max(playbackProgress.duration, 1)
                             )
                             .tint(.white)
                             HStack {
-                                Text(time(player.elapsed))
+                                Text(time(playbackProgress.elapsed))
                                 Spacer()
-                                Text("-" + time(max(0, player.duration - player.elapsed)))
+                                Text("-" + time(max(
+                                    0,
+                                    playbackProgress.duration - playbackProgress.elapsed
+                                )))
                             }
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(Color.sonaSecondaryText)
@@ -224,8 +228,8 @@ struct NowPlayingView: View {
     private var currentLyric: String? {
         LyricsParser.activeLine(
             in: lyricLines,
-            at: player.elapsed,
-            duration: player.duration
+            at: playbackProgress.elapsed,
+            duration: playbackProgress.duration
         )?.text
     }
 

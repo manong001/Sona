@@ -27,11 +27,24 @@ enum PlaybackMode: CaseIterable {
 }
 
 @MainActor
+final class PlaybackProgress: ObservableObject {
+    @Published fileprivate(set) var elapsed: Double = 0
+    @Published fileprivate(set) var duration: Double = 0
+
+    fileprivate func update(elapsed: Double? = nil, duration: Double? = nil) {
+        if let elapsed {
+            self.elapsed = elapsed
+        }
+        if let duration {
+            self.duration = duration
+        }
+    }
+}
+
+@MainActor
 final class PlayerStore: ObservableObject {
     @Published private(set) var currentTrack: Track?
     @Published private(set) var isPlaying = false
-    @Published private(set) var elapsed: Double = 0
-    @Published private(set) var duration: Double = 0
     @Published private(set) var playbackMode: PlaybackMode = .sequential
     @Published private(set) var playbackQueue: [Track] = []
     @Published private(set) var queueTitle = "随机播放"
@@ -39,6 +52,10 @@ final class PlayerStore: ObservableObject {
     @Published private(set) var queueErrorMessage: String?
     @Published private(set) var queueType = "RANDOM"
     @Published private(set) var queueContextID: String?
+    let progress = PlaybackProgress()
+
+    var elapsed: Double { progress.elapsed }
+    var duration: Double { progress.duration }
 
     private let player = AVPlayer()
     private var activeAPI = APIClient.shared
@@ -50,6 +67,8 @@ final class PlayerStore: ObservableObject {
     private var audioInterruptionObserver: NSObjectProtocol?
     private var audioRouteChangeObserver: NSObjectProtocol?
     private var playbackResourceLoader: PlaybackCacheResourceLoader?
+    private var stalledRecoveryTask: Task<Void, Never>?
+    private var currentItemNeedsReload = false
     private var resumeAfterInterruption = false
     private var fallbackTrackID: String?
     private var artworkTask: Task<Void, Never>?
@@ -107,6 +126,7 @@ final class PlayerStore: ObservableObject {
         stateRestoreTask?.cancel()
         stateSaveTask?.cancel()
         carPlayPlaybackTask?.cancel()
+        stalledRecoveryTask?.cancel()
         playbackResourceLoader?.cancelAll()
     }
 
@@ -190,30 +210,42 @@ final class PlayerStore: ObservableObject {
         _ track: Track,
         streamURLOverride: String? = nil,
         autoplay: Bool = true,
-        persistState: Bool = true
+        persistState: Bool = true,
+        usePlaybackCache: Bool = true
     ) {
         if streamURLOverride == nil {
             fallbackTrackID = nil
         }
         submitCurrentPlayback()
+        stalledRecoveryTask?.cancel()
+        stalledRecoveryTask = nil
         playbackResourceLoader?.cancelAll()
         playbackResourceLoader = nil
+        currentItemNeedsReload = false
         let item: AVPlayerItem
         if let offlineURL = offlineURLProvider?(track) {
             item = AVPlayerItem(url: offlineURL)
         } else {
             let streamURL = activeAPI.url(for: streamURLOverride ?? track.streamURL)
-            let resourceLoader = PlaybackCacheResourceLoader(originalURL: streamURL)
-            playbackResourceLoader = resourceLoader
-            item = AVPlayerItem(asset: resourceLoader.makeAsset())
+            if usePlaybackCache {
+                let resourceLoader = PlaybackCacheResourceLoader(originalURL: streamURL)
+                playbackResourceLoader = resourceLoader
+                item = AVPlayerItem(asset: resourceLoader.makeAsset())
+            } else {
+                let cookies = HTTPCookieStorage.shared.cookies(for: streamURL) ?? []
+                let asset = AVURLAsset(
+                    url: streamURL,
+                    options: [AVURLAssetHTTPCookiesKey: cookies]
+                )
+                item = AVPlayerItem(asset: asset)
+            }
         }
         item.preferredForwardBufferDuration = 30
         item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         player.replaceCurrentItem(with: item)
         currentTrack = track
         refreshRemoteFavoriteState()
-        elapsed = 0
-        duration = Double(track.durationMs) / 1_000
+        progress.update(elapsed: 0, duration: Double(track.durationMs) / 1_000)
         listenedSeconds = 0
         lastSavedProgressBucket = -1
         if autoplay {
@@ -227,6 +259,25 @@ final class PlayerStore: ObservableObject {
         if persistState {
             self.persistState()
         }
+    }
+
+    private func restartPlayback(
+        _ track: Track,
+        at seconds: Double,
+        streamURLOverride: String? = nil,
+        usePlaybackCache: Bool
+    ) {
+        queueErrorMessage = nil
+        startPlayback(
+            track,
+            streamURLOverride: streamURLOverride,
+            persistState: false,
+            usePlaybackCache: usePlaybackCache
+        )
+        if seconds > 0 {
+            seek(to: seconds, persistState: false)
+        }
+        persistState()
     }
 
     func previous() {
@@ -337,6 +388,8 @@ final class PlayerStore: ObservableObject {
         stateRestoreTask?.cancel()
         stateSaveTask?.cancel()
         carPlayPlaybackTask?.cancel()
+        stalledRecoveryTask?.cancel()
+        stalledRecoveryTask = nil
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
         playbackQueue = []
@@ -349,9 +402,9 @@ final class PlayerStore: ObservableObject {
         queueContextID = nil
         offlineURLProvider = nil
         listenedSeconds = 0
-        elapsed = 0
-        duration = 0
+        progress.update(elapsed: 0, duration: 0)
         isPlaying = false
+        currentItemNeedsReload = false
         resumeAfterInterruption = false
         nowPlayingArtwork = nil
         lastSavedProgressBucket = -1
@@ -368,6 +421,14 @@ final class PlayerStore: ObservableObject {
     }
 
     private func resume(persistState: Bool = true) {
+        if currentItemNeedsReload, let currentTrack {
+            restartPlayback(
+                currentTrack,
+                at: elapsed,
+                usePlaybackCache: false
+            )
+            return
+        }
         activateAudioSession()
         player.play()
         isPlaying = true
@@ -378,6 +439,8 @@ final class PlayerStore: ObservableObject {
     }
 
     private func pause() {
+        stalledRecoveryTask?.cancel()
+        stalledRecoveryTask = nil
         player.pause()
         isPlaying = false
         resumeAfterInterruption = false
@@ -387,7 +450,7 @@ final class PlayerStore: ObservableObject {
 
     func seek(to seconds: Double, persistState: Bool = true) {
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
-        elapsed = seconds
+        progress.update(elapsed: seconds)
         updateNowPlaying()
         if persistState {
             self.persistState()
@@ -413,7 +476,7 @@ final class PlayerStore: ObservableObject {
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
-                self?.elapsed = max(0, time.seconds.isFinite ? time.seconds : 0)
+                self?.progress.update(elapsed: max(0, time.seconds.isFinite ? time.seconds : 0))
                 if self?.isPlaying == true {
                     self?.listenedSeconds += 0.5
                 }
@@ -449,13 +512,28 @@ final class PlayerStore: ObservableObject {
                       let item = notification.object as? AVPlayerItem,
                       item === self.player.currentItem,
                       let track = self.currentTrack else { return }
+                let failedAt = self.elapsed
+                if self.playbackResourceLoader != nil {
+                    self.restartPlayback(
+                        track,
+                        at: failedAt,
+                        usePlaybackCache: false
+                    )
+                    return
+                }
                 guard self.fallbackTrackID != track.id else {
                     self.isPlaying = false
+                    self.currentItemNeedsReload = true
                     self.queueErrorMessage = "本地与在线兜底均无法播放"
                     return
                 }
                 self.fallbackTrackID = track.id
-                self.startPlayback(track, streamURLOverride: "/api/v1/tracks/\(track.id)/fallback-stream")
+                self.restartPlayback(
+                    track,
+                    at: failedAt,
+                    streamURLOverride: "/api/v1/tracks/\(track.id)/fallback-stream",
+                    usePlaybackCache: false
+                )
             }
         }
     }
@@ -472,6 +550,24 @@ final class PlayerStore: ObservableObject {
                       let item = notification.object as? AVPlayerItem,
                       item === self.player.currentItem else { return }
                 self.player.play()
+                self.stalledRecoveryTask?.cancel()
+                let stalledAt = self.elapsed
+                self.stalledRecoveryTask = Task { [weak self, weak item] in
+                    try? await Task.sleep(for: .seconds(5))
+                    guard !Task.isCancelled,
+                          let self,
+                          let item,
+                          item === self.player.currentItem,
+                          self.isPlaying,
+                          self.player.timeControlStatus != .playing,
+                          self.elapsed < stalledAt + 0.5,
+                          let track = self.currentTrack else { return }
+                    self.restartPlayback(
+                        track,
+                        at: stalledAt,
+                        usePlaybackCache: false
+                    )
+                }
             }
         }
     }
@@ -807,7 +903,7 @@ final class PlayerStore: ObservableObject {
             }
             if currentTrack?.id == track.id {
                 currentTrack = track
-                duration = Double(track.durationMs) / 1_000
+                progress.update(duration: Double(track.durationMs) / 1_000)
             } else {
                 startPlayback(track, autoplay: false, persistState: false)
             }

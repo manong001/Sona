@@ -17,6 +17,8 @@ struct SettingsView: View {
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
+    @AppStorage(SonaHaptics.preferenceKey) private var hapticStrength =
+        SonaHapticStrength.medium.rawValue
     @State private var appIconPreference: String?
     @State private var showsImporter = false
     @State private var importMessage: String?
@@ -189,6 +191,11 @@ struct SettingsView: View {
                     Picker("迷你播放器", selection: $miniPlayerMode) {
                         Text("悬浮拖动").tag("floating")
                         Text("固定在导航栏上方").tag("fixed")
+                    }
+                    Picker("按键震感", selection: $hapticStrength) {
+                        ForEach(SonaHapticStrength.allCases) { strength in
+                            Text(strength.title).tag(strength.rawValue)
+                        }
                     }
                     Toggle("儿童模式", isOn: $childMode)
                     if childMode {
@@ -874,6 +881,7 @@ private struct AppShareSheet: UIViewControllerRepresentable {
 private struct DuplicateTrackManagementView: View {
     @EnvironmentObject private var mainPlayer: PlayerStore
     @State private var groups: [DuplicateTrackGroup] = []
+    @State private var query = ""
     @State private var replacementSource: DuplicateReplacementSource?
     @State private var pendingReplacement: PendingDuplicateReplacement?
     @State private var previewPlayer: AVPlayer?
@@ -881,6 +889,20 @@ private struct DuplicateTrackManagementView: View {
     @State private var resumeMainPlayerAfterPreview = false
     @State private var errorMessage: String?
     @State private var isLoading = false
+
+    private var filteredGroups: [DuplicateTrackGroup] {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return groups }
+        return groups.filter { group in
+            group.artist.localizedCaseInsensitiveContains(value)
+                || group.title.localizedCaseInsensitiveContains(value)
+                || group.tracks.contains { item in
+                    item.track.album.localizedCaseInsensitiveContains(value)
+                        || item.fileName.localizedCaseInsensitiveContains(value)
+                        || item.path.localizedCaseInsensitiveContains(value)
+                }
+        }
+    }
 
     var body: some View {
         List {
@@ -892,72 +914,37 @@ private struct DuplicateTrackManagementView: View {
                 )
                 .desktopEmptyState()
                 .listRowBackground(Color.clear)
+            } else if filteredGroups.isEmpty && !isLoading {
+                ContentUnavailableView(
+                    "没有找到“\(query)”",
+                    systemImage: "magnifyingglass",
+                    description: Text("试试歌曲、艺人、专辑或文件路径。")
+                )
+                .desktopEmptyState()
+                .listRowBackground(Color.clear)
             }
 
-            ForEach(groups) { group in
+            ForEach(filteredGroups) { group in
                 Section {
                     ForEach(group.tracks) { item in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.track.album)
-                                        .font(.headline)
-                                    Text("\(item.track.qualityText) · \(item.track.durationText)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text(ByteCountFormatter.string(
-                                        fromByteCount: item.fileSize, countStyle: .file
-                                    ))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button {
-                                    togglePreview(item.track)
-                                } label: {
-                                    Label(
-                                        previewTrackID == item.track.id ? "停止" : "试听",
-                                        systemImage: previewTrackID == item.track.id ? "stop.fill" : "play.fill"
-                                    )
-                                }
-                                .buttonStyle(.borderless)
-                                Button("替换并删除", role: .destructive) {
-                                    replacementSource = DuplicateReplacementSource(
-                                        source: item,
-                                        targets: group.tracks.filter { $0.id != item.id }
-                                    )
-                                }
-                            }
-
-                            Text(item.path)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-
-                            if item.users.isEmpty {
-                                Label("没有用户引用", systemImage: "person.slash")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("使用中的用户")
-                                        .font(.caption.weight(.semibold))
-                                    ForEach(item.users) { usage in
-                                        Text(usageDescription(usage))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
+                        duplicateItemCard(item, in: group)
+                            .listRowInsets(EdgeInsets(
+                                top: 6, leading: 16, bottom: 6, trailing: 16
+                            ))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
                 } header: {
-                    Text("\(group.artist) · \(group.title)（\(group.tracks.count) 个文件）")
+                    duplicateGroupHeader(group)
                 }
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.sonaBackground)
         .navigationTitle("歌曲去重")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, prompt: "歌曲、艺人、专辑或路径")
         .overlay {
             if isLoading { ProgressView("正在检查重复歌曲…") }
         }
@@ -1015,6 +1002,125 @@ private struct DuplicateTrackManagementView: View {
                     .padding(8)
                     .background(.red, in: Capsule())
                     .padding(.bottom, 8)
+            }
+        }
+    }
+
+    private func duplicateGroupHeader(_ group: DuplicateTrackGroup) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "rectangle.on.rectangle")
+                .foregroundStyle(Color.sonaGreen)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .textCase(nil)
+                Text(group.artist)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(nil)
+            }
+            Spacer()
+            Text("\(group.tracks.count) 个文件")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.sonaGreen)
+                .padding(.horizontal, 9)
+                .frame(height: 26)
+                .background(Color.sonaGreen.opacity(0.12), in: Capsule())
+                .textCase(nil)
+        }
+        .padding(.top, 8)
+    }
+
+    private func duplicateItemCard(
+        _ item: DuplicateTrackItem,
+        in group: DuplicateTrackGroup
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.track.album.isEmpty ? "未知专辑" : item.track.album)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(item.fileName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text([
+                    item.track.qualityText,
+                    item.track.durationText,
+                    ByteCountFormatter.string(
+                        fromByteCount: item.fileSize,
+                        countStyle: .file
+                    ),
+                ].joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+                    .lineLimit(2)
+            }
+
+            Label {
+                Text(item.path)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            } icon: {
+                Image(systemName: "folder")
+                    .foregroundStyle(Color.sonaSecondaryText)
+            }
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+
+            usageView(item.users)
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            HStack(spacing: 10) {
+                Button {
+                    togglePreview(item.track)
+                } label: {
+                    Label(
+                        previewTrackID == item.track.id ? "停止试听" : "试听",
+                        systemImage: previewTrackID == item.track.id ? "stop.fill" : "play.fill"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                Button(role: .destructive) {
+                    replacementSource = DuplicateReplacementSource(
+                        source: item,
+                        targets: group.tracks.filter { $0.id != item.id }
+                    )
+                } label: {
+                    Label("替换并删除", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            }
+        }
+        .padding(14)
+        .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private func usageView(_ users: [DuplicateTrackUsage]) -> some View {
+        if users.isEmpty {
+            Label("没有用户引用", systemImage: "person.slash")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("\(users.count) 位用户正在使用", systemImage: "person.2.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.sonaGreen)
+                ForEach(users) { usage in
+                    Text(usageDescription(usage))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
     }

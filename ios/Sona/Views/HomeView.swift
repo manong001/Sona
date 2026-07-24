@@ -1,6 +1,6 @@
 import SwiftUI
 
-private let favoriteRotationInterval: Duration = .seconds(5)
+private let favoriteRotationInterval: Duration = .seconds(30)
 
 struct HomeView: View {
     @EnvironmentObject private var session: SessionStore
