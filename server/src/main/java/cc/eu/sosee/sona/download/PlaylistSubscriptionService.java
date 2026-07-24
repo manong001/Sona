@@ -275,6 +275,19 @@ class PlaylistSubscriptionService {
         if (candidate == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "远端歌单已变化，请先重新同步");
         }
+        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
+        var session = matcher.open();
+        var match = subscription.strictMode()
+            ? session.match(candidate, usedTrackIds)
+            : session.match(candidate, usedTrackIds, false);
+        var localTrackId = match.exactTrackId().orElse(null);
+        if (localTrackId != null
+            && subscriptions.selectMatch(userId, id, itemKey, localTrackId)) {
+            playlistImportService.replaceTracks(
+                userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
+            );
+            return subscriptions.find(userId, id).orElseThrow();
+        }
         var queued = subscription.strictMode()
             ? downloadService.queueForPlaylist(
                 candidate, subscription.username(), subscription.playlistId()

@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
@@ -27,6 +28,9 @@ class PlaylistSubscriptionMatcher {
     private static final Pattern ARTIST_SEPARATOR = Pattern.compile(
         "(?i)\\s*(?:、|/|,|，|&|＆|;|；|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*"
     );
+    private static final Pattern BRACKETED_CONTENT = Pattern.compile(
+        "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*]|【[^【】]*】"
+    );
     private static final Set<String> VERSION_MARKERS = Set.of(
         "live", "remix", "instrumental", "acoustic", "伴奏", "现场", "翻唱", "纯音乐"
     );
@@ -39,13 +43,17 @@ class PlaylistSubscriptionMatcher {
 
     Session open() {
         var tracks = jdbcClient.sql("""
-                SELECT id, title, artist, album, duration_ms
+                SELECT id, title, artist, album, duration_ms, codec,
+                       sample_rate, bit_depth, file_size
                 FROM tracks ORDER BY updated_at DESC, id
                 """)
             .query((resultSet, rowNumber) -> new LocalTrack(
                 resultSet.getString("id"), resultSet.getString("title"),
                 resultSet.getString("artist"), resultSet.getString("album"),
-                resultSet.getLong("duration_ms")
+                resultSet.getLong("duration_ms"), resultSet.getString("codec"),
+                (Integer) resultSet.getObject("sample_rate"),
+                (Integer) resultSet.getObject("bit_depth"),
+                resultSet.getLong("file_size")
             ))
             .list();
         return new Session(tracks);
@@ -82,14 +90,19 @@ class PlaylistSubscriptionMatcher {
 
         private final List<LocalTrack> tracks;
         private final Map<String, List<LocalTrack>> normalizedTitles = new HashMap<>();
+        private final Map<String, List<LocalTrack>> normalizedBaseTitles = new HashMap<>();
         private final Set<String> trackIds;
 
         private Session(List<LocalTrack> tracks) {
-            this.tracks = tracks;
+            this.tracks = tracks.stream().sorted(localQualityComparator()).toList();
             this.trackIds = tracks.stream().map(LocalTrack::trackId).collect(java.util.stream.Collectors.toSet());
-            for (var track : tracks) {
+            for (var track : this.tracks) {
                 normalizedTitles.computeIfAbsent(
                     normalizedText(track.title()), ignored -> new ArrayList<>()
+                )
+                    .add(track);
+                normalizedBaseTitles.computeIfAbsent(
+                    normalizedBaseTitle(track.title()), ignored -> new ArrayList<>()
                 )
                     .add(track);
             }
@@ -110,10 +123,10 @@ class PlaylistSubscriptionMatcher {
         MatchResult match(
             DownloadCandidate candidate, Set<String> excludedTrackIds, boolean strictMode
         ) {
-            var automaticTrack = normalizedTitles
-                .getOrDefault(normalizedText(candidate.title()), List.of()).stream()
+            var automaticTrack = automaticCandidates(candidate)
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
-                .filter(track -> isAutomaticMatch(candidate, track, strictMode))
+                .filter(track -> isAutomaticMatch(candidate, track, strictMode)
+                    || isMetadataEquivalentMatch(candidate, track, strictMode))
                 .findFirst();
             if (automaticTrack.isPresent()) {
                 return new MatchResult(Optional.of(automaticTrack.get().trackId()), List.of());
@@ -154,9 +167,10 @@ class PlaylistSubscriptionMatcher {
             if (title.isEmpty()) {
                 return Optional.empty();
             }
-            return normalizedTitles.getOrDefault(title, List.of()).stream()
+            return automaticCandidates(candidate)
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
-                .filter(track -> isAutomaticMatch(candidate, track, strictMode))
+                .filter(track -> isAutomaticMatch(candidate, track, strictMode)
+                    || isMetadataEquivalentMatch(candidate, track, strictMode))
                 .map(track -> new ScoredTrack(track, strictScore(candidate, track)))
                 .sorted(Comparator.comparingDouble(ScoredTrack::score).reversed()
                     .thenComparing(value -> value.track().trackId()))
@@ -166,6 +180,19 @@ class PlaylistSubscriptionMatcher {
                     value.track().album(), value.track().durationMs(),
                     (int) Math.round(value.score())
                 ));
+        }
+
+        private Stream<LocalTrack> automaticCandidates(DownloadCandidate candidate) {
+            return Stream.concat(
+                    normalizedTitles.getOrDefault(
+                        normalizedText(candidate.title()), List.of()
+                    ).stream(),
+                    normalizedBaseTitles.getOrDefault(
+                        normalizedBaseTitle(candidate.title()), List.of()
+                    ).stream()
+                )
+                .distinct()
+                .sorted(localQualityComparator());
         }
     }
 
@@ -201,6 +228,22 @@ class PlaylistSubscriptionMatcher {
     ) {
         return normalizedText(candidate.title()).equals(normalizedText(track.title()))
             && artistsMatch(candidate.artist(), track.artist(), strictMode);
+    }
+
+    private boolean isMetadataEquivalentMatch(
+        DownloadCandidate candidate, LocalTrack track, boolean strictMode
+    ) {
+        if (candidate.durationMs() == null || candidate.durationMs() <= 0
+            || track.durationMs() <= 0
+            || Math.abs(candidate.durationMs() - track.durationMs())
+                > MAX_AUTOMATIC_DURATION_DIFFERENCE_MS) {
+            return false;
+        }
+        var candidateTitle = normalizedBaseTitle(candidate.title());
+        return !candidateTitle.isEmpty()
+            && candidateTitle.equals(normalizedBaseTitle(track.title()))
+            && artistsMatch(candidate.artist(), track.artist(), strictMode)
+            && !hasVersionMismatch(candidate.title(), track.title());
     }
 
     private static boolean artistsMatch(String source, String local, boolean strictMode) {
@@ -271,6 +314,16 @@ class PlaylistSubscriptionMatcher {
         return normalizedText(normalized);
     }
 
+    private static String normalizedBaseTitle(String value) {
+        var result = value == null ? "" : value;
+        String previous;
+        do {
+            previous = result;
+            result = BRACKETED_CONTENT.matcher(result).replaceAll(" ");
+        } while (!result.equals(previous));
+        return normalizedText(result);
+    }
+
     private static boolean hasMarker(String title, String marker) {
         if (marker.chars().allMatch(character -> character < 128)) {
             return Pattern.compile("\\b" + Pattern.quote(marker) + "\\b").matcher(title).find();
@@ -321,6 +374,34 @@ class PlaylistSubscriptionMatcher {
         return 1.0 - (double) previous[right.length()] / Math.max(left.length(), right.length());
     }
 
+    private static Comparator<LocalTrack> localQualityComparator() {
+        return Comparator.comparingInt((LocalTrack track) -> codecQuality(track.codec()))
+            .thenComparingInt(track -> track.bitDepth() == null ? 0 : track.bitDepth())
+            .thenComparingInt(track -> track.sampleRate() == null ? 0 : track.sampleRate())
+            .thenComparingLong(LocalTrack::fileSize)
+            .reversed()
+            .thenComparing(LocalTrack::trackId);
+    }
+
+    private static int codecQuality(String codec) {
+        var value = codec == null ? "" : codec.toUpperCase(Locale.ROOT);
+        if (value.contains("DSD") || value.contains("DSF") || value.contains("DFF")) {
+            return 5;
+        }
+        if (value.contains("FLAC") || value.contains("ALAC") || value.contains("APE")
+            || value.contains("WAV") || value.contains("AIFF") || value.contains("WV")) {
+            return 4;
+        }
+        if (value.contains("OPUS") || value.contains("AAC") || value.contains("OGG")
+            || value.contains("M4A")) {
+            return 2;
+        }
+        if (value.contains("MP3") || value.contains("WMA")) {
+            return 1;
+        }
+        return 0;
+    }
+
     record MatchResult(Optional<String> exactTrackId, List<Suggestion> suggestions) {
     }
 
@@ -330,7 +411,8 @@ class PlaylistSubscriptionMatcher {
     }
 
     private record LocalTrack(
-        String trackId, String title, String artist, String album, long durationMs
+        String trackId, String title, String artist, String album, long durationMs,
+        String codec, Integer sampleRate, Integer bitDepth, long fileSize
     ) {
     }
 

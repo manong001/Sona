@@ -104,7 +104,7 @@ class DuplicateTrackService {
             .param("target", targetId).param("source", sourceId).update();
         jdbcClient.sql("""
                 UPDATE playlist_subscription_items
-                SET matched_track_id = :target
+                SET matched_track_id = :target, state = 'MATCHED'
                 WHERE matched_track_id = :source
                 """).param("target", targetId).param("source", sourceId).update();
         jdbcClient.sql("UPDATE playlist_match_choices SET track_id = :target WHERE track_id = :source")
