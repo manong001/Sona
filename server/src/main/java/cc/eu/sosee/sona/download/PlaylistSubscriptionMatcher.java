@@ -227,7 +227,34 @@ class PlaylistSubscriptionMatcher {
         DownloadCandidate candidate, LocalTrack track, boolean strictMode
     ) {
         return normalizedText(candidate.title()).equals(normalizedText(track.title()))
-            && artistsMatch(candidate.artist(), track.artist(), strictMode);
+            && (artistsMatch(candidate.artist(), track.artist(), strictMode)
+                || remoteAddsCollaboratingArtists(candidate, track));
+    }
+
+    private static boolean remoteAddsCollaboratingArtists(
+        DownloadCandidate candidate, LocalTrack track
+    ) {
+        var remoteArtists = normalizedArtistSet(candidate.artist());
+        var localArtists = normalizedArtistSet(track.artist());
+        return candidate.durationMs() != null
+            && candidate.durationMs() > 0
+            && track.durationMs() > 0
+            && Math.abs(candidate.durationMs() - track.durationMs())
+                <= MAX_AUTOMATIC_DURATION_DIFFERENCE_MS
+            && remoteArtists.size() > localArtists.size()
+            && remoteArtists.containsAll(localArtists)
+            && !localArtists.isEmpty()
+            && normalizedPrimaryArtist(candidate.artist())
+                .equals(normalizedPrimaryArtist(track.artist()));
+    }
+
+    private static String normalizedPrimaryArtist(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return normalizedText(ARTIST_SEPARATOR.split(
+            Normalizer.normalize(value, Normalizer.Form.NFKC), 2
+        )[0]);
     }
 
     private boolean isMetadataEquivalentMatch(

@@ -7,7 +7,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -120,13 +119,10 @@ class PlaylistSubscriptionService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         var session = matcher.open();
         var storedItems = subscriptions.findItems(subscription.id());
-        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
         return storedItems.stream()
             .map(item -> {
-                var excludedTrackIds = new HashSet<>(usedTrackIds);
-                excludedTrackIds.remove(item.matchedTrackId());
                 var suggestions = item.matchedTrackId() == null && "SUGGESTED".equals(item.state())
-                    ? session.match(asCandidate(item), excludedTrackIds).suggestions()
+                    ? session.match(asCandidate(item), Set.of()).suggestions()
                     : List.<PlaylistSubscriptionMatcher.Suggestion>of();
                 return new ItemDetail(
                     item.itemKey(), item.position(), item.title(), item.artist(), item.album(),
@@ -148,18 +144,16 @@ class PlaylistSubscriptionService {
         }
         var end = Math.min(offset + limit, suggested.size());
         var session = matcher.open();
-        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
         var page = new ArrayList<ItemDetail>();
         var matchedAny = false;
         for (var item : suggested.subList(offset, end)) {
             var match = subscription.strictMode()
-                ? session.match(asCandidate(item), usedTrackIds)
-                : session.match(asCandidate(item), usedTrackIds, false);
+                ? session.match(asCandidate(item), Set.of())
+                : session.match(asCandidate(item), Set.of(), false);
             var exactTrackId = match.exactTrackId().orElse(null);
             if (exactTrackId != null && subscriptions.selectMatch(
                 userId, id, item.itemKey(), exactTrackId
             )) {
-                usedTrackIds.add(exactTrackId);
                 matchedAny = true;
                 continue;
             }
@@ -181,19 +175,17 @@ class PlaylistSubscriptionService {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         var session = matcher.open();
-        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
         var matchedCount = 0;
         for (var item : subscriptions.findItems(subscription.id())) {
             if (item.matchedTrackId() != null || !"SUGGESTED".equals(item.state())) {
                 continue;
             }
             var best = subscription.strictMode()
-                ? session.bestStrictMatch(asCandidate(item), usedTrackIds)
-                : session.bestStrictMatch(asCandidate(item), usedTrackIds, false);
+                ? session.bestStrictMatch(asCandidate(item), Set.of())
+                : session.bestStrictMatch(asCandidate(item), Set.of(), false);
             if (best.isPresent() && subscriptions.selectMatch(
                 userId, id, item.itemKey(), best.get().trackId()
             )) {
-                usedTrackIds.add(best.get().trackId());
                 matchedCount++;
             }
         }
@@ -275,11 +267,10 @@ class PlaylistSubscriptionService {
         if (candidate == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "远端歌单已变化，请先重新同步");
         }
-        var usedTrackIds = new HashSet<>(subscriptions.matchedTrackIds(subscription.id()));
         var session = matcher.open();
         var match = subscription.strictMode()
-            ? session.match(candidate, usedTrackIds)
-            : session.match(candidate, usedTrackIds, false);
+            ? session.match(candidate, Set.of())
+            : session.match(candidate, Set.of(), false);
         var localTrackId = match.exactTrackId().orElse(null);
         if (localTrackId != null
             && subscriptions.selectMatch(userId, id, itemKey, localTrackId)) {
@@ -406,7 +397,6 @@ class PlaylistSubscriptionService {
                 ));
             var matchSession = matcher.open();
             var occurrences = new HashMap<String, Integer>();
-            var usedTrackIds = new HashSet<String>();
             for (var position = 0; position < preview.items().size(); position++) {
                 var candidate = preview.items().get(position);
                 var keyBase = itemKeyBase(candidate);
@@ -415,20 +405,18 @@ class PlaylistSubscriptionService {
                 var existing = existingItems.get(itemKey);
                 String matchedTrackId = null;
                 List<PlaylistSubscriptionMatcher.Suggestion> suggestions = List.of();
-                if (existing != null && matchSession.containsTrack(existing.matchedTrackId())
-                    && !usedTrackIds.contains(existing.matchedTrackId())) {
+                if (existing != null && matchSession.containsTrack(existing.matchedTrackId())) {
                     matchedTrackId = existing.matchedTrackId();
                 } else {
                     var rememberedTrackId = subscriptions.findRememberedMatch(
                         subscription.userId(), candidate.title(), candidate.artist()
                     ).orElse(null);
-                    if (matchSession.containsTrack(rememberedTrackId)
-                        && !usedTrackIds.contains(rememberedTrackId)) {
+                    if (matchSession.containsTrack(rememberedTrackId)) {
                         matchedTrackId = rememberedTrackId;
                     } else {
                         var match = subscription.strictMode()
-                            ? matchSession.match(candidate, usedTrackIds)
-                            : matchSession.match(candidate, usedTrackIds, false);
+                            ? matchSession.match(candidate, Set.of())
+                            : matchSession.match(candidate, Set.of(), false);
                         matchedTrackId = match.exactTrackId().orElse(null);
                         suggestions = match.suggestions();
                     }
@@ -436,7 +424,6 @@ class PlaylistSubscriptionService {
                 var state = "MISSING";
                 if (matchedTrackId != null) {
                     matchedTrackIds.add(matchedTrackId);
-                    usedTrackIds.add(matchedTrackId);
                     state = "MATCHED";
                 } else if (!suggestions.isEmpty()) {
                     state = "SUGGESTED";

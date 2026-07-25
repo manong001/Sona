@@ -157,12 +157,6 @@ class PlaylistSubscriptionRepository {
                   AND EXISTS (SELECT 1 FROM playlist_subscriptions
                       WHERE id = :subscriptionId AND user_id = :userId)
                   AND EXISTS (SELECT 1 FROM tracks WHERE id = :trackId)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM playlist_subscription_items other
-                      WHERE other.subscription_id = :subscriptionId
-                        AND other.item_key <> :itemKey
-                        AND other.matched_track_id = :trackId
-                  )
                 """)
             .param("trackId", trackId)
             .param("subscriptionId", subscriptionId)
