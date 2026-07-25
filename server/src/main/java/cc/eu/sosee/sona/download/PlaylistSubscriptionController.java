@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.List;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
@@ -66,6 +67,45 @@ class PlaylistSubscriptionController {
         @PathVariable String id
     ) {
         return service.downloadMissing(user.id(), id);
+    }
+
+    @GetMapping("/{id}/versions")
+    List<PlaylistSubscriptionRepository.Version> versions(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return service.versions(user.id(), id);
+    }
+
+    @PostMapping("/{id}/versions/{versionNumber}/select")
+    PlaylistSubscriptionRepository.Subscription selectVersion(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @PathVariable @Min(1) int versionNumber
+    ) {
+        return service.selectVersion(user.id(), id, versionNumber);
+    }
+
+    @PostMapping("/{id}/versions/follow-latest")
+    PlaylistSubscriptionRepository.Subscription followLatest(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id
+    ) {
+        return service.followLatest(user.id(), id);
+    }
+
+    @GetMapping(
+        value = "/{id}/versions/{versionNumber}/artwork",
+        produces = MediaType.IMAGE_JPEG_VALUE
+    )
+    ResponseEntity<byte[]> artwork(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @PathVariable @Min(1) int versionNumber
+    ) {
+        return ResponseEntity.ok()
+            .contentType(MediaType.IMAGE_JPEG)
+            .body(service.artwork(user.id(), id, versionNumber));
     }
 
     @GetMapping("/{id}/items")

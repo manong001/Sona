@@ -6,7 +6,7 @@ struct SearchView: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
-    @State private var query = ""
+    @SceneStorage("search.query") private var query = ""
     @State private var onlineCandidates: [DownloadCandidate] = []
     @State private var queuedCandidateIDs: Set<String> = []
     @State private var candidateStates: [String: MusicDownloadState] = [:]
@@ -161,22 +161,18 @@ struct SearchView: View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 22, weight: .semibold))
-            ZStack(alignment: .leading) {
-                if query.isEmpty {
-                    Text("想听什么？")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(Color.black.opacity(0.5))
-                        .padding(.leading, isSearchFocused ? 6 : 0)
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: $query)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.black)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($isSearchFocused)
-                    .accessibilityLabel("搜索")
-            }
+            TextField(
+                "",
+                text: $query,
+                prompt: Text(isSearchFocused ? "\u{2009}\u{2009}想听什么？" : "想听什么？")
+                    .foregroundStyle(Color.black.opacity(0.5))
+            )
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(.black)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .focused($isSearchFocused)
+            .accessibilityLabel("搜索")
             if !query.isEmpty {
                 Button {
                     query = ""

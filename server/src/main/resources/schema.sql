@@ -173,11 +173,15 @@ CREATE TABLE IF NOT EXISTS playlist_subscriptions (
     source_url TEXT NOT NULL,
     name TEXT NOT NULL,
     artwork_url TEXT,
+    pending_artwork_hash TEXT,
     pool_type TEXT NOT NULL DEFAULT 'NORMAL',
     auto_download INTEGER NOT NULL DEFAULT 0,
     strict_mode INTEGER NOT NULL DEFAULT 1,
     sync_interval_hours INTEGER NOT NULL DEFAULT 24,
     enabled INTEGER NOT NULL DEFAULT 1,
+    latest_version_id TEXT,
+    selected_version_id TEXT,
+    follow_latest INTEGER NOT NULL DEFAULT 1,
     last_synced_at INTEGER,
     last_error TEXT,
     created_at INTEGER NOT NULL,
@@ -203,6 +207,37 @@ CREATE TABLE IF NOT EXISTS playlist_subscription_items (
     PRIMARY KEY (subscription_id, item_key),
     FOREIGN KEY (subscription_id) REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS playlist_subscription_versions (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    artwork_hash TEXT,
+    content_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (subscription_id, version_number),
+    FOREIGN KEY (subscription_id) REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_playlist_subscription_versions
+    ON playlist_subscription_versions(subscription_id, version_number DESC);
+
+CREATE TABLE IF NOT EXISTS playlist_subscription_version_items (
+    version_id TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT,
+    matched_track_id TEXT,
+    PRIMARY KEY (version_id, item_key),
+    FOREIGN KEY (version_id) REFERENCES playlist_subscription_versions(id) ON DELETE CASCADE,
+    FOREIGN KEY (matched_track_id) REFERENCES tracks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_playlist_subscription_version_items
+    ON playlist_subscription_version_items(version_id, position);
 
 CREATE TABLE IF NOT EXISTS playlist_match_choices (
     user_id TEXT NOT NULL,

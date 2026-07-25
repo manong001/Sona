@@ -123,7 +123,10 @@ final class UserPreferencesStore: ObservableObject {
             hapticStrength: defaults.string(forKey: SonaHaptics.preferenceKey)
                 ?? SonaHapticStrength.medium.rawValue,
             appIcon: defaults.string(forKey: "appIconPreference")
-                ?? (UIApplication.shared.alternateIconName == nil ? "girl" : "spotify")
+                ?? (UIApplication.shared.alternateIconName == nil ? "girl" : "spotify"),
+            playlistVersionManagementEnabled: defaults.bool(
+                forKey: "playlistVersionManagementEnabled"
+            )
         )
     }
 
@@ -136,6 +139,10 @@ final class UserPreferencesStore: ObservableObject {
         defaults.set(preferences.miniPlayerY, forKey: "miniPlayerY")
         defaults.set(preferences.hapticStrength, forKey: SonaHaptics.preferenceKey)
         defaults.set(preferences.appIcon, forKey: "appIconPreference")
+        defaults.set(
+            preferences.playlistVersionManagementEnabled,
+            forKey: "playlistVersionManagementEnabled"
+        )
         isApplyingRemote = false
 
         guard UIApplication.shared.supportsAlternateIcons else { return }

@@ -1,8 +1,12 @@
 package cc.eu.sosee.sona.download;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -150,7 +154,7 @@ class PlaylistSubscriptionRepository {
     }
 
     boolean selectMatch(String userId, String subscriptionId, String itemKey, String trackId) {
-        return jdbcClient.sql("""
+        var selected = jdbcClient.sql("""
                 UPDATE playlist_subscription_items
                 SET matched_track_id = :trackId, state = 'MATCHED'
                 WHERE subscription_id = :subscriptionId AND item_key = :itemKey
@@ -163,6 +167,10 @@ class PlaylistSubscriptionRepository {
             .param("itemKey", itemKey)
             .param("userId", userId)
             .update() == 1;
+        if (selected) {
+            updateVersionMatch(subscriptionId, itemKey, trackId);
+        }
+        return selected;
     }
 
     Optional<String> findRememberedMatch(String userId, String title, String artist) {
@@ -202,7 +210,7 @@ class PlaylistSubscriptionRepository {
     boolean bindDownloadedTrack(
         String playlistId, String title, String artist, String trackId
     ) {
-        return jdbcClient.sql("""
+        var bound = jdbcClient.sql("""
                 UPDATE playlist_subscription_items
                 SET matched_track_id = :trackId, state = 'MATCHED'
                 WHERE rowid = (
@@ -233,6 +241,33 @@ class PlaylistSubscriptionRepository {
             .param("artist", artist.strip())
             .param("trackId", trackId)
             .update() == 1;
+        if (bound) {
+            jdbcClient.sql("""
+                    UPDATE playlist_subscription_version_items
+                    SET matched_track_id = :trackId
+                    WHERE item_key = (
+                        SELECT items.item_key
+                        FROM playlist_subscription_items items
+                        JOIN playlist_subscriptions subscriptions
+                          ON subscriptions.id = items.subscription_id
+                        WHERE subscriptions.playlist_id = :playlistId
+                          AND items.matched_track_id = :trackId
+                        ORDER BY items.position
+                        LIMIT 1
+                    )
+                    AND version_id IN (
+                        SELECT versions.id
+                        FROM playlist_subscription_versions versions
+                        JOIN playlist_subscriptions subscriptions
+                          ON subscriptions.id = versions.subscription_id
+                        WHERE subscriptions.playlist_id = :playlistId
+                    )
+                    """)
+                .param("trackId", trackId)
+                .param("playlistId", playlistId)
+                .update();
+        }
+        return bound;
     }
 
     void updateItemState(String subscriptionId, String itemKey, String state) {
@@ -287,6 +322,323 @@ class PlaylistSubscriptionRepository {
         }
     }
 
+    @Transactional
+    Version saveVersion(
+        String subscriptionId, String name, String artworkHash, List<Item> items
+    ) {
+        var contentHash = versionContentHash(name, artworkHash, items);
+        var latest = latestVersion(subscriptionId);
+        if (latest.isPresent() && latest.get().contentHash().equals(contentHash)) {
+            updateVersionMatches(subscriptionId, items);
+            return version(latest.get().id()).orElseThrow();
+        }
+
+        var id = UUID.randomUUID().toString();
+        var versionNumber = latest.map(value -> value.versionNumber() + 1).orElse(1);
+        var now = clock.millis();
+        jdbcClient.sql("""
+                INSERT INTO playlist_subscription_versions(
+                    id, subscription_id, version_number, name, artwork_hash,
+                    content_hash, created_at
+                ) VALUES (
+                    :id, :subscriptionId, :versionNumber, :name, :artworkHash,
+                    :contentHash, :createdAt
+                )
+                """)
+            .param("id", id)
+            .param("subscriptionId", subscriptionId)
+            .param("versionNumber", versionNumber)
+            .param("name", name)
+            .param("artworkHash", artworkHash)
+            .param("contentHash", contentHash)
+            .param("createdAt", now)
+            .update();
+        for (var item : items) {
+            jdbcClient.sql("""
+                    INSERT INTO playlist_subscription_version_items(
+                        version_id, item_key, position, title, artist, album, matched_track_id
+                    ) VALUES (
+                        :versionId, :itemKey, :position, :title, :artist, :album, :matchedTrackId
+                    )
+                    """)
+                .param("versionId", id)
+                .param("itemKey", item.itemKey())
+                .param("position", item.position())
+                .param("title", item.title())
+                .param("artist", item.artist())
+                .param("album", item.album())
+                .param("matchedTrackId", item.matchedTrackId())
+                .update();
+        }
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET latest_version_id = :versionId,
+                    selected_version_id = CASE
+                        WHEN follow_latest = 1 OR selected_version_id IS NULL THEN :versionId
+                        ELSE selected_version_id
+                    END,
+                    updated_at = :now
+                WHERE id = :subscriptionId
+                """)
+            .param("versionId", id)
+            .param("subscriptionId", subscriptionId)
+            .param("now", now)
+            .update();
+        updateVersionMatches(subscriptionId, items);
+        return version(id).orElseThrow();
+    }
+
+    List<Version> findVersions(String userId, String subscriptionId) {
+        return jdbcClient.sql("""
+                SELECT versions.*,
+                    (SELECT COUNT(*) FROM playlist_subscription_version_items items
+                     WHERE items.version_id = versions.id) AS item_count,
+                    versions.id = subscriptions.selected_version_id AS selected,
+                    versions.id = subscriptions.latest_version_id AS latest
+                FROM playlist_subscription_versions versions
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = versions.subscription_id
+                WHERE subscriptions.user_id = :userId
+                  AND subscriptions.id = :subscriptionId
+                ORDER BY versions.version_number DESC
+                """)
+            .param("userId", userId)
+            .param("subscriptionId", subscriptionId)
+            .query(this::mapVersion)
+            .list();
+    }
+
+    Optional<VersionSnapshot> selectVersion(
+        String userId, String subscriptionId, int versionNumber
+    ) {
+        var versionId = jdbcClient.sql("""
+                SELECT versions.id
+                FROM playlist_subscription_versions versions
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = versions.subscription_id
+                WHERE subscriptions.user_id = :userId
+                  AND subscriptions.id = :subscriptionId
+                  AND versions.version_number = :versionNumber
+                """)
+            .param("userId", userId)
+            .param("subscriptionId", subscriptionId)
+            .param("versionNumber", versionNumber)
+            .query(String.class)
+            .optional();
+        if (versionId.isEmpty()) {
+            return Optional.empty();
+        }
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET selected_version_id = :versionId, follow_latest = 0, updated_at = :now
+                WHERE id = :subscriptionId AND user_id = :userId
+                """)
+            .param("versionId", versionId.get())
+            .param("subscriptionId", subscriptionId)
+            .param("userId", userId)
+            .param("now", clock.millis())
+            .update();
+        return snapshot(versionId.get());
+    }
+
+    Optional<VersionSnapshot> followLatest(String userId, String subscriptionId) {
+        var versionId = jdbcClient.sql("""
+                SELECT latest_version_id FROM playlist_subscriptions
+                WHERE id = :subscriptionId AND user_id = :userId
+                  AND latest_version_id IS NOT NULL
+                """)
+            .param("subscriptionId", subscriptionId)
+            .param("userId", userId)
+            .query(String.class)
+            .optional();
+        if (versionId.isEmpty()) {
+            return Optional.empty();
+        }
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET selected_version_id = latest_version_id, follow_latest = 1, updated_at = :now
+                WHERE id = :subscriptionId AND user_id = :userId
+                """)
+            .param("subscriptionId", subscriptionId)
+            .param("userId", userId)
+            .param("now", clock.millis())
+            .update();
+        return snapshot(versionId.get());
+    }
+
+    Optional<VersionSnapshot> selectedVersion(String subscriptionId) {
+        return jdbcClient.sql("""
+                SELECT selected_version_id FROM playlist_subscriptions
+                WHERE id = :subscriptionId AND selected_version_id IS NOT NULL
+                """)
+            .param("subscriptionId", subscriptionId)
+            .query(String.class)
+            .optional()
+            .flatMap(this::snapshot);
+    }
+
+    Optional<Version> findVersion(
+        String userId, String subscriptionId, int versionNumber
+    ) {
+        return jdbcClient.sql("""
+                SELECT versions.*,
+                    (SELECT COUNT(*) FROM playlist_subscription_version_items items
+                     WHERE items.version_id = versions.id) AS item_count,
+                    versions.id = subscriptions.selected_version_id AS selected,
+                    versions.id = subscriptions.latest_version_id AS latest
+                FROM playlist_subscription_versions versions
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = versions.subscription_id
+                WHERE subscriptions.user_id = :userId
+                  AND subscriptions.id = :subscriptionId
+                  AND versions.version_number = :versionNumber
+                """)
+            .param("userId", userId)
+            .param("subscriptionId", subscriptionId)
+            .param("versionNumber", versionNumber)
+            .query(this::mapVersion)
+            .optional();
+    }
+
+    List<String> selectedMatchedTrackIds(String subscriptionId) {
+        var selected = selectedVersion(subscriptionId);
+        if (selected.isEmpty()) {
+            return matchedTrackIds(subscriptionId);
+        }
+        return jdbcClient.sql("""
+                WITH resolved_items AS (
+                    SELECT items.position, (
+                        SELECT tracks.id FROM tracks WHERE tracks.id = items.matched_track_id
+                        UNION ALL
+                        SELECT tracks.id FROM tracks
+                        WHERE items.matched_track_id IS NULL
+                          AND trim(tracks.title) COLLATE NOCASE = trim(items.title) COLLATE NOCASE
+                          AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
+                              replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                        ORDER BY id
+                        LIMIT 1
+                    ) AS track_id
+                    FROM playlist_subscription_version_items items
+                    WHERE items.version_id = :versionId
+                )
+                SELECT track_id FROM resolved_items
+                WHERE track_id IS NOT NULL
+                ORDER BY position
+                """)
+            .param("versionId", selected.get().version().id())
+            .query(String.class)
+            .list();
+    }
+
+    private void updateVersionMatches(String subscriptionId, List<Item> items) {
+        for (var item : items) {
+            if (item.matchedTrackId() == null) {
+                continue;
+            }
+            updateVersionMatch(subscriptionId, item.itemKey(), item.matchedTrackId());
+        }
+    }
+
+    private void updateVersionMatch(String subscriptionId, String itemKey, String trackId) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscription_version_items
+                SET matched_track_id = :trackId
+                WHERE item_key = :itemKey
+                  AND version_id IN (
+                      SELECT id FROM playlist_subscription_versions
+                      WHERE subscription_id = :subscriptionId
+                  )
+                """)
+            .param("trackId", trackId)
+            .param("itemKey", itemKey)
+            .param("subscriptionId", subscriptionId)
+            .update();
+    }
+
+    private Optional<StoredVersion> latestVersion(String subscriptionId) {
+        return jdbcClient.sql("""
+                SELECT id, version_number, content_hash
+                FROM playlist_subscription_versions
+                WHERE subscription_id = :subscriptionId
+                ORDER BY version_number DESC
+                LIMIT 1
+                """)
+            .param("subscriptionId", subscriptionId)
+            .query((resultSet, rowNumber) -> new StoredVersion(
+                resultSet.getString("id"), resultSet.getInt("version_number"),
+                resultSet.getString("content_hash")
+            ))
+            .optional();
+    }
+
+    private Optional<Version> version(String id) {
+        return jdbcClient.sql("""
+                SELECT versions.*,
+                    (SELECT COUNT(*) FROM playlist_subscription_version_items items
+                     WHERE items.version_id = versions.id) AS item_count,
+                    versions.id = subscriptions.selected_version_id AS selected,
+                    versions.id = subscriptions.latest_version_id AS latest
+                FROM playlist_subscription_versions versions
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = versions.subscription_id
+                WHERE versions.id = :id
+                """)
+            .param("id", id)
+            .query(this::mapVersion)
+            .optional();
+    }
+
+    private Optional<VersionSnapshot> snapshot(String versionId) {
+        return version(versionId).map(value -> new VersionSnapshot(
+            value,
+            jdbcClient.sql("""
+                    SELECT item_key, position, title, artist, album, matched_track_id,
+                           'MISSING' AS state, 0 AS last_seen_at
+                    FROM playlist_subscription_version_items
+                    WHERE version_id = :versionId
+                    ORDER BY position
+                    """)
+                .param("versionId", versionId)
+                .query(this::mapItem)
+                .list()
+        ));
+    }
+
+    private Version mapVersion(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new Version(
+            resultSet.getString("id"), resultSet.getInt("version_number"),
+            decodeHtml(resultSet.getString("name")), resultSet.getString("artwork_hash"),
+            resultSet.getString("content_hash"), resultSet.getInt("item_count"),
+            resultSet.getLong("created_at"), resultSet.getBoolean("selected"),
+            resultSet.getBoolean("latest")
+        );
+    }
+
+    private String versionContentHash(String name, String artworkHash, List<Item> items) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            addDigestValue(digest, name);
+            addDigestValue(digest, artworkHash);
+            for (var item : items) {
+                addDigestValue(digest, Integer.toString(item.position()));
+                addDigestValue(digest, item.itemKey());
+                addDigestValue(digest, item.title());
+                addDigestValue(digest, item.artist());
+                addDigestValue(digest, item.album());
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private void addDigestValue(MessageDigest digest, String value) {
+        var bytes = value == null ? new byte[0] : value.getBytes(StandardCharsets.UTF_8);
+        digest.update(Integer.toString(bytes.length).getBytes(StandardCharsets.UTF_8));
+        digest.update((byte) ':');
+        digest.update(bytes);
+    }
+
     void markSynced(String id) {
         var now = clock.millis();
         jdbcClient.sql("""
@@ -338,16 +690,44 @@ class PlaylistSubscriptionRepository {
             .update();
     }
 
-    void updateArtwork(String id, String artworkUrl) {
+    void updateArtwork(
+        String id, String artworkUrl, String artworkHash, boolean versioningEnabled
+    ) {
         jdbcClient.sql("""
                 UPDATE playlist_subscriptions
-                SET artwork_url = :artworkUrl, updated_at = :now
+                SET artwork_url = :artworkUrl, pending_artwork_hash = :artworkHash,
+                    updated_at = :now
                 WHERE id = :id
                 """)
             .param("artworkUrl", artworkUrl)
+            .param(
+                "artworkHash",
+                versioningEnabled ? (artworkHash == null ? "" : artworkHash) : null
+            )
             .param("now", clock.millis())
             .param("id", id)
             .update();
+    }
+
+    String pendingArtworkHash(String id) {
+        return jdbcClient.sql("""
+                SELECT pending_artwork_hash FROM playlist_subscriptions WHERE id = :id
+                """)
+            .param("id", id)
+            .query(String.class)
+            .optional()
+            .filter(value -> !value.isBlank())
+            .orElse(null);
+    }
+
+    boolean hasPendingArtworkState(String id) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM playlist_subscriptions
+                WHERE id = :id AND pending_artwork_hash IS NOT NULL
+                """)
+            .param("id", id)
+            .query(Integer.class)
+            .single() == 1;
     }
 
     void markFailed(String id, String message) {
@@ -414,6 +794,14 @@ class PlaylistSubscriptionRepository {
                 FROM playlist_subscription_items items
             )
             SELECT subscriptions.*, users.username,
+                COALESCE((
+                    SELECT version_number FROM playlist_subscription_versions
+                    WHERE id = subscriptions.latest_version_id
+                ), 0) AS latest_version_number,
+                COALESCE((
+                    SELECT version_number FROM playlist_subscription_versions
+                    WHERE id = subscriptions.selected_version_id
+                ), 0) AS selected_version_number,
                 (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id) AS item_count,
                 (SELECT COUNT(*) FROM item_states items
@@ -449,7 +837,10 @@ class PlaylistSubscriptionRepository {
             resultSet.getInt("item_count"), resultSet.getInt("matched_count"),
             resultSet.getInt("missing_count"), resultSet.getInt("downloading_count"),
             resultSet.getInt("queued_count"), resultSet.getInt("running_count"),
-            resultSet.getInt("suggested_count")
+            resultSet.getInt("suggested_count"),
+            resultSet.getInt("latest_version_number"),
+            resultSet.getInt("selected_version_number"),
+            resultSet.getInt("follow_latest") == 1
         );
     }
 
@@ -472,8 +863,25 @@ class PlaylistSubscriptionRepository {
         int syncIntervalHours,
         boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
         int itemCount, int matchedCount, int missingCount, int downloadingCount,
-        int queuedCount, int runningCount, int suggestedCount
+        int queuedCount, int runningCount, int suggestedCount,
+        int latestVersionNumber, int selectedVersionNumber, boolean followingLatest
     ) {
+        Subscription(
+            String id, String userId, String username, String playlistId, String sourceUrl,
+            String name, String poolType, boolean autoDownload, boolean strictMode,
+            int syncIntervalHours,
+            boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
+            int itemCount, int matchedCount, int missingCount, int downloadingCount,
+            int queuedCount, int runningCount, int suggestedCount
+        ) {
+            this(
+                id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
+                strictMode, syncIntervalHours, enabled, lastSyncedAt, lastError,
+                createdAt, updatedAt, itemCount, matchedCount, missingCount, downloadingCount,
+                queuedCount, runningCount, suggestedCount, 0, 0, true
+            );
+        }
+
         Subscription(
             String id, String userId, String username, String playlistId, String sourceUrl,
             String name, String poolType, boolean autoDownload, int syncIntervalHours,
@@ -485,7 +893,7 @@ class PlaylistSubscriptionRepository {
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
                 true, syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
                 itemCount, matchedCount, missingCount, downloadingCount,
-                queuedCount, runningCount, suggestedCount
+                queuedCount, runningCount, suggestedCount, 0, 0, true
             );
         }
 
@@ -498,7 +906,8 @@ class PlaylistSubscriptionRepository {
             this(
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
                 true, syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
-                itemCount, matchedCount, missingCount, downloadingCount, 0, 0, 0
+                itemCount, matchedCount, missingCount, downloadingCount,
+                0, 0, 0, 0, 0, true
             );
         }
     }
@@ -507,5 +916,20 @@ class PlaylistSubscriptionRepository {
         String itemKey, int position, String title, String artist, String album,
         String matchedTrackId, String state, long lastSeenAt
     ) {
+    }
+
+    record Version(
+        String id, int versionNumber, String name, String artworkHash, String contentHash,
+        int itemCount, long createdAt, boolean selected, boolean latest
+    ) {
+        boolean hasArtwork() {
+            return artworkHash != null && !artworkHash.isBlank();
+        }
+    }
+
+    record VersionSnapshot(Version version, List<Item> items) {
+    }
+
+    private record StoredVersion(String id, int versionNumber, String contentHash) {
     }
 }

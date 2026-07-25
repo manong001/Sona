@@ -699,6 +699,22 @@ class PersonalRepository {
             .update() == 1;
     }
 
+    boolean setPlaylistVersionArtwork(
+        String userId, String playlistId, String artworkPath, boolean force
+    ) {
+        var marker = artworkPath == null ? null : "remote:" + artworkPath;
+        return jdbcClient.sql("""
+                UPDATE playlists SET artwork_track_id = :marker
+                WHERE id = :playlistId AND user_id = :userId
+                  AND (:force = 1 OR artwork_track_id IS NULL OR artwork_track_id LIKE 'remote:%')
+                """)
+            .param("marker", marker)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .param("force", force ? 1 : 0)
+            .update() == 1;
+    }
+
     Optional<PlaylistData> setPlaylistSourceArtwork(String userId, String playlistId) {
         var updated = jdbcClient.sql("""
                 UPDATE playlists

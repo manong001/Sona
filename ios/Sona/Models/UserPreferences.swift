@@ -8,6 +8,7 @@ struct UserPreferences: Codable, Equatable {
     let miniPlayerY: Double
     let hapticStrength: String
     let appIcon: String
+    let playlistVersionManagementEnabled: Bool
 }
 
 struct UserPreferencesResponse: Decodable {
@@ -19,6 +20,7 @@ struct UserPreferencesResponse: Decodable {
     let miniPlayerY: Double?
     let hapticStrength: String?
     let appIcon: String?
+    let playlistVersionManagementEnabled: Bool?
     let updatedAt: Int64?
 
     var preferences: UserPreferences? {
@@ -39,7 +41,8 @@ struct UserPreferencesResponse: Decodable {
             miniPlayerSide: miniPlayerSide,
             miniPlayerY: miniPlayerY,
             hapticStrength: hapticStrength,
-            appIcon: appIcon
+            appIcon: appIcon,
+            playlistVersionManagementEnabled: playlistVersionManagementEnabled ?? false
         )
     }
 }

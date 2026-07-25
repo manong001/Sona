@@ -77,6 +77,22 @@ struct PlaylistSubscription: Decodable, Identifiable {
     let queuedCount: Int?
     let runningCount: Int?
     let suggestedCount: Int?
+    let latestVersionNumber: Int?
+    let selectedVersionNumber: Int?
+    let followingLatest: Bool?
+
+    var isFollowingLatest: Bool { followingLatest ?? true }
+}
+
+struct PlaylistSubscriptionVersion: Decodable, Identifiable {
+    let id: String
+    let versionNumber: Int
+    let name: String
+    let artworkHash: String?
+    let itemCount: Int
+    let createdAt: Int64
+    let selected: Bool
+    let latest: Bool
 }
 
 struct PlaylistSubscriptionItem: Decodable, Identifiable {

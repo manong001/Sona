@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.download;
 
+import cc.eu.sosee.sona.auth.UserPreferencesService;
 import cc.eu.sosee.sona.personal.PlaylistDownloadImportService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -13,6 +14,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Predicate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpStatus;
@@ -30,14 +33,19 @@ class PlaylistSubscriptionService {
     private final DownloadService downloadService;
     private final PlaylistSubscriptionMatcher matcher;
     private final PlaylistDownloadImportService playlistImportService;
+    private final PlaylistSubscriptionArtworkArchive artworkArchive;
+    private final Predicate<String> versioningEnabled;
     private final Clock clock;
     private final TaskExecutor taskExecutor;
     private final Set<String> syncing = ConcurrentHashMap.newKeySet();
 
+    @Autowired
     PlaylistSubscriptionService(
         PlaylistSubscriptionRepository subscriptions,
         DownloadService downloadService, PlaylistSubscriptionMatcher matcher,
         PlaylistDownloadImportService playlistImportService,
+        PlaylistSubscriptionArtworkArchive artworkArchive,
+        UserPreferencesService userPreferences,
         Clock clock,
         @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
@@ -45,6 +53,74 @@ class PlaylistSubscriptionService {
         this.downloadService = downloadService;
         this.matcher = matcher;
         this.playlistImportService = playlistImportService;
+        this.artworkArchive = artworkArchive;
+        versioningEnabled = userPreferences::playlistVersionManagementEnabled;
+        this.clock = clock;
+        this.taskExecutor = taskExecutor;
+    }
+
+    PlaylistSubscriptionService(
+        PlaylistSubscriptionRepository subscriptions,
+        DownloadService downloadService, PlaylistSubscriptionMatcher matcher,
+        PlaylistDownloadImportService playlistImportService,
+        Clock clock, TaskExecutor taskExecutor
+    ) {
+        this(
+            subscriptions, downloadService, matcher, playlistImportService,
+            new PlaylistSubscriptionArtworkArchive() {
+                @Override
+                public java.util.Optional<String> archive(String sourceUrl) {
+                    return java.util.Optional.empty();
+                }
+
+                @Override
+                public byte[] read(String contentHash) {
+                    throw new IllegalStateException("订阅歌单封面归档未配置");
+                }
+            },
+            ignored -> true,
+            clock, taskExecutor
+        );
+    }
+
+    PlaylistSubscriptionService(
+        PlaylistSubscriptionRepository subscriptions,
+        DownloadService downloadService, PlaylistSubscriptionMatcher matcher,
+        PlaylistDownloadImportService playlistImportService,
+        Predicate<String> versioningEnabled,
+        Clock clock, TaskExecutor taskExecutor
+    ) {
+        this(
+            subscriptions, downloadService, matcher, playlistImportService,
+            new PlaylistSubscriptionArtworkArchive() {
+                @Override
+                public java.util.Optional<String> archive(String sourceUrl) {
+                    return java.util.Optional.empty();
+                }
+
+                @Override
+                public byte[] read(String contentHash) {
+                    throw new IllegalStateException("订阅歌单封面归档未配置");
+                }
+            },
+            versioningEnabled, clock, taskExecutor
+        );
+    }
+
+    private PlaylistSubscriptionService(
+        PlaylistSubscriptionRepository subscriptions,
+        DownloadService downloadService, PlaylistSubscriptionMatcher matcher,
+        PlaylistDownloadImportService playlistImportService,
+        PlaylistSubscriptionArtworkArchive artworkArchive,
+        Predicate<String> versioningEnabled,
+        Clock clock, TaskExecutor taskExecutor
+    ) {
+        this.subscriptions = subscriptions;
+        this.downloadService = downloadService;
+        this.matcher = matcher;
+        this.playlistImportService = playlistImportService;
+        this.artworkArchive = artworkArchive;
+        this.versioningEnabled = versioningEnabled;
         this.clock = clock;
         this.taskExecutor = taskExecutor;
     }
@@ -57,10 +133,7 @@ class PlaylistSubscriptionService {
                 downloadService.reconcileCompletedPlaylistDownloads(
                     subscription.playlistId()
                 );
-                playlistImportService.replaceTracks(
-                    userId, subscription.playlistId(),
-                    subscriptions.matchedTrackIds(subscription.id())
-                );
+                refreshAfterMatching(subscription);
             }
         }
         return subscriptions.findAll(userId);
@@ -112,6 +185,50 @@ class PlaylistSubscriptionService {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         return sync(subscription, "订阅歌单".equals(subscription.name()), true);
+    }
+
+    List<PlaylistSubscriptionRepository.Version> versions(String userId, String id) {
+        subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        requireVersionManagementEnabled(userId);
+        return subscriptions.findVersions(userId, id);
+    }
+
+    PlaylistSubscriptionRepository.Subscription selectVersion(
+        String userId, String id, int versionNumber
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        requireVersionManagementEnabled(userId);
+        subscriptions.selectVersion(userId, id, versionNumber)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "歌单版本不存在"));
+        applySelectedVersion(subscription, true);
+        return subscriptions.find(userId, id).orElseThrow();
+    }
+
+    PlaylistSubscriptionRepository.Subscription followLatest(String userId, String id) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        requireVersionManagementEnabled(userId);
+        subscriptions.followLatest(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "歌单还没有可用版本"));
+        applySelectedVersion(subscription, true);
+        return subscriptions.find(userId, id).orElseThrow();
+    }
+
+    byte[] artwork(String userId, String id, int versionNumber) {
+        var version = subscriptions.findVersion(userId, id, versionNumber)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "歌单版本不存在"));
+        if (!version.hasArtwork()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "该版本没有封面");
+        }
+        try {
+            return artworkArchive.read(version.artworkHash());
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "订阅歌单封面不存在", exception
+            );
+        }
     }
 
     List<ItemDetail> items(String userId, String id) {
@@ -168,9 +285,7 @@ class PlaylistSubscriptionService {
             ));
         }
         if (matchedAny) {
-            playlistImportService.replaceTracks(
-                userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
-            );
+            refreshAfterMatching(subscription);
         }
         return new ItemPage(List.copyOf(page), index < suggested.size());
     }
@@ -194,11 +309,9 @@ class PlaylistSubscriptionService {
                 matchedCount++;
             }
         }
-        playlistImportService.replaceTracks(
-            userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
-        );
+        var refreshed = refreshAfterMatching(subscription);
         return new BestMatchResult(
-            subscriptions.find(userId, id).orElseThrow(), matchedCount
+            refreshed, matchedCount
         );
     }
 
@@ -216,10 +329,7 @@ class PlaylistSubscriptionService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "候选歌曲不存在或已被其他歌曲使用");
         }
         subscriptions.rememberMatch(userId, item.title(), item.artist(), trackId);
-        playlistImportService.replaceTracks(
-            userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
-        );
-        return subscriptions.find(userId, id).orElseThrow();
+        return refreshAfterMatching(subscription);
     }
 
     PlaylistSubscriptionRepository.Subscription updateStrictMode(
@@ -279,10 +389,7 @@ class PlaylistSubscriptionService {
         var localTrackId = match.exactTrackId().orElse(null);
         if (localTrackId != null
             && subscriptions.selectMatch(userId, id, itemKey, localTrackId)) {
-            playlistImportService.replaceTracks(
-                userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
-            );
-            return subscriptions.find(userId, id).orElseThrow();
+            return refreshAfterMatching(subscription);
         }
         var queued = subscription.strictMode()
             ? downloadService.queueForPlaylist(
@@ -354,6 +461,22 @@ class PlaylistSubscriptionService {
         playlistImportService.delete(userId, subscription.playlistId());
     }
 
+    @Transactional
+    void disableVersionManagement(String userId) {
+        for (var subscription : subscriptions.findAll(userId)) {
+            if (subscription.latestVersionNumber() > 0) {
+                subscriptions.followLatest(userId, subscription.id());
+            }
+            playlistImportService.replaceTracks(
+                userId, subscription.playlistId(),
+                subscriptions.matchedTrackIds(subscription.id())
+            );
+            playlistImportService.restoreSubscriptionArtwork(
+                userId, subscription.playlistId()
+            );
+        }
+    }
+
     @Scheduled(fixedDelay = 900_000, initialDelay = 60_000)
     void syncDueSubscriptions() {
         for (var subscription : subscriptions.findDue()) {
@@ -373,6 +496,7 @@ class PlaylistSubscriptionService {
             return subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
         }
         try {
+            var managesVersions = versioningEnabled.test(subscription.userId());
             downloadService.reconcileCompletedPlaylistDownloads(
                 subscription.playlistId()
             );
@@ -383,18 +507,26 @@ class PlaylistSubscriptionService {
                 subscriptions.rename(subscription.id(), remoteName);
                 subscription = subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
             }
+            String artworkUrl = null;
+            String artworkHash = null;
             if (preview.artworkUrl() != null && !preview.artworkUrl().isBlank()) {
-                var artworkUrl = preview.artworkUrl().strip();
+                artworkUrl = preview.artworkUrl().strip();
                 if (artworkUrl.startsWith("https://") || artworkUrl.startsWith("http://")) {
-                    subscriptions.updateArtwork(subscription.id(), artworkUrl);
+                    if (managesVersions) {
+                        artworkHash = artworkArchive.archive(artworkUrl).orElse(null);
+                    }
                     playlistImportService.setRemoteArtwork(
                         subscription.userId(), subscription.playlistId(), artworkUrl
                     );
+                } else {
+                    artworkUrl = null;
                 }
             }
+            subscriptions.updateArtwork(
+                subscription.id(), artworkUrl, artworkHash, managesVersions
+            );
             var now = clock.millis();
             var items = new ArrayList<PlaylistSubscriptionRepository.Item>();
-            var matchedTrackIds = new ArrayList<String>();
             var existingItems = subscriptions.findItems(subscription.id()).stream()
                 .collect(java.util.stream.Collectors.toMap(
                     PlaylistSubscriptionRepository.Item::itemKey, item -> item,
@@ -428,7 +560,6 @@ class PlaylistSubscriptionService {
                 }
                 var state = "MISSING";
                 if (matchedTrackId != null) {
-                    matchedTrackIds.add(matchedTrackId);
                     state = "MATCHED";
                 } else if (!suggestions.isEmpty()) {
                     state = "SUGGESTED";
@@ -452,12 +583,32 @@ class PlaylistSubscriptionService {
                     candidate.artist().strip(), candidate.album(), matchedTrackId, state, now
                 ));
             }
-            playlistImportService.replaceTracks(
-                subscription.userId(), subscription.playlistId(), matchedTrackIds
-            );
             subscriptions.replaceItems(subscription.id(), items);
             subscriptions.markSynced(subscription.id());
-            return subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
+            var createdVersion = managesVersions && publishVersionIfComplete(
+                subscription, items, artworkHash, true
+            );
+            var refreshed = subscriptions.find(
+                subscription.userId(), subscription.id()
+            ).orElseThrow();
+            if (!managesVersions) {
+                playlistImportService.replaceTracks(
+                    subscription.userId(), subscription.playlistId(),
+                    items.stream()
+                        .map(PlaylistSubscriptionRepository.Item::matchedTrackId)
+                        .filter(java.util.Objects::nonNull)
+                        .toList()
+                );
+            } else if (refreshed.followingLatest()) {
+                applySelectedVersion(
+                    refreshed, createdVersion,
+                    items.stream()
+                        .map(PlaylistSubscriptionRepository.Item::matchedTrackId)
+                        .filter(java.util.Objects::nonNull)
+                        .toList()
+                );
+            }
+            return refreshed;
         } catch (RuntimeException exception) {
             subscriptions.markFailed(subscription.id(), conciseMessage(exception));
             throw exception;
@@ -479,6 +630,102 @@ class PlaylistSubscriptionService {
             });
         } catch (RejectedExecutionException exception) {
             subscriptions.markFailed(subscription.id(), "后台同步任务繁忙，请稍后手动同步");
+        }
+    }
+
+    private void applySelectedVersion(
+        PlaylistSubscriptionRepository.Subscription subscription, boolean forceArtwork
+    ) {
+        applySelectedVersion(subscription, forceArtwork, null);
+    }
+
+    private PlaylistSubscriptionRepository.Subscription refreshAfterMatching(
+        PlaylistSubscriptionRepository.Subscription subscription
+    ) {
+        var items = subscriptions.findItems(subscription.id());
+        if (!versioningEnabled.test(subscription.userId())) {
+            playlistImportService.replaceTracks(
+                subscription.userId(), subscription.playlistId(),
+                items.stream()
+                    .map(PlaylistSubscriptionRepository.Item::matchedTrackId)
+                    .filter(java.util.Objects::nonNull)
+                    .toList()
+            );
+            return subscriptions.find(
+                subscription.userId(), subscription.id()
+            ).orElseThrow();
+        }
+        var createdVersion = subscriptions.hasPendingArtworkState(subscription.id())
+            && publishVersionIfComplete(
+                subscription, items, subscriptions.pendingArtworkHash(subscription.id()), false
+            );
+        var refreshed = subscriptions.find(
+            subscription.userId(), subscription.id()
+        ).orElseThrow();
+        applySelectedVersion(
+            refreshed, createdVersion && refreshed.followingLatest()
+        );
+        return refreshed;
+    }
+
+    private boolean publishVersionIfComplete(
+        PlaylistSubscriptionRepository.Subscription subscription,
+        List<PlaylistSubscriptionRepository.Item> items,
+        String artworkHash,
+        boolean synchronizedNow
+    ) {
+        if (!versioningEnabled.test(subscription.userId())
+            || (!synchronizedNow && subscription.lastSyncedAt() == null)
+            || items.stream().anyMatch(item -> !"MATCHED".equals(item.state()))) {
+            return false;
+        }
+        var savedVersion = subscriptions.saveVersion(
+            subscription.id(), subscription.name(), artworkHash, items
+        );
+        return savedVersion != null
+            && savedVersion.versionNumber() != subscription.latestVersionNumber();
+    }
+
+    private void applySelectedVersion(
+        PlaylistSubscriptionRepository.Subscription subscription, boolean forceArtwork,
+        List<String> fallbackTrackIds
+    ) {
+        var snapshot = subscriptions.selectedVersion(subscription.id());
+        if (snapshot.isEmpty()) {
+            playlistImportService.replaceTracks(
+                subscription.userId(), subscription.playlistId(),
+                fallbackTrackIds == null
+                    ? subscriptions.matchedTrackIds(subscription.id())
+                    : fallbackTrackIds
+            );
+            return;
+        }
+        var version = snapshot.get().version();
+        playlistImportService.rename(
+            subscription.userId(), subscription.playlistId(), version.name()
+        );
+        playlistImportService.replaceTracks(
+            subscription.userId(), subscription.playlistId(),
+            subscriptions.selectedMatchedTrackIds(subscription.id())
+        );
+        var artworkPath = version.hasArtwork()
+            ? versionArtworkPath(subscription.id(), version)
+            : null;
+        playlistImportService.setVersionArtwork(
+            subscription.userId(), subscription.playlistId(), artworkPath, forceArtwork
+        );
+    }
+
+    private String versionArtworkPath(
+        String subscriptionId, PlaylistSubscriptionRepository.Version version
+    ) {
+        return "/api/v1/me/playlist-subscriptions/" + subscriptionId
+            + "/versions/" + version.versionNumber() + "/artwork?v=" + version.artworkHash();
+    }
+
+    private void requireVersionManagementEnabled(String userId) {
+        if (!versioningEnabled.test(userId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "歌单版本管理未开启");
         }
     }
 

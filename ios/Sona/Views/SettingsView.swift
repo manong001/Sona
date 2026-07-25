@@ -19,6 +19,8 @@ struct SettingsView: View {
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
+    @AppStorage("playlistVersionManagementEnabled")
+    private var playlistVersionManagementEnabled = false
     @AppStorage(SonaHaptics.preferenceKey) private var hapticStrength =
         SonaHapticStrength.medium.rawValue
     @State private var appIconPreference: String?
@@ -206,6 +208,19 @@ struct SettingsView: View {
                             Text("🦄 糖果小公主").tag("girl")
                         }
                     }
+                }
+
+                Section("订阅歌单") {
+                    Toggle(
+                        "版本管理",
+                        isOn: $playlistVersionManagementEnabled
+                    )
+                    Text(
+                        "开启后，仅在订阅歌单的全部歌曲匹配完成时保存版本快照。"
+                        + "关闭不会删除已有版本。"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 Section("用户配置") {

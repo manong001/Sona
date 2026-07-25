@@ -309,10 +309,14 @@ private struct SocialAddFriendView: View {
 
 struct SocialChatView: View {
     @EnvironmentObject private var social: SocialStore
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var offline: OfflineStore
     let peer: SocialUser
     @State private var draft = ""
     @State private var showsTrackPicker = false
     @State private var errorMessage: String?
+    @State private var resolvingTrackID: String?
     @State private var lastTypingUpdate = Date.distantPast
     @State private var typingStopTask: Task<Void, Never>?
 
@@ -333,7 +337,13 @@ struct SocialChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(values) { message in
-                            SocialMessageBubble(message: message)
+                            SocialMessageBubble(
+                                message: message,
+                                isResolvingTrack: resolvingTrackID == message.payload?.id,
+                                playTrack: message.kind == "TRACK" && message.recalledAt == nil
+                                    ? { playSharedTrack(message.payload) }
+                                    : nil
+                            )
                                 .id(message.id)
                                 .contextMenu {
                                     if message.canRecall {
@@ -424,6 +434,29 @@ struct SocialChatView: View {
         Task { do { try await social.sendSticker(value, to: peer.id) } catch { errorMessage = error.localizedDescription } }
     }
 
+    private func playSharedTrack(_ payload: SharedTrackPayload?) {
+        guard let payload, resolvingTrackID == nil else { return }
+        resolvingTrackID = payload.id
+        Task {
+            defer { resolvingTrackID = nil }
+            do {
+                let track: Track
+                if let localTrack = library.track(id: payload.id) {
+                    track = localTrack
+                } else {
+                    track = try await APIClient.shared.track(id: payload.id)
+                }
+                player.playAtQueueFront(
+                    track,
+                    api: .shared,
+                    offlineURLProvider: { offline.localURL(for: $0) }
+                )
+            } catch {
+                errorMessage = "无法打开“\(payload.title)”：\(error.localizedDescription)"
+            }
+        }
+    }
+
     private func recall(_ message: SocialMessage) {
         Task { do { try await social.recall(message, peerId: peer.id) } catch { errorMessage = error.localizedDescription } }
     }
@@ -454,6 +487,8 @@ struct SocialChatView: View {
 
 private struct SocialMessageBubble: View {
     let message: SocialMessage
+    let isResolvingTrack: Bool
+    let playTrack: (() -> Void)?
 
     var body: some View {
         HStack {
@@ -468,14 +503,45 @@ private struct SocialMessageBubble: View {
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
                     } else if message.kind == "TRACK", let track = message.payload {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Label("分享歌曲", systemImage: "music.note")
-                                .font(.caption.bold())
-                                .foregroundStyle(Color.sonaGreen)
-                            Text(track.title).font(.body.bold()).lineLimit(1)
-                            Text(track.artist).font(.caption).foregroundStyle(Color.sonaSecondaryText)
+                        Button(action: { playTrack?() }) {
+                            HStack(spacing: 12) {
+                                ArtworkView(
+                                    path: track.artworkURL,
+                                    cornerRadius: 9,
+                                    thumbnailSize: 192
+                                )
+                                .frame(width: 58, height: 58)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label("分享歌曲", systemImage: "music.note")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(trackAccentColor)
+                                    Text(track.title)
+                                        .font(.headline.bold())
+                                        .foregroundStyle(trackPrimaryColor)
+                                        .lineLimit(1)
+                                    Text(track.artist)
+                                        .font(.caption)
+                                        .foregroundStyle(trackSecondaryColor)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 4)
+                                if isResolvingTrack {
+                                    ProgressView()
+                                        .tint(trackAccentColor)
+                                } else {
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.title)
+                                        .foregroundStyle(trackAccentColor)
+                                }
+                            }
+                            .frame(minHeight: 58)
+                            .contentShape(Rectangle())
                         }
-                        .frame(maxWidth: 230, alignment: .leading)
+                        .buttonStyle(.plain)
+                        .disabled(playTrack == nil || isResolvingTrack)
+                        .accessibilityLabel("播放分享歌曲 \(track.title)")
+                        .frame(maxWidth: 290, alignment: .leading)
                     } else {
                         Text(message.text)
                             .font(message.kind == "STICKER" ? .system(size: 34) : .body)
@@ -498,22 +564,57 @@ private struct SocialMessageBubble: View {
         }
         .frame(maxWidth: .infinity)
     }
+
+    private var trackAccentColor: Color {
+        message.mine ? .black.opacity(0.72) : Color.sonaGreen
+    }
+
+    private var trackPrimaryColor: Color {
+        message.mine ? .black.opacity(0.88) : .primary
+    }
+
+    private var trackSecondaryColor: Color {
+        message.mine ? .black.opacity(0.62) : Color.sonaSecondaryText
+    }
+}
+
+private enum SocialTrackShareOrdering {
+    static func orderedTracks(
+        currentTrack: Track?,
+        libraryTracks: [Track],
+        query: String
+    ) -> [Track] {
+        var seen = Set<String>()
+        var values: [Track] = []
+        if let currentTrack, seen.insert(currentTrack.id).inserted {
+            values.append(currentTrack)
+        }
+        values.append(contentsOf: libraryTracks.filter { seen.insert($0.id).inserted })
+
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !search.isEmpty else { return values }
+        return values.filter {
+            $0.title.localizedCaseInsensitiveContains(search)
+                || $0.artist.localizedCaseInsensitiveContains(search)
+        }
+    }
 }
 
 private struct SocialTrackShareView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var social: SocialStore
     let peerId: String
     @State private var query = ""
     @State private var errorMessage: String?
 
     private var tracks: [Track] {
-        guard !query.isEmpty else { return library.tracks }
-        return library.tracks.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.artist.localizedCaseInsensitiveContains(query)
-        }
+        SocialTrackShareOrdering.orderedTracks(
+            currentTrack: player.currentTrack,
+            libraryTracks: library.tracks,
+            query: query
+        )
     }
 
     var body: some View {
@@ -524,7 +625,27 @@ private struct SocialTrackShareView: View {
                         do { try await social.share(track: track, with: peerId); dismiss() }
                         catch { errorMessage = error.localizedDescription }
                     }
-                } label: { TrackRow(track: track) }
+                } label: {
+                    HStack(spacing: 8) {
+                        TrackRow(track: track)
+                        if player.currentTrack?.id == track.id {
+                            Label {
+                                Text("正在播放")
+                            } icon: {
+                                Image(systemName: "waveform")
+                                    .symbolEffect(
+                                        .variableColor.iterative,
+                                        options: .repeating,
+                                        isActive: player.isPlaying
+                                    )
+                            }
+                            .font(.caption2.bold())
+                            .foregroundStyle(Color.sonaGreen)
+                            .fixedSize()
+                            .accessibilityLabel(player.isPlaying ? "正在播放" : "当前歌曲")
+                        }
+                    }
+                }
                     .buttonStyle(.plain)
                     .listRowBackground(Color.sonaSurface)
             }

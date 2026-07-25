@@ -253,9 +253,30 @@ class SchemaMigration implements ApplicationRunner {
         if (!columns("playlist_subscriptions").contains("artwork_url")) {
             jdbcClient.sql("ALTER TABLE playlist_subscriptions ADD COLUMN artwork_url TEXT").update();
         }
+        if (!columns("playlist_subscriptions").contains("pending_artwork_hash")) {
+            jdbcClient.sql(
+                "ALTER TABLE playlist_subscriptions ADD COLUMN pending_artwork_hash TEXT"
+            ).update();
+        }
         if (!columns("playlist_subscriptions").contains("strict_mode")) {
             jdbcClient.sql(
                 "ALTER TABLE playlist_subscriptions ADD COLUMN strict_mode INTEGER NOT NULL DEFAULT 1"
+            ).update();
+        }
+        var subscriptionColumns = columns("playlist_subscriptions");
+        if (!subscriptionColumns.contains("latest_version_id")) {
+            jdbcClient.sql(
+                "ALTER TABLE playlist_subscriptions ADD COLUMN latest_version_id TEXT"
+            ).update();
+        }
+        if (!subscriptionColumns.contains("selected_version_id")) {
+            jdbcClient.sql(
+                "ALTER TABLE playlist_subscriptions ADD COLUMN selected_version_id TEXT"
+            ).update();
+        }
+        if (!subscriptionColumns.contains("follow_latest")) {
+            jdbcClient.sql(
+                "ALTER TABLE playlist_subscriptions ADD COLUMN follow_latest INTEGER NOT NULL DEFAULT 1"
             ).update();
         }
         jdbcClient.sql("""
@@ -276,6 +297,43 @@ class SchemaMigration implements ApplicationRunner {
                     PRIMARY KEY (subscription_id, item_key),
                     FOREIGN KEY (subscription_id) REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
                 )
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS playlist_subscription_versions (
+                    id TEXT PRIMARY KEY,
+                    subscription_id TEXT NOT NULL,
+                    version_number INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    artwork_hash TEXT,
+                    content_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE (subscription_id, version_number),
+                    FOREIGN KEY (subscription_id)
+                        REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
+                )
+                """).update();
+        jdbcClient.sql("""
+                CREATE INDEX IF NOT EXISTS idx_playlist_subscription_versions
+                ON playlist_subscription_versions(subscription_id, version_number DESC)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS playlist_subscription_version_items (
+                    version_id TEXT NOT NULL,
+                    item_key TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    album TEXT,
+                    matched_track_id TEXT,
+                    PRIMARY KEY (version_id, item_key),
+                    FOREIGN KEY (version_id)
+                        REFERENCES playlist_subscription_versions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (matched_track_id) REFERENCES tracks(id) ON DELETE SET NULL
+                )
+                """).update();
+        jdbcClient.sql("""
+                CREATE INDEX IF NOT EXISTS idx_playlist_subscription_version_items
+                ON playlist_subscription_version_items(version_id, position)
                 """).update();
         jdbcClient.sql("""
                 CREATE TABLE IF NOT EXISTS playlist_match_choices (

@@ -99,6 +99,18 @@ public class PlaylistDownloadImportService {
         repository.setPlaylistRemoteArtwork(userId, playlistId, normalizedUrl);
     }
 
+    public void setVersionArtwork(
+        String userId, String playlistId, String artworkPath, boolean force
+    ) {
+        repository.setPlaylistVersionArtwork(userId, playlistId, artworkPath, force);
+    }
+
+    public void restoreSubscriptionArtwork(String userId, String playlistId) {
+        if (repository.setPlaylistSourceArtwork(userId, playlistId).isEmpty()) {
+            repository.setPlaylistVersionArtwork(userId, playlistId, null, true);
+        }
+    }
+
     public void delete(String userId, String playlistId) {
         repository.deletePlaylist(userId, playlistId);
     }

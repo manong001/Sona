@@ -873,6 +873,30 @@ final class APIClient {
         try await request(path: "/api/v1/me/playlist-subscriptions/\(id)/items")
     }
 
+    func playlistSubscriptionVersions(
+        id: String
+    ) async throws -> [PlaylistSubscriptionVersion] {
+        try await request(path: "/api/v1/me/playlist-subscriptions/\(id)/versions")
+    }
+
+    func selectPlaylistSubscriptionVersion(
+        id: String, versionNumber: Int
+    ) async throws -> PlaylistSubscription {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/versions/\(versionNumber)/select",
+            method: "POST"
+        )
+    }
+
+    func followLatestPlaylistSubscriptionVersion(
+        id: String
+    ) async throws -> PlaylistSubscription {
+        try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/versions/follow-latest",
+            method: "POST"
+        )
+    }
+
     func playlistSubscriptionSuggestions(
         id: String, offset: Int, limit: Int
     ) async throws -> PlaylistSubscriptionItemPage {

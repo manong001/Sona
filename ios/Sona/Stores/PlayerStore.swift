@@ -274,6 +274,13 @@ final class PlayerStore: ObservableObject {
             player.pause()
         }
         isPlaying = autoplay
+        if autoplay {
+            schedulePlaybackWatchdog(
+                for: item,
+                track: track,
+                startingAt: 0
+            )
+        }
         loadNowPlayingArtwork(for: track)
         if persistState {
             self.persistState()
@@ -300,6 +307,19 @@ final class PlayerStore: ObservableObject {
             preferredTimescale: 600
         )
         progress.update(elapsed: max(0, seconds))
+        if seconds <= 0.05 {
+            activateAudioSession()
+            player.play()
+            isPlaying = true
+            updateNowPlaying()
+            persistState()
+            schedulePlaybackWatchdog(
+                for: recoveryItem,
+                track: track,
+                startingAt: 0
+            )
+            return
+        }
         player.seek(
             to: recoveryTime,
             toleranceBefore: .zero,
@@ -319,6 +339,11 @@ final class PlayerStore: ObservableObject {
                     self.isPlaying = true
                     self.updateNowPlaying()
                     self.persistState()
+                    self.schedulePlaybackWatchdog(
+                        for: recoveryItem,
+                        track: track,
+                        startingAt: seconds
+                    )
                 }
             }
         )
@@ -348,6 +373,33 @@ final class PlayerStore: ObservableObject {
     func playQueuedTrack(_ track: Track) {
         guard playbackQueue.contains(where: { $0.id == track.id }) else { return }
         startPlayback(track)
+    }
+
+    func playAtQueueFront(
+        _ track: Track,
+        api: APIClient = .shared,
+        offlineURLProvider: @escaping (Track) -> URL?
+    ) {
+        activeAPI = api
+        self.offlineURLProvider = offlineURLProvider
+        randomQueueTask?.cancel()
+        stateRestoreTask?.cancel()
+        queueErrorMessage = nil
+        let hadQueue = !playbackQueue.isEmpty
+        playbackQueue = [track] + playbackQueue.filter { $0.id != track.id }
+        isLoadingQueue = false
+
+        if !hadQueue {
+            queueTitle = "好友分享"
+            queueType = "PLAYLIST"
+            queueContextID = nil
+        }
+        if currentTrack?.id == track.id {
+            resume()
+            persistState()
+        } else {
+            startPlayback(track)
+        }
     }
 
     func playNext(_ track: Track) {
@@ -491,6 +543,13 @@ final class PlayerStore: ObservableObject {
         activateAudioSession()
         player.play()
         isPlaying = true
+        if let item = player.currentItem, let currentTrack {
+            schedulePlaybackWatchdog(
+                for: item,
+                track: currentTrack,
+                startingAt: elapsed
+            )
+        }
         updateNowPlaying()
         if persistState {
             self.persistState()
@@ -652,19 +711,6 @@ final class PlayerStore: ObservableObject {
                 let durationChanged = actualDuration.map {
                     abs($0 - self.progress.duration) > 0.5
                 } ?? false
-                let playbackDuration = actualDuration ?? self.progress.duration
-                let reachedPlaybackEnd = self.isPlaying
-                    && !self.isSeekInProgress
-                    && playbackDuration > 0
-                    && elapsed >= playbackDuration
-                if reachedPlaybackEnd {
-                    self.progress.update(
-                        elapsed: playbackDuration,
-                        duration: actualDuration
-                    )
-                    self.finishCurrentPlayback()
-                    return
-                }
                 self.progress.update(
                     elapsed: self.isSeekInProgress ? nil : elapsed,
                     duration: actualDuration
@@ -808,26 +854,82 @@ final class PlayerStore: ObservableObject {
                 guard let self,
                       self.isPlaying,
                       let item = notification.object as? AVPlayerItem,
-                      item === self.player.currentItem else { return }
+                      item === self.player.currentItem,
+                      let track = self.currentTrack else { return }
                 self.player.play()
-                self.stalledRecoveryTask?.cancel()
-                let stalledAt = self.elapsed
-                self.stalledRecoveryTask = Task { [weak self, weak item] in
-                    try? await Task.sleep(for: .seconds(5))
-                    guard !Task.isCancelled,
-                          let self,
-                          let item,
-                          item === self.player.currentItem,
-                          self.isPlaying,
-                          self.player.timeControlStatus != .playing,
-                          self.elapsed < stalledAt + 0.5,
-                          let track = self.currentTrack else { return }
+                self.schedulePlaybackWatchdog(
+                    for: item,
+                    track: track,
+                    startingAt: self.elapsed,
+                    delay: .seconds(5)
+                )
+            }
+        }
+    }
+
+    private func schedulePlaybackWatchdog(
+        for item: AVPlayerItem,
+        track: Track,
+        startingAt seconds: Double,
+        delay: Duration = .seconds(6)
+    ) {
+        stalledRecoveryTask?.cancel()
+        stalledRecoveryTask = Task { [weak self, weak item] in
+            var checkpointSeconds = max(0, seconds)
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      let item,
+                      item === self.player.currentItem,
+                      self.currentTrack?.id == track.id,
+                      self.isPlaying else { return }
+                let actualSeconds = self.player.currentTime().seconds
+                let madeProgress = actualSeconds.isFinite
+                    && actualSeconds >= checkpointSeconds + 0.5
+                if madeProgress {
+                    checkpointSeconds = actualSeconds
+                    continue
+                }
+                if actualSeconds.isFinite,
+                   actualSeconds + 0.5 < checkpointSeconds {
+                    checkpointSeconds = actualSeconds
+                    continue
+                }
+
+                let recoverySeconds = max(
+                    0,
+                    actualSeconds.isFinite ? max(checkpointSeconds, actualSeconds) : checkpointSeconds
+                )
+                self.stalledRecoveryTask = nil
+                if self.playbackResourceLoader != nil {
                     self.restartPlayback(
                         track,
-                        at: stalledAt,
+                        at: recoverySeconds,
                         usePlaybackCache: false
                     )
+                    return
                 }
+                if self.fallbackTrackID != track.id {
+                    self.fallbackTrackID = track.id
+                    self.restartPlayback(
+                        track,
+                        at: recoverySeconds,
+                        streamURLOverride: "/api/v1/tracks/\(track.id)/fallback-stream",
+                        usePlaybackCache: false
+                    )
+                    return
+                }
+                self.player.pause()
+                self.isPlaying = false
+                self.currentItemNeedsReload = true
+                self.queueErrorMessage = "当前歌曲加载失败，请稍后重试或播放下一首"
+                self.updateNowPlaying()
+                return
             }
         }
     }
@@ -885,14 +987,7 @@ final class PlayerStore: ObservableObject {
             guard shouldResumePlayback,
                   options.contains(.shouldResume),
                   currentTrack != nil else { return }
-            do {
-                try AVAudioSession.sharedInstance().setActive(true)
-                player.play()
-                isPlaying = true
-            } catch {
-                isPlaying = false
-            }
-            updateNowPlaying()
+            resume()
         @unknown default:
             break
         }

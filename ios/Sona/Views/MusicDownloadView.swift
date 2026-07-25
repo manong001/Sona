@@ -683,6 +683,8 @@ struct MusicDownloadView: View {
 struct PlaylistSubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var personal: PersonalStore
+    @AppStorage("playlistVersionManagementEnabled")
+    private var playlistVersionManagementEnabled = false
     @State private var subscriptions: [PlaylistSubscription]
     @State private var syncingIDs: Set<String> = []
     @State private var downloadingMissingIDs: Set<String> = []
@@ -690,6 +692,7 @@ struct PlaylistSubscriptionsView: View {
     @State private var showsCreate = false
     @State private var editingSubscription: PlaylistSubscription?
     @State private var inspectingSubscription: PlaylistSubscription?
+    @State private var versioningSubscription: PlaylistSubscription?
     @State private var pendingCancellation: PlaylistSubscription?
     @State private var errorMessage: String?
     @State private var selectedSection = 0
@@ -774,6 +777,16 @@ struct PlaylistSubscriptionsView: View {
                 }
                 .desktopSheetSize(.large)
             }
+            .sheet(item: $versioningSubscription) { subscription in
+                PlaylistSubscriptionVersionsView(subscription: subscription) { updated in
+                    if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                        subscriptions[index] = updated
+                    }
+                    Task { await personal.refreshPlaylists() }
+                    changed()
+                }
+                .desktopSheetSize(.standard)
+            }
             .confirmationDialog(
                 "取消订阅？",
                 isPresented: Binding(
@@ -855,6 +868,16 @@ struct PlaylistSubscriptionsView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("修改订阅信息")
+                        if playlistVersionManagementEnabled {
+                            Button {
+                                versioningSubscription = subscription
+                            } label: {
+                                Image(systemName: "clock")
+                                    .frame(width: 28, height: 28)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("查看歌单版本")
+                        }
                         Button {
                             Task { await sync(subscription) }
                         } label: {
@@ -877,6 +900,25 @@ struct PlaylistSubscriptionsView: View {
                     )
                         .font(.caption)
                         .foregroundStyle(Color.sonaSecondaryText)
+
+                    if playlistVersionManagementEnabled,
+                       let selected = subscription.selectedVersionNumber,
+                       selected > 0 {
+                        Label(
+                            subscription.isFollowingLatest
+                                ? "当前 v\(selected) · 跟随最新"
+                                : "当前 v\(selected) · 已固定",
+                            systemImage: subscription.isFollowingLatest
+                                ? "arrow.triangle.2.circlepath"
+                                : "pin.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(
+                            subscription.isFollowingLatest
+                                ? Color.sonaSecondaryText
+                                : .orange
+                        )
+                    }
 
                     HStack(spacing: 12) {
                         subscriptionMetric(
@@ -963,6 +1005,11 @@ struct PlaylistSubscriptionsView: View {
         .padding(.vertical, 10)
         .listRowBackground(Color.sonaBackground)
         .contextMenu {
+            if playlistVersionManagementEnabled {
+                Button("歌单版本", systemImage: "clock") {
+                    versioningSubscription = subscription
+                }
+            }
             Button("修改订阅信息", systemImage: "pencil") {
                 editingSubscription = subscription
             }
@@ -1089,6 +1136,188 @@ struct PlaylistSubscriptionsView: View {
         if running > 0 { parts.append("\(running) 首下载中") }
         if queued > 0 { parts.append("\(queued) 首排队中") }
         return parts.joined(separator: " · ")
+    }
+}
+
+private struct PlaylistSubscriptionVersionsView: View {
+    @State private var subscription: PlaylistSubscription
+    @State private var versions: [PlaylistSubscriptionVersion] = []
+    @State private var isLoading = true
+    @State private var workingVersionNumber: Int?
+    @State private var isFollowingLatest = false
+    @State private var errorMessage: String?
+    let updated: (PlaylistSubscription) -> Void
+
+    init(
+        subscription: PlaylistSubscription,
+        updated: @escaping (PlaylistSubscription) -> Void
+    ) {
+        _subscription = State(initialValue: subscription)
+        self.updated = updated
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && versions.isEmpty {
+                    ProgressView("正在载入歌单版本…")
+                } else if versions.isEmpty {
+                    ContentUnavailableView(
+                        "还没有版本快照",
+                        systemImage: "clock",
+                        description: Text("首次成功同步后会自动生成 v1。")
+                    )
+                    .desktopEmptyState()
+                } else {
+                    List {
+                        if !subscription.isFollowingLatest {
+                            Button {
+                                Task { await followLatest() }
+                            } label: {
+                                HStack {
+                                    Label(
+                                        "恢复跟随最新版本",
+                                        systemImage: "arrow.triangle.2.circlepath"
+                                    )
+                                    Spacer()
+                                    if isFollowingLatest {
+                                        ProgressView()
+                                    }
+                                }
+                            }
+                            .disabled(isFollowingLatest || workingVersionNumber != nil)
+                        }
+
+                        ForEach(versions) { version in
+                            versionRow(version)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .refreshable { await load() }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.sonaBackground)
+            .navigationTitle("歌单版本")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("关闭")
+                }
+            }
+            .task { await load() }
+            .alert("操作失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "未知错误")
+            }
+        }
+    }
+
+    private func versionRow(_ version: PlaylistSubscriptionVersion) -> some View {
+        HStack(spacing: 14) {
+            ArtworkView(
+                path: artworkPath(version),
+                cornerRadius: 8,
+                thumbnailSize: 256
+            )
+            .frame(width: 58, height: 58)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text("v\(version.versionNumber)")
+                        .font(.headline)
+                    if version.latest {
+                        Text("最新")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.sonaGreen)
+                    }
+                    if version.selected {
+                        Text("当前")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Text("\(version.itemCount) 首 · \(versionDate(version.createdAt))")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+                Text(version.name)
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if workingVersionNumber == version.versionNumber {
+                ProgressView()
+            } else if version.selected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.sonaGreen)
+            } else {
+                Button("使用") {
+                    Task { await select(version) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(workingVersionNumber != nil || isFollowingLatest)
+            }
+        }
+        .padding(.vertical, 6)
+        .listRowBackground(Color.sonaBackground)
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            versions = try await APIClient.shared.playlistSubscriptionVersions(
+                id: subscription.id
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func select(_ version: PlaylistSubscriptionVersion) async {
+        workingVersionNumber = version.versionNumber
+        defer { workingVersionNumber = nil }
+        do {
+            subscription = try await APIClient.shared.selectPlaylistSubscriptionVersion(
+                id: subscription.id,
+                versionNumber: version.versionNumber
+            )
+            updated(subscription)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func followLatest() async {
+        isFollowingLatest = true
+        defer { isFollowingLatest = false }
+        do {
+            subscription = try await APIClient.shared
+                .followLatestPlaylistSubscriptionVersion(id: subscription.id)
+            updated(subscription)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func artworkPath(_ version: PlaylistSubscriptionVersion) -> String? {
+        guard version.artworkHash != nil else { return nil }
+        return "/api/v1/me/playlist-subscriptions/\(subscription.id)"
+            + "/versions/\(version.versionNumber)/artwork"
+    }
+
+    private func versionDate(_ milliseconds: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
+            .formatted(date: .abbreviated, time: .shortened)
     }
 }
 

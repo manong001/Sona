@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.auth;
 
+import cc.eu.sosee.sona.download.PlaylistSubscriptionVersionManager;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
@@ -16,9 +17,14 @@ import org.springframework.web.bind.annotation.RestController;
 class UserPreferencesController {
 
     private final UserPreferencesRepository repository;
+    private final PlaylistSubscriptionVersionManager versionManager;
 
-    UserPreferencesController(UserPreferencesRepository repository) {
+    UserPreferencesController(
+        UserPreferencesRepository repository,
+        PlaylistSubscriptionVersionManager versionManager
+    ) {
         this.repository = repository;
+        this.versionManager = versionManager;
     }
 
     @GetMapping
@@ -33,7 +39,14 @@ class UserPreferencesController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @Valid @RequestBody UserPreferencesValue preferences
     ) {
-        return UserPreferencesResponse.configured(repository.save(user.id(), preferences));
+        var wasEnabled = repository.find(user.id())
+            .map(stored -> stored.value().playlistVersionManagementEnabled())
+            .orElse(false);
+        var stored = repository.save(user.id(), preferences);
+        if (wasEnabled && !preferences.playlistVersionManagementEnabled()) {
+            versionManager.disableForUser(user.id());
+        }
+        return UserPreferencesResponse.configured(stored);
     }
 }
 
@@ -44,7 +57,8 @@ record UserPreferencesValue(
     @NotNull @Pattern(regexp = "left|right") String miniPlayerSide,
     @DecimalMin("0.0") double miniPlayerY,
     @NotNull @Pattern(regexp = "off|light|medium|heavy") String hapticStrength,
-    @NotNull @Pattern(regexp = "girl|spotify") String appIcon
+    @NotNull @Pattern(regexp = "girl|spotify") String appIcon,
+    boolean playlistVersionManagementEnabled
 ) {
 }
 
@@ -57,11 +71,12 @@ record UserPreferencesResponse(
     Double miniPlayerY,
     String hapticStrength,
     String appIcon,
+    boolean playlistVersionManagementEnabled,
     Long updatedAt
 ) {
     static UserPreferencesResponse empty() {
         return new UserPreferencesResponse(
-            false, null, null, null, null, null, null, null, null
+            false, null, null, null, null, null, null, null, false, null
         );
     }
 
@@ -78,6 +93,7 @@ record UserPreferencesResponse(
             value.miniPlayerY(),
             value.hapticStrength(),
             value.appIcon(),
+            value.playlistVersionManagementEnabled(),
             stored.updatedAt()
         );
     }
