@@ -9,6 +9,9 @@ struct NowPlayingView: View {
     @State private var showsLyrics = false
     @State private var showsQueue = false
     @State private var lyricLines: [LyricLine] = []
+    @State private var isSeeking = false
+    @State private var seekPreview = 0.0
+    @State private var seekCommitTask: Task<Void, Never>?
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -107,18 +110,43 @@ struct NowPlayingView: View {
                         VStack(spacing: 5) {
                             Slider(
                                 value: Binding(
-                                    get: { playbackProgress.elapsed },
-                                    set: { player.seek(to: $0) }
+                                    get: {
+                                        isSeeking ? seekPreview : playbackProgress.elapsed
+                                    },
+                                    set: { seekPreview = $0 }
                                 ),
-                                in: 0...max(playbackProgress.duration, 1)
+                                in: 0...max(playbackProgress.duration, 1),
+                                onEditingChanged: { editing in
+                                    if editing {
+                                        seekCommitTask?.cancel()
+                                        seekPreview = playbackProgress.elapsed
+                                        isSeeking = true
+                                    } else {
+                                        let trackID = track.id
+                                        let displayedDuration = playbackProgress.duration
+                                        seekCommitTask = Task { @MainActor in
+                                            await Task.yield()
+                                            guard !Task.isCancelled,
+                                                  player.currentTrack?.id == trackID else { return }
+                                            let target = seekPreview
+                                            isSeeking = false
+                                            player.seek(
+                                                to: target,
+                                                displayedDuration: displayedDuration
+                                            )
+                                        }
+                                    }
+                                }
                             )
                             .tint(.white)
+                            .id(track.id)
                             HStack {
-                                Text(time(playbackProgress.elapsed))
+                                Text(time(isSeeking ? seekPreview : playbackProgress.elapsed))
                                 Spacer()
                                 Text("-" + time(max(
                                     0,
-                                    playbackProgress.duration - playbackProgress.elapsed
+                                    playbackProgress.duration
+                                        - (isSeeking ? seekPreview : playbackProgress.elapsed)
                                 )))
                             }
                             .font(.caption2.monospacedDigit())
@@ -217,6 +245,10 @@ struct NowPlayingView: View {
                 .desktopSheetSize(.large)
         }
         .task(id: player.currentTrack?.id) {
+            seekCommitTask?.cancel()
+            seekCommitTask = nil
+            isSeeking = false
+            seekPreview = 0
             await loadLyrics(for: player.currentTrack)
         }
     }

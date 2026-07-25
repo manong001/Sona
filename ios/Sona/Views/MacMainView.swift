@@ -480,6 +480,9 @@ private struct MacPlayerBar: View {
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var playbackProgress: PlaybackProgress
     @EnvironmentObject private var personal: PersonalStore
+    @State private var isSeeking = false
+    @State private var seekPreview = 0.0
+    @State private var seekCommitTask: Task<Void, Never>?
     let queueIsVisible: Bool
     let toggleQueue: () -> Void
     let openNowPlaying: () -> Void
@@ -498,6 +501,12 @@ private struct MacPlayerBar: View {
         .padding(.horizontal, 16)
         .foregroundStyle(.white)
         .background(Color.black)
+        .onChange(of: player.currentTrack?.id) { _, _ in
+            seekCommitTask?.cancel()
+            seekCommitTask = nil
+            isSeeking = false
+            seekPreview = 0
+        }
     }
 
     private var currentTrack: some View {
@@ -553,15 +562,39 @@ private struct MacPlayerBar: View {
             .disabled(player.currentTrack == nil)
 
             HStack(spacing: 9) {
-                Text(time(playbackProgress.elapsed))
+                Text(time(isSeeking ? seekPreview : playbackProgress.elapsed))
                 Slider(
                     value: Binding(
-                        get: { playbackProgress.elapsed },
-                        set: { player.seek(to: $0) }
+                        get: {
+                            isSeeking ? seekPreview : playbackProgress.elapsed
+                        },
+                        set: { seekPreview = $0 }
                     ),
-                    in: 0...max(playbackProgress.duration, 1)
+                    in: 0...max(playbackProgress.duration, 1),
+                    onEditingChanged: { editing in
+                        if editing {
+                            seekCommitTask?.cancel()
+                            seekPreview = playbackProgress.elapsed
+                            isSeeking = true
+                        } else {
+                            let trackID = player.currentTrack?.id
+                            let displayedDuration = playbackProgress.duration
+                            seekCommitTask = Task { @MainActor in
+                                await Task.yield()
+                                guard !Task.isCancelled,
+                                      player.currentTrack?.id == trackID else { return }
+                                let target = seekPreview
+                                isSeeking = false
+                                player.seek(
+                                    to: target,
+                                    displayedDuration: displayedDuration
+                                )
+                            }
+                        }
+                    }
                 )
                 .tint(.white)
+                .id(player.currentTrack?.id)
                 Text(time(playbackProgress.duration))
             }
             .font(.caption2.monospacedDigit())

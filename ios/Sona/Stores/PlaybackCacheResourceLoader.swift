@@ -46,6 +46,9 @@ private struct PlaybackCacheMetadata: Codable {
     var contentLength: Int64?
     var contentType: String?
     var supportsByteRanges: Bool
+    var entityTag: String?
+    var lastModified: String?
+    var contentFingerprint: String?
     var ranges: [PlaybackByteRange]
     var lastAccessedAt: Date
 }
@@ -54,6 +57,9 @@ private struct PlaybackCacheInfo {
     let contentLength: Int64?
     let contentType: String?
     let supportsByteRanges: Bool
+    let entityTag: String?
+    let lastModified: String?
+    let contentFingerprint: String?
 }
 
 private actor PlaybackCacheStore {
@@ -92,7 +98,10 @@ private actor PlaybackCacheStore {
         return PlaybackCacheInfo(
             contentLength: metadata.contentLength,
             contentType: metadata.contentType,
-            supportsByteRanges: metadata.supportsByteRanges
+            supportsByteRanges: metadata.supportsByteRanges,
+            entityTag: metadata.entityTag,
+            lastModified: metadata.lastModified,
+            contentFingerprint: metadata.contentFingerprint
         )
     }
 
@@ -128,7 +137,10 @@ private actor PlaybackCacheStore {
         offset: Int64,
         contentLength: Int64?,
         contentType: String?,
-        supportsByteRanges: Bool
+        supportsByteRanges: Bool,
+        entityTag: String?,
+        lastModified: String?,
+        contentFingerprint: String?
     ) throws {
         guard !data.isEmpty else { return }
         let dataURL = dataURL(for: key)
@@ -136,8 +148,27 @@ private actor PlaybackCacheStore {
         let contentLengthChanged = existingMetadata?.contentLength != nil
             && contentLength != nil
             && existingMetadata?.contentLength != contentLength
+        let entityTagChanged = existingMetadata?.entityTag != nil
+            && entityTag != nil
+            && existingMetadata?.entityTag != entityTag
+        let lastModifiedChanged = existingMetadata?.lastModified != nil
+            && lastModified != nil
+            && existingMetadata?.lastModified != lastModified
+        let fingerprintChanged = existingMetadata?.contentFingerprint != nil
+            && contentFingerprint != nil
+            && existingMetadata?.contentFingerprint != contentFingerprint
+        let gainedVersionIdentity = existingMetadata != nil
+            && existingMetadata?.entityTag == nil
+            && existingMetadata?.lastModified == nil
+            && existingMetadata?.contentFingerprint == nil
+            && (entityTag != nil || lastModified != nil || contentFingerprint != nil)
+        let versionChanged = entityTagChanged
+            || lastModifiedChanged
+            || fingerprintChanged
+            || gainedVersionIdentity
         let shouldReset = existingMetadata?.originalURL != originalURL.absoluteString
             || contentLengthChanged
+            || versionChanged
         if !fileManager.fileExists(atPath: dataURL.path) {
             fileManager.createFile(atPath: dataURL.path, contents: nil)
         }
@@ -156,6 +187,9 @@ private actor PlaybackCacheStore {
                 contentLength: nil,
                 contentType: nil,
                 supportsByteRanges: false,
+                entityTag: nil,
+                lastModified: nil,
+                contentFingerprint: nil,
                 ranges: [],
                 lastAccessedAt: Date()
             )
@@ -165,6 +199,10 @@ private actor PlaybackCacheStore {
         metadata.contentType = contentType ?? metadata.contentType
         metadata.supportsByteRanges = supportsByteRanges
             || metadata.supportsByteRanges
+        metadata.entityTag = entityTag ?? metadata.entityTag
+        metadata.lastModified = lastModified ?? metadata.lastModified
+        metadata.contentFingerprint = contentFingerprint
+            ?? metadata.contentFingerprint
         metadata.ranges = PlaybackByteRanges.merging(
             metadata.ranges,
             with: PlaybackByteRange(
@@ -237,6 +275,8 @@ private struct PlaybackHTTPResponse {
     let contentLength: Int64?
     let contentType: String?
     let supportsByteRanges: Bool
+    let entityTag: String?
+    let lastModified: String?
 }
 
 private enum PlaybackCacheError: LocalizedError {
@@ -265,7 +305,9 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
     private let delegateQueue = DispatchQueue(label: "cc.eu.sosee.sona.playback-cache")
     private let lock = NSLock()
     private let session: URLSession
+    private let validationByteCount: Int64 = 64 * 1_024
     private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var validatedContentInfo: PlaybackCacheInfo?
 
     init(originalURL: URL) {
         self.originalURL = originalURL
@@ -382,7 +424,10 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
                 offset: response.responseStart,
                 contentLength: response.contentLength,
                 contentType: response.contentType,
-                supportsByteRanges: response.supportsByteRanges
+                supportsByteRanges: response.supportsByteRanges,
+                entityTag: response.entityTag,
+                lastModified: response.lastModified,
+                contentFingerprint: nil
             )
             guard let cached = try await PlaybackCacheStore.shared.read(
                 key: cacheKey,
@@ -398,16 +443,21 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
     }
 
     private func ensureContentInformation() async throws -> PlaybackCacheInfo {
-        if let info = await PlaybackCacheStore.shared.info(
+        if let validatedInfo = currentValidatedContentInfo() {
+            return validatedInfo
+        }
+        let cachedInfo = await PlaybackCacheStore.shared.info(
             for: cacheKey,
             originalURL: originalURL
-        ), info.contentLength != nil {
-            return info
-        }
-        let response = try await fetchWithRetry(range: 0..<2)
+        )
+        let response = try await fetchWithRetry(range: 0..<validationByteCount)
         guard let contentLength = response.contentLength, contentLength > 0 else {
             throw PlaybackCacheError.invalidResponse
         }
+        let header = Data(response.data.prefix(Int(validationByteCount)))
+        let contentFingerprint = SHA256.hash(data: header)
+            .map { String(format: "%02x", $0) }
+            .joined()
         try await PlaybackCacheStore.shared.write(
             response.data,
             key: cacheKey,
@@ -415,13 +465,22 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
             offset: response.responseStart,
             contentLength: response.contentLength,
             contentType: response.contentType,
-            supportsByteRanges: response.supportsByteRanges
+            supportsByteRanges: response.supportsByteRanges,
+            entityTag: response.entityTag,
+            lastModified: response.lastModified,
+            contentFingerprint: contentFingerprint
         )
-        return PlaybackCacheInfo(
+        let info = PlaybackCacheInfo(
             contentLength: contentLength,
-            contentType: response.contentType,
+            contentType: response.contentType ?? cachedInfo?.contentType,
             supportsByteRanges: response.supportsByteRanges
+                || cachedInfo?.supportsByteRanges == true,
+            entityTag: response.entityTag,
+            lastModified: response.lastModified,
+            contentFingerprint: contentFingerprint
         )
+        storeValidatedContentInfo(info)
+        return info
     }
 
     private func fetchWithRetry(
@@ -490,7 +549,9 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
             responseStart: responseStart,
             contentLength: contentLength,
             contentType: httpResponse.mimeType,
-            supportsByteRanges: httpResponse.statusCode == 206 || acceptsRanges
+            supportsByteRanges: httpResponse.statusCode == 206 || acceptsRanges,
+            entityTag: httpResponse.value(forHTTPHeaderField: "ETag"),
+            lastModified: httpResponse.value(forHTTPHeaderField: "Last-Modified")
         )
     }
 
@@ -541,6 +602,18 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
     private func removeTask(_ identifier: ObjectIdentifier) {
         lock.lock()
         tasks.removeValue(forKey: identifier)
+        lock.unlock()
+    }
+
+    private func currentValidatedContentInfo() -> PlaybackCacheInfo? {
+        lock.lock()
+        defer { lock.unlock() }
+        return validatedContentInfo
+    }
+
+    private func storeValidatedContentInfo(_ info: PlaybackCacheInfo) {
+        lock.lock()
+        validatedContentInfo = info
         lock.unlock()
     }
 }
