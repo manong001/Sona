@@ -176,7 +176,7 @@ class PlaylistSubscriptionService {
     }
 
     @Transactional
-    BestMatchResult applyBestMatches(String userId, String id) {
+    BestMatchResult applyBestMatches(String userId, String id, BestMatchMode mode) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         var session = matcher.open();
@@ -185,9 +185,9 @@ class PlaylistSubscriptionService {
             if (item.matchedTrackId() != null || !"SUGGESTED".equals(item.state())) {
                 continue;
             }
-            var best = subscription.strictMode()
-                ? session.bestStrictMatch(asCandidate(item), Set.of())
-                : session.bestStrictMatch(asCandidate(item), Set.of(), false);
+            var best = mode == BestMatchMode.IGNORE_BRACKETS
+                ? session.bestBracketMatch(asCandidate(item), Set.of())
+                : session.bestStrictMatch(asCandidate(item), Set.of());
             if (best.isPresent() && subscriptions.selectMatch(
                 userId, id, item.itemKey(), best.get().trackId()
             )) {
@@ -532,6 +532,11 @@ class PlaylistSubscriptionService {
     }
 
     record ItemPage(List<ItemDetail> items, boolean hasMore) {
+    }
+
+    enum BestMatchMode {
+        STRICT,
+        IGNORE_BRACKETS
     }
 
     record BestMatchResult(

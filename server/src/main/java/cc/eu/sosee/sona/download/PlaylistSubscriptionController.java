@@ -89,9 +89,10 @@ class PlaylistSubscriptionController {
     @PostMapping("/{id}/matches/best")
     PlaylistSubscriptionService.BestMatchResult applyBestMatches(
         @AuthenticationPrincipal AuthenticatedUser user,
-        @PathVariable String id
+        @PathVariable String id,
+        @RequestParam(defaultValue = "STRICT") PlaylistSubscriptionService.BestMatchMode mode
     ) {
-        return service.applyBestMatches(user.id(), id);
+        return service.applyBestMatches(user.id(), id, mode);
     }
 
     @PostMapping("/{id}/matches/download-originals")

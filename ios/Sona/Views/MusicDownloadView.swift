@@ -1192,17 +1192,22 @@ private struct PlaylistSubscriptionItemsView: View {
             .task { await load(reset: true) }
             .refreshable { await load(reset: true) }
             .confirmationDialog(
-                "一键采用最佳匹配？",
+                "选择一键匹配模式",
                 isPresented: $showsBestMatchConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("开始匹配") { Task { await applyBestMatches() } }
+                Button("严格匹配") {
+                    Task { await applyBestMatches(mode: .strict) }
+                }
+                Button("忽略括号匹配") {
+                    Task { await applyBestMatches(mode: .ignoreBrackets) }
+                }
                 Button("取消", role: .cancel) {}
             } message: {
                 Text(
-                    subscription.strictMode
-                        ? "严格模式仅采用歌名、歌手均完全一致的候选。"
-                        : "宽松模式允许候选包含额外合唱歌手。"
+                    "严格匹配要求完整歌名一致；忽略括号匹配会去除括号内容，"
+                        + "双方歌名都含 DJ 时不会匹配。两种模式均要求一方歌手集合包含另一方，"
+                        + "且忽略繁简体和字母大小写。"
                 )
             }
             .confirmationDialog(
@@ -1408,13 +1413,13 @@ private struct PlaylistSubscriptionItemsView: View {
         await load(reset: false)
     }
 
-    private func applyBestMatches() async {
+    private func applyBestMatches(mode: PlaylistSubscriptionBestMatchMode) async {
         guard !isApplyingBestMatches else { return }
         isApplyingBestMatches = true
         defer { isApplyingBestMatches = false }
         do {
             let result = try await APIClient.shared.applyBestPlaylistSubscriptionMatches(
-                id: subscription.id
+                id: subscription.id, mode: mode
             )
             updated(result.subscription)
             pendingSuggestedCount = result.subscription.suggestedCount

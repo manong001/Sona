@@ -102,6 +102,11 @@ struct PlaylistSubscriptionBestMatchResult: Decodable {
     let matchedCount: Int
 }
 
+enum PlaylistSubscriptionBestMatchMode: String {
+    case strict = "STRICT"
+    case ignoreBrackets = "IGNORE_BRACKETS"
+}
+
 struct PlaylistSubscriptionOriginalDownloadResult: Decodable {
     let subscription: PlaylistSubscription
     let queuedCount: Int

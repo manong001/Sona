@@ -875,10 +875,17 @@ final class APIClient {
     }
 
     func applyBestPlaylistSubscriptionMatches(
-        id: String
+        id: String, mode: PlaylistSubscriptionBestMatchMode
     ) async throws -> PlaylistSubscriptionBestMatchResult {
-        try await request(
-            path: "/api/v1/me/playlist-subscriptions/\(id)/matches/best",
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/playlist-subscriptions/\(id)/matches/best"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "mode", value: mode.rawValue)
+        ]
+        return try await request(
+            url: components.url!,
             method: "POST",
             timeout: 300
         )

@@ -159,11 +159,18 @@ class PlaylistSubscriptionMatcher {
         Optional<Suggestion> bestStrictMatch(
             DownloadCandidate candidate, Set<String> excludedTrackIds
         ) {
-            return bestStrictMatch(candidate, excludedTrackIds, true);
+            return bestOneClickMatch(candidate, excludedTrackIds, false);
         }
 
-        Optional<Suggestion> bestStrictMatch(
-            DownloadCandidate candidate, Set<String> excludedTrackIds, boolean strictMode
+        Optional<Suggestion> bestBracketMatch(
+            DownloadCandidate candidate, Set<String> excludedTrackIds
+        ) {
+            return bestOneClickMatch(candidate, excludedTrackIds, true);
+        }
+
+        private Optional<Suggestion> bestOneClickMatch(
+            DownloadCandidate candidate, Set<String> excludedTrackIds,
+            boolean ignoreBrackets
         ) {
             var title = normalizedText(candidate.title());
             if (title.isEmpty()) {
@@ -171,8 +178,7 @@ class PlaylistSubscriptionMatcher {
             }
             return automaticCandidates(candidate)
                 .filter(track -> !excludedTrackIds.contains(track.trackId()))
-                .filter(track -> isAutomaticMatch(candidate, track, strictMode)
-                    || isMetadataEquivalentMatch(candidate, track, strictMode))
+                .filter(track -> isOneClickMatch(candidate, track, ignoreBrackets))
                 .map(track -> new ScoredTrack(track, strictScore(candidate, track)))
                 .sorted(Comparator.comparingDouble(ScoredTrack::score).reversed()
                     .thenComparing(value -> value.track().trackId()))
@@ -348,6 +354,34 @@ class PlaylistSubscriptionMatcher {
         return !sourceArtists.isEmpty() && !localArtists.isEmpty()
             && (sourceArtists.containsAll(localArtists)
                 || localArtists.containsAll(sourceArtists));
+    }
+
+    private static boolean isOneClickMatch(
+        DownloadCandidate candidate, LocalTrack track, boolean ignoreBrackets
+    ) {
+        var sourceTitle = ignoreBrackets
+            ? normalizedBaseTitle(candidate.title())
+            : normalizedText(candidate.title());
+        var localTitle = ignoreBrackets
+            ? normalizedBaseTitle(track.title())
+            : normalizedText(track.title());
+        if (sourceTitle.isEmpty() || !sourceTitle.equals(localTitle)
+            || (ignoreBrackets
+                && containsDj(candidate.title())
+                && containsDj(track.title()))) {
+            return false;
+        }
+        var sourceArtists = normalizedArtistSet(candidate.artist());
+        var localArtists = normalizedArtistSet(track.artist());
+        return !sourceArtists.isEmpty() && !localArtists.isEmpty()
+            && (sourceArtists.containsAll(localArtists)
+                || localArtists.containsAll(sourceArtists));
+    }
+
+    private static boolean containsDj(String value) {
+        return Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)
+            .toLowerCase(Locale.ROOT)
+            .contains("dj");
     }
 
     private boolean hasMetadataVersionMismatch(
