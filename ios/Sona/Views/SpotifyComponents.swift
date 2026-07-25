@@ -436,20 +436,45 @@ func sonaUniqueHistoryTracks(_ history: [HistoryItem], library: LibraryStore) ->
 
 struct SonaAvatarButton: View {
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var social: SocialStore
     let username: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            SonaAvatarView(
-                username: username,
-                avatarPreset: session.currentUser?.avatarPreset,
-                avatarURL: session.currentUser?.avatarURL,
-                size: 32
-            )
+            ZStack(alignment: .topTrailing) {
+                SonaAvatarView(
+                    username: username,
+                    avatarPreset: session.currentUser?.avatarPreset,
+                    avatarURL: session.currentUser?.avatarURL,
+                    size: 32
+                )
+                if social.unreadMessageCount > 0 {
+                    SonaCountBadge(count: social.unreadMessageCount)
+                        .offset(x: 7, y: -7)
+                }
+            }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("打开账户菜单")
+        .accessibilityLabel(
+            social.unreadMessageCount > 0
+                ? "打开账户菜单，\(social.unreadMessageCount) 条未读消息"
+                : "打开账户菜单"
+        )
+    }
+}
+
+struct SonaCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 99 ? "99+" : "\(count)")
+            .font(.caption2.bold().monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, count > 9 ? 5 : 0)
+            .frame(minWidth: 20, minHeight: 20)
+            .background(.red, in: Capsule())
+            .accessibilityLabel("\(count) 条未读消息")
     }
 }
 

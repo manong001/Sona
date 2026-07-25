@@ -6,6 +6,7 @@ struct MainTabView: View {
     @EnvironmentObject private var personal: PersonalStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var social: SocialStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
@@ -120,6 +121,7 @@ struct MainTabView: View {
 #if !targetEnvironment(macCatalyst)
         .sheet(isPresented: $showsNowPlaying) {
             NowPlayingView()
+                .presentationDragIndicator(.visible)
         }
 #endif
         .sheet(isPresented: $showsAccountSecurity) {
@@ -179,6 +181,16 @@ struct MainTabView: View {
         .task {
             await checkForUpdateOnLaunch()
         }
+        .task(id: session.currentUser?.id) {
+            guard session.currentUser != nil else {
+                social.reset()
+                return
+            }
+            while !Task.isCancelled {
+                try? await social.loadConversations()
+                try? await Task.sleep(for: .seconds(15))
+            }
+        }
         .onChange(of: player.currentTrack?.id) { oldValue, newValue in
             guard let newValue, newValue != oldValue else { return }
             personal.notePlayback(trackID: newValue)
@@ -203,6 +215,8 @@ struct MainTabView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 Task { await player.flushState() }
+            } else if phase == .active, session.currentUser != nil {
+                Task { try? await social.loadConversations() }
             }
         }
     }

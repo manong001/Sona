@@ -11,6 +11,7 @@ enum SonaTab: Hashable {
 struct ProfileDrawerView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var social: SocialStore
     let selectTab: (SonaTab) -> Void
     let manageAccount: () -> Void
     let editAvatar: () -> Void
@@ -66,7 +67,11 @@ struct ProfileDrawerView: View {
                 close()
                 showAchievements()
             }
-            drawerButton("乐友圈", systemImage: "bubble.left.and.bubble.right.fill") {
+            drawerButton(
+                "乐友圈",
+                systemImage: "bubble.left.and.bubble.right.fill",
+                badgeCount: social.unreadMessageCount
+            ) {
                 close()
                 showSocial()
             }
@@ -107,14 +112,21 @@ struct ProfileDrawerView: View {
     private func drawerButton(
         _ title: String,
         systemImage: String,
+        badgeCount: Int = 0,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.body.weight(.medium))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 58)
-                .padding(.horizontal, 20)
+            HStack {
+                Label(title, systemImage: systemImage)
+                Spacer()
+                if badgeCount > 0 {
+                    SonaCountBadge(count: badgeCount)
+                }
+            }
+            .font(.body.weight(.medium))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 58)
+            .padding(.horizontal, 20)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)

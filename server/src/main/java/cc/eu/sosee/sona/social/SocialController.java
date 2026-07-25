@@ -9,6 +9,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -35,10 +36,12 @@ class SocialController {
     private static final Set<String> AVATAR_PRESETS = Set.of(
         "aurora", "cosmos", "forest", "ocean", "sunset", "candy", "ember", "midnight"
     );
+    private static final long TYPING_TTL_MILLIS = 4_000;
 
     private final SocialRepository repository;
     private final SocialMediaService mediaService;
     private final UserAvatarService avatarService;
+    private final Map<TypingKey, Long> typingExpirations = new ConcurrentHashMap<>();
 
     SocialController(
         SocialRepository repository,
@@ -120,6 +123,43 @@ class SocialController {
         return repository.messages(actor, peerId);
     }
 
+    @GetMapping("/typing/{peerId}")
+    Map<String, Boolean> typing(
+        @AuthenticationPrincipal AuthenticatedUser actor,
+        @PathVariable String peerId
+    ) {
+        repository.requireFriend(actor.id(), peerId);
+        var key = new TypingKey(peerId, actor.id());
+        var expiration = typingExpirations.get(key);
+        var typing = expiration != null && expiration > System.currentTimeMillis();
+        if (!typing) {
+            typingExpirations.remove(key);
+        }
+        return Map.of("typing", typing);
+    }
+
+    @PutMapping("/typing/{peerId}")
+    ResponseEntity<Void> startTyping(
+        @AuthenticationPrincipal AuthenticatedUser actor,
+        @PathVariable String peerId
+    ) {
+        repository.requireFriend(actor.id(), peerId);
+        typingExpirations.put(
+            new TypingKey(actor.id(), peerId),
+            System.currentTimeMillis() + TYPING_TTL_MILLIS
+        );
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/typing/{peerId}")
+    ResponseEntity<Void> stopTyping(
+        @AuthenticationPrincipal AuthenticatedUser actor,
+        @PathVariable String peerId
+    ) {
+        typingExpirations.remove(new TypingKey(actor.id(), peerId));
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/messages")
     ResponseEntity<SocialMessageResponse> sendMessage(
         @AuthenticationPrincipal AuthenticatedUser actor,
@@ -129,6 +169,7 @@ class SocialController {
             actor, request.recipientId(), request.clientMessageId(), request.kind(),
             request.text(), request.payload()
         );
+        typingExpirations.remove(new TypingKey(actor.id(), request.recipientId()));
         return ResponseEntity.created(URI.create("/api/v1/social/messages/" + value.id())).body(value);
     }
 
@@ -169,6 +210,9 @@ class SocialController {
                 ).replace("+", "%20")
             )
             .body(value.resource());
+    }
+
+    private record TypingKey(String senderId, String recipientId) {
     }
 
     @GetMapping("/moments")

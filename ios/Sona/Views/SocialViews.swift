@@ -221,11 +221,7 @@ private struct SocialContactRow: View {
             }
             Spacer()
             if let count = user.unreadCount, count > 0 {
-                Text("\(min(count, 99))")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 20, minHeight: 20)
-                    .background(Color.red, in: Circle())
+                SonaCountBadge(count: count)
             }
         }
         .padding(.vertical, 4)
@@ -312,6 +308,8 @@ struct SocialChatView: View {
     @State private var draft = ""
     @State private var showsTrackPicker = false
     @State private var errorMessage: String?
+    @State private var lastTypingUpdate = Date.distantPast
+    @State private var typingStopTask: Task<Void, Never>?
 
     private var values: [SocialMessage] { social.messages[peer.id] ?? [] }
     private var canSend: Bool { social.friends.contains(where: { $0.id == peer.id }) }
@@ -346,6 +344,14 @@ struct SocialChatView: View {
                 .onChange(of: values.count) { _, _ in
                     if let id = values.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 }
+            }
+            if social.isTyping(with: peer.id) {
+                Text("\(peer.displayName) 正在输入…")
+                    .font(.caption)
+                    .foregroundStyle(Color.sonaSecondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
             }
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
@@ -384,6 +390,19 @@ struct SocialChatView: View {
                 try? await social.loadMessages(with: peer.id)
             }
         }
+        .task {
+            while !Task.isCancelled {
+                try? await social.loadTyping(with: peer.id)
+                try? await Task.sleep(for: .seconds(1.25))
+            }
+        }
+        .onChange(of: draft) { _, value in
+            updateTypingState(for: value)
+        }
+        .onDisappear {
+            typingStopTask?.cancel()
+            Task { try? await social.setTyping(false, with: peer.id) }
+        }
         .alert("消息发送失败", isPresented: hasError($errorMessage)) {
             Button("知道了", role: .cancel) {}
         } message: { Text(errorMessage ?? "") }
@@ -403,6 +422,29 @@ struct SocialChatView: View {
     private func recall(_ message: SocialMessage) {
         Task { do { try await social.recall(message, peerId: peer.id) } catch { errorMessage = error.localizedDescription } }
     }
+
+    private func updateTypingState(for value: String) {
+        typingStopTask?.cancel()
+        let hasText = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasText else {
+            Task { try? await social.setTyping(false, with: peer.id) }
+            return
+        }
+
+        let now = Date()
+        if now.timeIntervalSince(lastTypingUpdate) >= 1 {
+            lastTypingUpdate = now
+            Task { try? await social.setTyping(true, with: peer.id) }
+        }
+        typingStopTask = Task {
+            do {
+                try await Task.sleep(for: .seconds(2.5))
+            } catch {
+                return
+            }
+            try? await social.setTyping(false, with: peer.id)
+        }
+    }
 }
 
 private struct SocialMessageBubble: View {
@@ -411,35 +453,42 @@ private struct SocialMessageBubble: View {
     var body: some View {
         HStack {
             if message.mine { Spacer(minLength: 54) }
-            Group {
-                if message.recalledAt != nil {
-                    Label(
-                        message.mine ? "你撤回了一条消息" : "对方撤回了一条消息",
-                        systemImage: "arrow.uturn.backward"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(Color.sonaSecondaryText)
-                } else if message.kind == "TRACK", let track = message.payload {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label("分享歌曲", systemImage: "music.note")
-                            .font(.caption.bold())
-                            .foregroundStyle(Color.sonaGreen)
-                        Text(track.title).font(.body.bold()).lineLimit(1)
-                        Text(track.artist).font(.caption).foregroundStyle(Color.sonaSecondaryText)
+            VStack(alignment: message.mine ? .trailing : .leading, spacing: 4) {
+                Group {
+                    if message.recalledAt != nil {
+                        Label(
+                            message.mine ? "你撤回了一条消息" : "对方撤回了一条消息",
+                            systemImage: "arrow.uturn.backward"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                    } else if message.kind == "TRACK", let track = message.payload {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("分享歌曲", systemImage: "music.note")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color.sonaGreen)
+                            Text(track.title).font(.body.bold()).lineLimit(1)
+                            Text(track.artist).font(.caption).foregroundStyle(Color.sonaSecondaryText)
+                        }
+                        .frame(maxWidth: 230, alignment: .leading)
+                    } else {
+                        Text(message.text)
+                            .font(message.kind == "STICKER" ? .system(size: 34) : .body)
                     }
-                    .frame(maxWidth: 230, alignment: .leading)
-                } else {
-                    Text(message.text)
-                        .font(message.kind == "STICKER" ? .system(size: 34) : .body)
+                }
+                .padding(message.kind == "STICKER" && message.recalledAt == nil ? 4 : 12)
+                .background(
+                    message.kind == "STICKER" && message.recalledAt == nil
+                        ? Color.clear
+                        : message.mine ? Color.sonaGreen.opacity(0.9) : Color.sonaSurface,
+                    in: RoundedRectangle(cornerRadius: 16)
+                )
+                if message.mine && message.recalledAt == nil {
+                    Text(message.readAt == nil ? "未读" : "已读")
+                        .font(.caption2)
+                        .foregroundStyle(Color.sonaSecondaryText)
                 }
             }
-            .padding(message.kind == "STICKER" && message.recalledAt == nil ? 4 : 12)
-            .background(
-                message.kind == "STICKER" && message.recalledAt == nil
-                    ? Color.clear
-                    : message.mine ? Color.sonaGreen.opacity(0.9) : Color.sonaSurface,
-                in: RoundedRectangle(cornerRadius: 16)
-            )
             if !message.mine { Spacer(minLength: 54) }
         }
         .frame(maxWidth: .infinity)

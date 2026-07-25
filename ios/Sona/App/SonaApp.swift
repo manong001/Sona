@@ -90,7 +90,7 @@ extension View {
             idealHeight: size.height
         )
 #else
-        self
+        presentationDragIndicator(.visible)
 #endif
     }
 

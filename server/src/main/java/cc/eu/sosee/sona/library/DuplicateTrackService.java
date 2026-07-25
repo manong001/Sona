@@ -37,6 +37,12 @@ class DuplicateTrackService {
         "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*]|【[^【】]*】"
             + "|\\{[^{}]*}|「[^「」]*」|『[^『』]*』"
     );
+    private static final Pattern DOWNLOAD_FILENAME_SUFFIX = Pattern.compile(
+        "\\s+-\\s+[\\p{Alnum}_-]{6,}(?:\\s*\\(\\d+\\))?$"
+    );
+    private static final Pattern NUMBERED_COPY_QUALIFIER = Pattern.compile(
+        "^[\\(\\[\\{]\\s*\\d+\\s*[\\)\\]\\}]$"
+    );
     private static final long MAX_EXACT_DURATION_DIFFERENCE_MS = 5_000;
 
     private final TrackStore trackStore;
@@ -212,7 +218,9 @@ class DuplicateTrackService {
         }
         return normalizedTitle(first, mode).equals(normalizedTitle(second, mode))
             && artistsMatch(first.artist(), second.artist())
-            && (mode != DuplicateMatchMode.EXACT || exactDurationMatches(first, second));
+            && (mode != DuplicateMatchMode.EXACT
+                || (exactDurationMatches(first, second)
+                    && filenameQualifiersMatch(first, second)));
     }
 
     private String normalizedTitle(TrackRecord track, DuplicateMatchMode mode) {
@@ -283,6 +291,34 @@ class DuplicateTrackService {
             && second.durationMs() > 0
             && Math.abs(first.durationMs() - second.durationMs())
                 <= MAX_EXACT_DURATION_DIFFERENCE_MS;
+    }
+
+    private boolean filenameQualifiersMatch(TrackRecord first, TrackRecord second) {
+        return filenameTitleQualifiers(first).equals(filenameTitleQualifiers(second));
+    }
+
+    private List<String> filenameTitleQualifiers(TrackRecord track) {
+        var filename = track.path().getFileName().toString();
+        var extensionIndex = filename.lastIndexOf('.');
+        var stem = extensionIndex > 0 ? filename.substring(0, extensionIndex) : filename;
+        stem = Normalizer.normalize(stem, Normalizer.Form.NFKC);
+        stem = DOWNLOAD_FILENAME_SUFFIX.matcher(stem).replaceFirst("").strip();
+
+        var matcher = BRACKETED_CONTENT.matcher(stem);
+        if (!matcher.find()
+            || !TextNormalizer.sortKey(ZhConverterUtil.toSimple(stem.substring(0, matcher.start())))
+                .equals(normalizedTitle(track, DuplicateMatchMode.EXACT))) {
+            return List.of();
+        }
+
+        var qualifiers = new ArrayList<String>();
+        do {
+            var qualifier = Normalizer.normalize(matcher.group(), Normalizer.Form.NFKC);
+            if (!NUMBERED_COPY_QUALIFIER.matcher(qualifier).matches()) {
+                qualifiers.add(TextNormalizer.sortKey(ZhConverterUtil.toSimple(qualifier)));
+            }
+        } while (matcher.find());
+        return List.copyOf(qualifiers);
     }
 
     private DuplicateTrackGroup group(

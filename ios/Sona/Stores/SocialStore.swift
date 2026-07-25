@@ -9,10 +9,17 @@ final class SocialStore: ObservableObject {
     @Published private(set) var conversations: [SocialUser] = []
     @Published private(set) var moments: [SocialMoment] = []
     @Published private(set) var messages: [String: [SocialMessage]] = [:]
+    @Published private(set) var typingPeerIDs: Set<String> = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
     private let session: URLSession
+
+    var unreadMessageCount: Int {
+        conversations.reduce(0) {
+            $0 + max(0, $1.unreadCount ?? 0)
+        }
+    }
 
     init() {
         let configuration = URLSessionConfiguration.default
@@ -30,6 +37,7 @@ final class SocialStore: ObservableObject {
         conversations = []
         moments = []
         messages = [:]
+        typingPeerIDs = []
         errorMessage = nil
     }
 
@@ -109,6 +117,29 @@ final class SocialStore: ObservableObject {
     func loadMessages(with peerId: String) async throws {
         messages[peerId] = try await request(path: "/api/v1/social/messages/\(peerId)")
         try await loadConversations()
+    }
+
+    func loadTyping(with peerId: String) async throws {
+        struct Response: Decodable {
+            let typing: Bool
+        }
+        let response: Response = try await request(path: "/api/v1/social/typing/\(peerId)")
+        if response.typing {
+            typingPeerIDs.insert(peerId)
+        } else {
+            typingPeerIDs.remove(peerId)
+        }
+    }
+
+    func setTyping(_ typing: Bool, with peerId: String) async throws {
+        try await requestVoid(
+            path: "/api/v1/social/typing/\(peerId)",
+            method: typing ? "PUT" : "DELETE"
+        )
+    }
+
+    func isTyping(with peerId: String) -> Bool {
+        typingPeerIDs.contains(peerId)
     }
 
     func sendText(_ text: String, to peerId: String) async throws {

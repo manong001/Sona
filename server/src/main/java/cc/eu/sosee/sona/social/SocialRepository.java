@@ -142,6 +142,13 @@ class SocialRepository {
             .update();
     }
 
+    void requireFriend(String actorId, String peerId) {
+        requireUser(peerId);
+        if (!isFriend(actorId, peerId)) {
+            throw new ResponseStatusException(FORBIDDEN, "Add this user as a friend first");
+        }
+    }
+
     @Transactional
     List<SocialMessageResponse> messages(AuthenticatedUser actor, String peerId) {
         requireUser(peerId);

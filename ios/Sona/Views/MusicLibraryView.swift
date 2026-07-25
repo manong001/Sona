@@ -41,6 +41,7 @@ struct MusicLibraryView: View {
     @State private var playlistDeletionErrorMessage: String?
     @State private var movingPlaylistID: String?
     @State private var playlistOrderErrorMessage: String?
+    @Namespace private var playlistSubscriptionSelection
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     let openDrawer: () -> Void
     var requestedCollectionID: String? = nil
@@ -426,7 +427,7 @@ struct MusicLibraryView: View {
         HStack(spacing: 0) {
             joinedFilterButton(
                 title: Filter.playlists.rawValue,
-                isSelected: isPlaylistFilter
+                isSelected: selectedFilter == .playlists
             ) {
                 selectFilter(.playlists)
             }
@@ -437,6 +438,7 @@ struct MusicLibraryView: View {
                 selectFilter(.subscriptions)
             }
         }
+        .background(Color.sonaChip, in: Capsule())
         .clipShape(Capsule())
     }
 
@@ -448,12 +450,25 @@ struct MusicLibraryView: View {
             .foregroundStyle(isSelected ? Color.black.opacity(0.86) : .white)
             .padding(.horizontal, 13)
             .frame(height: 30)
-            .background(isSelected ? Color.sonaGreen : Color.sonaChip)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(Color.sonaGreen)
+                        .matchedGeometryEffect(
+                            id: "playlist-subscription-selection",
+                            in: playlistSubscriptionSelection
+                        )
+                }
+            }
             .buttonStyle(.plain)
     }
 
     private func selectFilter(_ filter: Filter) {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        guard selectedFilter != filter else { return }
+        let feedback = UISelectionFeedbackGenerator()
+        feedback.prepare()
+        feedback.selectionChanged()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
             selectedFilter = filter
         }
     }

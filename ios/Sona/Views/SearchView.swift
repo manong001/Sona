@@ -15,6 +15,7 @@ struct SearchView: View {
     @State private var searchErrorMessage: String?
     @State private var showsAddedToast = false
     @State private var addedToastTask: Task<Void, Never>?
+    @FocusState private var isSearchFocused: Bool
     let openDrawer: () -> Void
 
     private struct Category: Identifiable {
@@ -160,10 +161,22 @@ struct SearchView: View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 22, weight: .semibold))
-            TextField("想听什么？", text: $query)
-                .font(.system(size: 17, weight: .medium))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            ZStack(alignment: .leading) {
+                if query.isEmpty {
+                    Text("想听什么？")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.5))
+                        .padding(.leading, isSearchFocused ? 6 : 0)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $query)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.black)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($isSearchFocused)
+                    .accessibilityLabel("搜索")
+            }
             if !query.isEmpty {
                 Button {
                     query = ""
