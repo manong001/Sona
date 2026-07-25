@@ -38,7 +38,10 @@ class DuplicateTrackService {
             + "|\\{[^{}]*}|「[^「」]*」|『[^『』]*』"
     );
     private static final Pattern DOWNLOAD_FILENAME_SUFFIX = Pattern.compile(
-        "\\s+-\\s+[\\p{Alnum}_-]{6,}(?:\\s*\\(\\d+\\))?$"
+        "\\s+(?:-|_)\\s+[\\p{Alnum}_-]{6,}(?:\\s*\\(\\d+\\))?$"
+    );
+    private static final Pattern DOWNLOADER_FIELD_SEPARATOR = Pattern.compile(
+        "\\s+_\\s+"
     );
     private static final long MAX_EXACT_DURATION_DIFFERENCE_MS = 5_000;
 
@@ -214,7 +217,7 @@ class DuplicateTrackService {
             return false;
         }
         return normalizedTitle(first, mode).equals(normalizedTitle(second, mode))
-            && artistsMatch(first.artist(), second.artist())
+            && artistsMatch(first.artist(), second.artist(), mode)
             && (mode != DuplicateMatchMode.EXACT
                 || (exactDurationMatches(first, second)
                     && exactIdentityTitlesMatch(first, second)));
@@ -227,12 +230,18 @@ class DuplicateTrackService {
         return TextNormalizer.sortKey(ZhConverterUtil.toSimple(title));
     }
 
-    private boolean artistsMatch(String first, String second) {
+    private boolean artistsMatch(
+        String first, String second, DuplicateMatchMode mode
+    ) {
         var firstArtists = normalizedArtistSet(first);
         var secondArtists = normalizedArtistSet(second);
-        return !firstArtists.isEmpty() && !secondArtists.isEmpty()
-            && (firstArtists.containsAll(secondArtists)
-                || secondArtists.containsAll(firstArtists));
+        if (firstArtists.isEmpty() || secondArtists.isEmpty()) {
+            return false;
+        }
+        return mode == DuplicateMatchMode.EXACT
+            ? firstArtists.equals(secondArtists)
+            : firstArtists.containsAll(secondArtists)
+                || secondArtists.containsAll(firstArtists);
     }
 
     private Set<String> normalizedArtistSet(String value) {
@@ -304,6 +313,10 @@ class DuplicateTrackService {
             return normalizedTitle(track, DuplicateMatchMode.EXACT);
         }
         var filenameTitle = stem.substring(0, suffix.start()).strip();
+        var fields = DOWNLOADER_FIELD_SEPARATOR.split(filenameTitle);
+        if (fields.length > 1) {
+            filenameTitle = fields[fields.length - 1].strip();
+        }
         return filenameTitle.isEmpty()
             ? normalizedTitle(track, DuplicateMatchMode.EXACT)
             : TextNormalizer.sortKey(ZhConverterUtil.toSimple(filenameTitle));

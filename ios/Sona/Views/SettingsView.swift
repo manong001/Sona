@@ -892,7 +892,7 @@ private enum DuplicateTrackMatchMode: String, CaseIterable {
     var description: String {
         switch self {
         case .exact:
-            "歌曲名不区分繁简和大小写，歌手集合可包含其他歌手；一键去重保留音质最高的版本。"
+            "歌曲名不区分繁简和大小写，歌手集合必须完全一致；一键去重保留音质最高的版本。"
         case .titleWithoutBrackets:
             "在完全匹配基础上忽略括号内容；含 DJ 的歌曲不参与匹配。"
         }
