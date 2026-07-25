@@ -68,6 +68,19 @@ final class APIClient {
         try await requestVoid(path: "/api/v1/auth/logout-all", method: "POST")
     }
 
+    func userPreferences() async throws -> UserPreferencesResponse {
+        try await request(path: "/api/v1/me/preferences")
+    }
+
+    func saveUserPreferences(_ preferences: UserPreferences) async throws
+        -> UserPreferencesResponse {
+        try await request(
+            path: "/api/v1/me/preferences",
+            method: "PUT",
+            body: try encoder.encode(preferences)
+        )
+    }
+
     func users() async throws -> [ManagedUser] {
         try await request(path: "/api/v1/users")
     }

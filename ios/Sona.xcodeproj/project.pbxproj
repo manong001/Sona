@@ -43,6 +43,8 @@
 		200000000000000000000022 /* LoginCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000022 /* LoginCredentialStore.swift */; };
 		200000000000000000000023 /* CachedRemoteImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000023 /* CachedRemoteImage.swift */; };
 		200000000000000000000024 /* PlaybackCacheResourceLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000024 /* PlaybackCacheResourceLoader.swift */; };
+		200000000000000000000025 /* UserPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000025 /* UserPreferences.swift */; };
+		200000000000000000000026 /* UserPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000026 /* UserPreferencesStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -82,6 +84,8 @@
 		100000000000000000000022 /* LoginCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/LoginCredentialStore.swift; sourceTree = "<group>"; };
 		100000000000000000000023 /* CachedRemoteImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Views/CachedRemoteImage.swift; sourceTree = "<group>"; };
 		100000000000000000000024 /* PlaybackCacheResourceLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/PlaybackCacheResourceLoader.swift; sourceTree = "<group>"; };
+		100000000000000000000025 /* UserPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Models/UserPreferences.swift; sourceTree = "<group>"; };
+		100000000000000000000026 /* UserPreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sona/Stores/UserPreferencesStore.swift; sourceTree = "<group>"; };
 		900000000000000000000001 /* Sona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sona.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -135,6 +139,8 @@
 				100000000000000000000022 /* LoginCredentialStore.swift */,
 				100000000000000000000023 /* CachedRemoteImage.swift */,
 				100000000000000000000024 /* PlaybackCacheResourceLoader.swift */,
+				100000000000000000000025 /* UserPreferences.swift */,
+				100000000000000000000026 /* UserPreferencesStore.swift */,
 				300000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -252,6 +258,8 @@
 				200000000000000000000022 /* LoginCredentialStore.swift in Sources */,
 				200000000000000000000023 /* CachedRemoteImage.swift in Sources */,
 				200000000000000000000024 /* PlaybackCacheResourceLoader.swift in Sources */,
+				200000000000000000000025 /* UserPreferences.swift in Sources */,
+				200000000000000000000026 /* UserPreferencesStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -298,7 +306,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sona/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.2.33;
+				MARKETING_VERSION = 1.2.34;
 				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
@@ -322,7 +330,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sona/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.2.33;
+				MARKETING_VERSION = 1.2.34;
 				PRODUCT_BUNDLE_IDENTIFIER = cc.eu.sosee.sona;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;

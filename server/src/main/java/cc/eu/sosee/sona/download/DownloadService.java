@@ -326,7 +326,38 @@ class DownloadService {
         if (replacement.isPresent()) {
             return replacement;
         }
-        return bestMatchingCandidate(task, searchCandidates(query, List.of()), strictMatch);
+        replacement = bestMatchingCandidate(
+            task, searchCandidates(query, List.of()), strictMatch
+        );
+        if (replacement.isPresent()) {
+            return replacement;
+        }
+        return findReplacementFromIndividualSources(task, query, strictMatch);
+    }
+
+    private Optional<DownloadCandidate> findReplacementFromIndividualSources(
+        DownloadTask task, String query, boolean strictMatch
+    ) {
+        List<DownloadSource> sources;
+        try {
+            sources = gateway.sources();
+        } catch (RuntimeException exception) {
+            LOGGER.debug("无法读取音源列表，跳过逐音源重搜：query={}", query, exception);
+            return Optional.empty();
+        }
+        for (var source : sources) {
+            if (source.id().equals(task.source())
+                || source.id().equals("SpotifyMusicClient")) {
+                continue;
+            }
+            var replacement = bestMatchingCandidate(
+                task, searchCandidates(query, List.of(source.id())), strictMatch
+            );
+            if (replacement.isPresent()) {
+                return replacement;
+            }
+        }
+        return Optional.empty();
     }
 
     private List<DownloadCandidate> searchCandidates(String query, List<String> sources) {

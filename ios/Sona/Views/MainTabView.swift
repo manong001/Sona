@@ -7,6 +7,7 @@ struct MainTabView: View {
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var social: SocialStore
+    @EnvironmentObject private var userPreferences: UserPreferencesStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var showsNowPlaying = false
     @State private var showsDrawer = false
@@ -147,6 +148,7 @@ struct MainTabView: View {
         .alert("发现新版本", isPresented: $showsUpdateAlert) {
             Button("稍后", role: .cancel) { }
             Button("前往更新") {
+                player.pauseForUpdate()
                 selectedTab = .settings
             }
         } message: {
@@ -154,6 +156,7 @@ struct MainTabView: View {
         }
         .task {
             guard let userID = session.currentUser?.id else { return }
+            await userPreferences.beginSession(userID: userID)
             personal.configure(userID: userID)
             player.configureFavoriteCommand(
                 isFavorite: { personal.favoriteIDs.contains($0) },

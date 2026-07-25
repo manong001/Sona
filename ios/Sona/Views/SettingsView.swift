@@ -14,6 +14,8 @@ struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var player: PlayerStore
+    @EnvironmentObject private var userPreferences: UserPreferencesStore
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
@@ -206,6 +208,25 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("用户配置") {
+                    Button {
+                        Task { await userPreferences.restoreFromServer() }
+                    } label: {
+                        HStack {
+                            Label("从服务器恢复配置", systemImage: "icloud.and.arrow.down")
+                            Spacer()
+                            if userPreferences.isSyncing {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(userPreferences.isSyncing)
+
+                    Text(userPreferences.statusMessage ?? "配置修改后会自动保存到当前账号")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("App 图标") {
                     appIconButton(
                         title: "耳机少女",
@@ -228,8 +249,9 @@ struct SettingsView: View {
             .navigationTitle("设置")
             .toolbarBackground(Color.sonaBackground, for: .navigationBar)
             .onAppear {
-                appIconPreference = UIApplication.shared.alternateIconName == nil
-                    ? "girl" : "spotify"
+                appIconPreference = UserDefaults.standard.string(
+                    forKey: "appIconPreference"
+                ) ?? (UIApplication.shared.alternateIconName == nil ? "girl" : "spotify")
                 if let availableRelease,
                    availableRelease.isNewer(
                     thanVersion: currentVersion,
@@ -359,6 +381,7 @@ struct SettingsView: View {
 
     @MainActor
     private func downloadUpdate(_ release: AppReleaseInfo) async {
+        player.pauseForUpdate()
         isDownloadingUpdate = true
         downloadProgress = 0
         updateMessage = nil
@@ -457,6 +480,7 @@ struct SettingsView: View {
                     appIconError = error.localizedDescription
                 } else {
                     appIconPreference = preference
+                    UserDefaults.standard.set(preference, forKey: "appIconPreference")
                 }
             }
         }

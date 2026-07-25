@@ -8,6 +8,7 @@ struct SonaApp: App {
     @StateObject private var offline = OfflineStore()
     @StateObject private var personal = PersonalStore()
     @StateObject private var social = SocialStore()
+    @StateObject private var userPreferences = UserPreferencesStore()
 
     var body: some Scene {
         WindowGroup {
@@ -19,6 +20,7 @@ struct SonaApp: App {
                 .environmentObject(offline)
                 .environmentObject(personal)
                 .environmentObject(social)
+                .environmentObject(userPreferences)
                 .tint(.sonaGreen)
                 .preferredColorScheme(.dark)
         }

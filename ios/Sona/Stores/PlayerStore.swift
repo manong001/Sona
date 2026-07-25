@@ -469,6 +469,11 @@ final class PlayerStore: ObservableObject {
         }
     }
 
+    func pauseForUpdate() {
+        guard isPlaying || player.timeControlStatus == .playing else { return }
+        pause()
+    }
+
     private func resume(persistState: Bool = true) {
         if isSeekInProgress {
             resumeAfterSeeking = true

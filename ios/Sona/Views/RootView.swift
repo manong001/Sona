@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var personal: PersonalStore
+    @EnvironmentObject private var userPreferences: UserPreferencesStore
 
     var body: some View {
         Group {
@@ -25,6 +26,9 @@ struct RootView: View {
         }
         .onChange(of: session.currentUser?.id) { _, _ in
             personal.reset()
+            if session.currentUser == nil {
+                userPreferences.endSession()
+            }
         }
     }
 }
