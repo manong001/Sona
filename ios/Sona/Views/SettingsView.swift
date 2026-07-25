@@ -880,13 +880,11 @@ private struct AppShareSheet: UIViewControllerRepresentable {
 
 private enum DuplicateTrackMatchMode: String, CaseIterable {
     case exact = "EXACT"
-    case simplifiedTitle = "SIMPLIFIED_TITLE"
     case titleWithoutBrackets = "TITLE_WITHOUT_BRACKETS"
 
     var title: String {
         switch self {
         case .exact: "完全匹配"
-        case .simplifiedTitle: "繁简同名"
         case .titleWithoutBrackets: "忽略括号"
         }
     }
@@ -894,18 +892,15 @@ private enum DuplicateTrackMatchMode: String, CaseIterable {
     var description: String {
         switch self {
         case .exact:
-            "歌手和歌曲名完全匹配；一键去重保留音质最高的版本。"
-        case .simplifiedTitle:
-            "歌曲名不区分繁体、简体；一键去重优先保留简体版本，再比较音质。"
+            "歌曲名不区分繁简和大小写，歌手集合可包含其他歌手；一键去重保留音质最高的版本。"
         case .titleWithoutBrackets:
-            "忽略歌曲名中括号及括号内容；一键去重保留音质最高的版本。"
+            "在完全匹配基础上忽略括号内容；含 DJ 的歌曲不参与匹配。"
         }
     }
 
     var retentionSummary: String {
         switch self {
         case .exact: "保留质量最高的一首"
-        case .simplifiedTitle: "优先保留简体版本，其次保留质量最高的一首"
         case .titleWithoutBrackets: "保留质量最高的一首"
         }
     }
@@ -1329,18 +1324,7 @@ private struct DuplicateTrackManagementView: View {
     }
 
     private func retentionScore(_ item: DuplicateTrackItem) -> [Int64] {
-        let simplifiedPreference: Int64
-        if matchMode == .simplifiedTitle {
-            simplifiedPreference = isSimplifiedTitle(item.track.title) ? 1 : 0
-        } else {
-            simplifiedPreference = 0
-        }
-        return [simplifiedPreference] + qualityScore(item)
-    }
-
-    private func isSimplifiedTitle(_ title: String) -> Bool {
-        let transform = StringTransform("Traditional-Simplified")
-        return (title.applyingTransform(transform, reverse: false) ?? title) == title
+        qualityScore(item)
     }
 
     private func qualityScore(_ item: DuplicateTrackItem) -> [Int64] {

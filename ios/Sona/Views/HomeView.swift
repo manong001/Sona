@@ -426,6 +426,7 @@ struct HomeView: View {
                             .frame(height: 48)
                         }
                         .buttonStyle(.plain)
+                        .sonaNavigationHaptic()
                     }
                 }
             }
@@ -499,6 +500,7 @@ struct HomeView: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
+                                .sonaNavigationHaptic()
                             }
                         }
                     }
@@ -615,6 +617,7 @@ struct HomeView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .sonaNavigationHaptic()
                     .padding(.horizontal, 16)
                 } else {
                     SonaSectionHeader(title: title)
@@ -637,6 +640,7 @@ struct HomeView: View {
                                     SonaMediaCard(collection: collection)
                                 }
                                 .buttonStyle(.plain)
+                                .sonaNavigationHaptic()
                             }
                         }
                     }
@@ -842,6 +846,7 @@ private struct MadeForYouCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .sonaNavigationHaptic()
 
                 Menu {
                     Button("播放歌单", systemImage: "play.fill") { play(shuffled: false) }

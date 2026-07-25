@@ -138,7 +138,6 @@ class PlaylistSubscriptionMatcher {
                 .flatMap(Optional::stream)
                 .sorted(Comparator.comparingDouble(ScoredTrack::score).reversed()
                     .thenComparing(value -> value.track().trackId()))
-                .limit(MAX_SUGGESTIONS)
                 .toList();
             if (!strictMode && isHighConfidenceAutomaticMatch(candidate, rankedTracks)) {
                 return new MatchResult(
@@ -146,6 +145,8 @@ class PlaylistSubscriptionMatcher {
                 );
             }
             var suggestions = rankedTracks.stream()
+                .filter(value -> isSuggestionMatch(candidate, value.track()))
+                .limit(MAX_SUGGESTIONS)
                 .map(value -> new Suggestion(
                     value.track().trackId(), value.track().title(), value.track().artist(),
                     value.track().album(), value.track().durationMs(),
@@ -300,7 +301,8 @@ class PlaylistSubscriptionMatcher {
         var titleSimilarity = similarity(
             normalizedTitleForSimilarity(candidate.title()), normalizedTitleForSimilarity(track.title())
         );
-        if (titleSimilarity < MIN_TITLE_SIMILARITY) {
+        if (titleSimilarity < MIN_TITLE_SIMILARITY
+            && !isSuggestionTitleMatch(candidate, track)) {
             return Optional.empty();
         }
         var artistSimilarity = artistOverlap(candidate.artist(), track.artist());
@@ -322,6 +324,30 @@ class PlaylistSubscriptionMatcher {
             score -= 15;
         }
         return Optional.of(new ScoredTrack(track, score));
+    }
+
+    private static boolean isSuggestionTitleMatch(
+        DownloadCandidate candidate, LocalTrack track
+    ) {
+        var title = normalizedText(candidate.title());
+        if (!title.isEmpty() && title.equals(normalizedText(track.title()))) {
+            return true;
+        }
+        var baseTitle = normalizedBaseTitle(candidate.title());
+        return !baseTitle.isEmpty() && baseTitle.equals(normalizedBaseTitle(track.title()));
+    }
+
+    private static boolean isSuggestionMatch(
+        DownloadCandidate candidate, LocalTrack track
+    ) {
+        if (!isSuggestionTitleMatch(candidate, track)) {
+            return false;
+        }
+        var sourceArtists = normalizedArtistSet(candidate.artist());
+        var localArtists = normalizedArtistSet(track.artist());
+        return !sourceArtists.isEmpty() && !localArtists.isEmpty()
+            && (sourceArtists.containsAll(localArtists)
+                || localArtists.containsAll(sourceArtists));
     }
 
     private boolean hasMetadataVersionMismatch(

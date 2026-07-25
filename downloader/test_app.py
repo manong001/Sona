@@ -1029,6 +1029,19 @@ class DownloaderApiTest(unittest.TestCase):
             )
         )
 
+    def test_strict_playlist_match_preserves_artist_credit_boundaries(self):
+        candidate = BackendCandidate(
+            "QQMusicClient", "Same Track", "AB, C", "", "flac",
+            238_000, 1_000, 1_411, 44_100, None, None,
+            SimpleNamespace(tag="different-artists"),
+        )
+
+        self.assertFalse(
+            _matches_track(
+                candidate, "Same Track", "A, BC", 238_000, strict_mode=True,
+            )
+        )
+
     def test_strict_playlist_match_ignores_script_and_case(self):
         candidate = BackendCandidate(
             "QQMusicClient", "GOOD GOODBYE", "華莎", "", "flac",
@@ -1041,6 +1054,38 @@ class DownloaderApiTest(unittest.TestCase):
                 candidate, "Good Goodbye", "华莎", 238_000, strict_mode=True,
             )
         )
+
+    def test_strict_playlist_download_treats_slash_inside_artist_name_as_punctuation(self):
+        downloaded = []
+
+        class InlineDownloadRunner:
+            def run(self, task_id, action, *arguments, **kwargs):
+                downloaded.append(arguments[-1].tag)
+                return ["download/Ghost (Joe Stone Remix).mp3"]
+
+        playlist_track = BackendCandidate(
+            "SpotifyMusicClient", "Ghost (Joe Stone Remix)",
+            "Au/Ra, Alan Walker", "", "mp3", 157_000,
+            None, None, None, None, None,
+            SpotifyPlaylistItem("spotify:track:ghost-remix"),
+        )
+        matched_candidate = BackendCandidate(
+            "MiguMusicClient", "Ghost (Joe Stone Remix)", "AuRa, Alan Walker",
+            "Ghost (Remixes)", "mp3", 157_000, 6_300_000, 320, 44_100,
+            None, None, SimpleNamespace(tag="same-track"),
+        )
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("MiguMusicClient",)
+        backend._search_for_download = lambda query, sources: [matched_candidate]
+        backend._download_runner = InlineDownloadRunner()
+        backend._music_dir = Path("/tmp")
+        backend._state_dir = Path("/tmp")
+
+        self.assertEqual(
+            ["download/Ghost (Joe Stone Remix).mp3"],
+            backend.download(playlist_track, strict_mode=True),
+        )
+        self.assertEqual(["same-track"], downloaded)
 
     def test_strict_playlist_download_does_not_fall_back_to_a_collaboration(self):
         spotify = BackendCandidate(

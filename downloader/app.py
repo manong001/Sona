@@ -1417,7 +1417,11 @@ def _matches_track(
     if _normalize_track_text(candidate.title) != _normalize_track_text(title):
         return False
     if strict_mode:
-        if _artist_names(candidate.artist) != _artist_names(artist):
+        if (
+            _artist_names(candidate.artist) != _artist_names(artist)
+            and _artist_names_with_compact_slashes(candidate.artist)
+            != _artist_names_with_compact_slashes(artist)
+        ):
             return False
     elif not _artists_match(candidate.artist, artist):
         return False
@@ -1610,6 +1614,11 @@ def _artist_names(value: str) -> set[str]:
         for part in parts
         if (normalized := _normalize_track_text(part))
     }
+
+
+def _artist_names_with_compact_slashes(value: str) -> set[str]:
+    compatible = unicodedata.normalize("NFKC", value)
+    return _artist_names(re.sub(r"(?<=\w)/(?=\w)", "", compatible))
 
 
 def _opaque_value(opaque: Any, name: str) -> str:

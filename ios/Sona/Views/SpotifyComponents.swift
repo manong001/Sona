@@ -23,6 +23,23 @@ enum SonaHapticStrength: String, CaseIterable, Identifiable {
 enum SonaHaptics {
     static let preferenceKey = "hapticStrength"
 
+    static func buttonPressed() {
+#if os(iOS) && !targetEnvironment(macCatalyst)
+        let rawValue = UserDefaults.standard.string(forKey: preferenceKey)
+            ?? SonaHapticStrength.medium.rawValue
+        switch SonaHapticStrength(rawValue: rawValue) {
+        case .off, nil:
+            return
+        case .light:
+            UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.45)
+        case .medium:
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.72)
+        case .heavy:
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        }
+#endif
+    }
+
     static func buttonFeedback() -> SensoryFeedback? {
 #if os(iOS) && !targetEnvironment(macCatalyst)
         let rawValue = UserDefaults.standard.string(forKey: preferenceKey)
@@ -51,6 +68,14 @@ enum SonaHaptics {
         guard SonaHapticStrength(rawValue: rawValue) != .off else { return }
         UISelectionFeedbackGenerator().selectionChanged()
 #endif
+    }
+}
+
+extension View {
+    func sonaNavigationHaptic() -> some View {
+        simultaneousGesture(
+            TapGesture().onEnded { SonaHaptics.buttonPressed() }
+        )
     }
 }
 

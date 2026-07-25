@@ -199,6 +199,7 @@ struct SearchView: View {
                                     discoveryCard(category)
                                 }
                                 .buttonStyle(.plain)
+                                .sonaNavigationHaptic()
                             }
                         }
                         .padding(.horizontal, 16)
@@ -222,6 +223,7 @@ struct SearchView: View {
                                 categoryCard(category)
                             }
                             .buttonStyle(.plain)
+                            .sonaNavigationHaptic()
                         }
                     }
                     .padding(.horizontal, 16)

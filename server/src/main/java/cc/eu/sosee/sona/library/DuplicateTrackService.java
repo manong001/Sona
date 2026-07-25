@@ -3,12 +3,14 @@ package cc.eu.sosee.sona.library;
 import com.github.houbb.opencc4j.util.ZhConverterUtil;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -25,10 +27,12 @@ class DuplicateTrackService {
 
     enum DuplicateMatchMode {
         EXACT,
-        SIMPLIFIED_TITLE,
         TITLE_WITHOUT_BRACKETS
     }
 
+    private static final Pattern ARTIST_SEPARATOR = Pattern.compile(
+        "(?i)\\s*(?:、|/|,|，|&|＆|;|；|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*"
+    );
     private static final Pattern BRACKETED_CONTENT = Pattern.compile(
         "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*]|【[^【】]*】"
             + "|\\{[^{}]*}|「[^「」]*」|『[^『』]*』"
@@ -48,18 +52,21 @@ class DuplicateTrackService {
     }
 
     List<DuplicateTrackGroup> findDuplicates(DuplicateMatchMode mode) {
-        var grouped = new LinkedHashMap<DuplicateKey, List<TrackRecord>>();
+        var grouped = new LinkedHashMap<String, List<TrackRecord>>();
         for (var track : trackStore.findManaged(null)) {
-            var key = duplicateKey(track, mode);
-            if (key.artist().isBlank() || key.title().isBlank()
-                || "unknown artist".equals(key.artist())
-                || "unknown title".equals(key.title())) {
+            var title = normalizedTitle(track, mode);
+            var artists = normalizedArtistSet(track.artist());
+            if (title.isBlank() || artists.isEmpty()
+                || "unknown title".equals(title)
+                || artists.contains("unknown artist")
+                || mode == DuplicateMatchMode.TITLE_WITHOUT_BRACKETS
+                    && containsDj(track.title())) {
                 continue;
             }
-            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(track);
+            grouped.computeIfAbsent(title, ignored -> new ArrayList<>()).add(track);
         }
         var candidateGroups = grouped.values().stream()
-            .flatMap(tracks -> splitByExactDuration(tracks, mode).stream())
+            .flatMap(tracks -> splitByCompatibility(tracks, mode).stream())
             .filter(tracks -> tracks.size() > 1)
             .toList();
 
@@ -92,8 +99,7 @@ class DuplicateTrackService {
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
         var target = trackStore.findById(targetId)
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Replacement track not found"));
-        if (!duplicateKey(source, mode).equals(duplicateKey(target, mode))
-            || mode == DuplicateMatchMode.EXACT && !exactDurationMatches(source, target)) {
+        if (!tracksMatch(source, target, mode)) {
             throw new ResponseStatusException(BAD_REQUEST, "Tracks are not duplicates");
         }
 
@@ -197,19 +203,51 @@ class DuplicateTrackService {
         }
     }
 
-    private DuplicateKey duplicateKey(TrackRecord track, DuplicateMatchMode mode) {
-        var title = switch (mode) {
-            case EXACT -> track.title();
-            case SIMPLIFIED_TITLE -> ZhConverterUtil.toSimple(track.title());
-            case TITLE_WITHOUT_BRACKETS -> withoutBracketedContent(track.title());
-        };
-        var artist = mode == DuplicateMatchMode.EXACT
-            ? ArtistNames.canonical(track.artist())
-            : ArtistNames.duplicateCanonical(track.artist());
-        return new DuplicateKey(
-            TextNormalizer.sortKey(artist),
-            TextNormalizer.sortKey(title)
-        );
+    private boolean tracksMatch(
+        TrackRecord first, TrackRecord second, DuplicateMatchMode mode
+    ) {
+        if (mode == DuplicateMatchMode.TITLE_WITHOUT_BRACKETS
+            && (containsDj(first.title()) || containsDj(second.title()))) {
+            return false;
+        }
+        return normalizedTitle(first, mode).equals(normalizedTitle(second, mode))
+            && artistsMatch(first.artist(), second.artist())
+            && (mode != DuplicateMatchMode.EXACT || exactDurationMatches(first, second));
+    }
+
+    private String normalizedTitle(TrackRecord track, DuplicateMatchMode mode) {
+        var title = mode == DuplicateMatchMode.TITLE_WITHOUT_BRACKETS
+            ? withoutBracketedContent(track.title())
+            : track.title();
+        return TextNormalizer.sortKey(ZhConverterUtil.toSimple(title));
+    }
+
+    private boolean artistsMatch(String first, String second) {
+        var firstArtists = normalizedArtistSet(first);
+        var secondArtists = normalizedArtistSet(second);
+        return !firstArtists.isEmpty() && !secondArtists.isEmpty()
+            && (firstArtists.containsAll(secondArtists)
+                || secondArtists.containsAll(firstArtists));
+    }
+
+    private Set<String> normalizedArtistSet(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        var artists = new LinkedHashSet<String>();
+        for (var part : ARTIST_SEPARATOR.split(Normalizer.normalize(value, Normalizer.Form.NFKC))) {
+            var artist = TextNormalizer.sortKey(ArtistNames.duplicateCanonical(part));
+            if (!artist.isBlank()) {
+                artists.add(artist);
+            }
+        }
+        return Set.copyOf(artists);
+    }
+
+    private boolean containsDj(String value) {
+        return Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)
+            .toLowerCase(Locale.ROOT)
+            .contains("dj");
     }
 
     private String withoutBracketedContent(String value) {
@@ -222,29 +260,20 @@ class DuplicateTrackService {
         return result;
     }
 
-    private List<List<TrackRecord>> splitByExactDuration(
+    private List<List<TrackRecord>> splitByCompatibility(
         List<TrackRecord> tracks, DuplicateMatchMode mode
     ) {
-        if (mode != DuplicateMatchMode.EXACT) {
-            return List.of(tracks);
-        }
-        var sorted = tracks.stream()
-            .sorted(Comparator.comparingLong(TrackRecord::durationMs))
-            .toList();
         var result = new ArrayList<List<TrackRecord>>();
-        for (var track : sorted) {
-            if (track.durationMs() <= 0) {
+        for (var track : tracks.stream().sorted(Comparator.comparing(TrackRecord::id)).toList()) {
+            var compatibleGroup = result.stream()
+                .filter(group -> group.stream().allMatch(existing ->
+                    tracksMatch(track, existing, mode)))
+                .findFirst();
+            if (compatibleGroup.isPresent()) {
+                compatibleGroup.get().add(track);
+            } else {
                 result.add(new ArrayList<>(List.of(track)));
-                continue;
             }
-            var current = result.isEmpty() ? null : result.get(result.size() - 1);
-            if (current == null || current.get(0).durationMs() <= 0
-                || track.durationMs() - current.get(0).durationMs()
-                    > MAX_EXACT_DURATION_DIFFERENCE_MS) {
-                current = new ArrayList<>();
-                result.add(current);
-            }
-            current.add(track);
         }
         return result;
     }
@@ -383,9 +412,6 @@ class DuplicateTrackService {
         boolean history,
         boolean currentQueue
     ) {
-    }
-
-    private record DuplicateKey(String artist, String title) {
     }
 
     private record UsageKey(String trackId, String userId, String username) {

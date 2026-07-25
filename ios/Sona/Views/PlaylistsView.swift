@@ -37,6 +37,7 @@ struct PlaylistsView: View {
                                     }
                                 }
                             }
+                            .sonaNavigationHaptic()
                             .deleteDisabled(playlist.isDirectoryPlaylist)
                         }
                         .onDelete { indexes in

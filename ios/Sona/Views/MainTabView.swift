@@ -59,7 +59,7 @@ struct MainTabView: View {
             .animation(.easeOut(duration: 0.24), value: showsDrawer)
 #else
         ZStack(alignment: .leading) {
-            TabView(selection: $selectedTab) {
+            TabView(selection: tabSelection) {
                 tabContent(HomeView(openDrawer: openDrawer))
                     .tabItem { Label("首页", systemImage: "house.fill") }
                     .tag(SonaTab.home)
@@ -205,6 +205,17 @@ struct MainTabView: View {
                 Task { await player.flushState() }
             }
         }
+    }
+
+    private var tabSelection: Binding<SonaTab> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                guard newValue != selectedTab else { return }
+                SonaHaptics.buttonPressed()
+                selectedTab = newValue
+            }
+        )
     }
 
     private func tabContent<Content: View>(_ content: Content) -> some View {

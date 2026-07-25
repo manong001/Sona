@@ -585,6 +585,7 @@ struct MusicLibraryView: View {
                     .frame(height: 80)
                 }
                 .buttonStyle(.plain)
+                .sonaNavigationHaptic()
             }
 
             if selectedFilter != .songs {
@@ -600,6 +601,7 @@ struct MusicLibraryView: View {
                         libraryRow(collection)
                     }
                     .buttonStyle(.plain)
+                    .sonaNavigationHaptic()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     if isPlaylistFilter,
