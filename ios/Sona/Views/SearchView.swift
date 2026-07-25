@@ -7,6 +7,7 @@ struct SearchView: View {
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @SceneStorage("search.query") private var query = ""
+    @SceneStorage("search.scope") private var searchScopeValue = SearchScope.automatic.rawValue
     @State private var onlineCandidates: [DownloadCandidate] = []
     @State private var queuedCandidateIDs: Set<String> = []
     @State private var candidateStates: [String: MusicDownloadState] = [:]
@@ -17,6 +18,27 @@ struct SearchView: View {
     @State private var addedToastTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
     let openDrawer: () -> Void
+
+    private enum SearchScope: String, CaseIterable, Identifiable {
+        case automatic
+        case local
+        case online
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .automatic: "自动"
+            case .local: "本地"
+            case .online: "网络"
+            }
+        }
+    }
+
+    private struct SearchRequest: Hashable {
+        let query: String
+        let scope: String
+    }
 
     private struct Category: Identifiable {
         let id: String
@@ -86,6 +108,7 @@ struct SearchView: View {
                     LazyVStack(alignment: .leading, spacing: 26) {
                         header
                         searchField
+                        searchScopePicker
                         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             discoveryContent
                         } else {
@@ -120,14 +143,18 @@ struct SearchView: View {
                 .padding()
             }
         }
-        .task(id: query) {
+        .task(id: SearchRequest(query: query, scope: searchScopeValue)) {
             let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let scope = SearchScope(rawValue: searchScopeValue) ?? .automatic
             onlineSearchGeneration += 1
             let generation = onlineSearchGeneration
             onlineCandidates = []
             candidateStates = [:]
             isSearchingOnline = false
             searchErrorMessage = nil
+            if scope == .online {
+                library.clearSearch()
+            }
             guard !value.isEmpty else {
                 library.clearSearch()
                 return
@@ -137,11 +164,18 @@ struct SearchView: View {
             } catch {
                 return
             }
-            await library.search(query: value)
-            guard !Task.isCancelled,
-                  query.trimmingCharacters(in: .whitespacesAndNewlines) == value,
-                  library.searchResults.isEmpty else { return }
-            await searchOnline(query: value, generation: generation)
+            switch scope {
+            case .automatic:
+                await library.search(query: value)
+                guard !Task.isCancelled,
+                      query.trimmingCharacters(in: .whitespacesAndNewlines) == value,
+                      library.searchResults.isEmpty else { return }
+                await searchOnline(query: value, generation: generation)
+            case .local:
+                await library.search(query: value)
+            case .online:
+                await searchOnline(query: value, generation: generation)
+            }
         }
         .onDisappear { addedToastTask?.cancel() }
     }
@@ -188,6 +222,17 @@ struct SearchView: View {
         .frame(height: 52)
         .background(.white, in: RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 16)
+    }
+
+    private var searchScopePicker: some View {
+        Picker("搜索范围", selection: $searchScopeValue) {
+            ForEach(SearchScope.allCases) { scope in
+                Text(scope.title).tag(scope.rawValue)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .accessibilityLabel("搜索范围")
     }
 
     private var discoveryContent: some View {
@@ -252,14 +297,18 @@ struct SearchView: View {
         } else if !onlineCandidates.isEmpty {
             onlineResults
         } else if isSearchingOnline {
-            ProgressView("本地未找到，正在搜索网络歌曲…")
+            ProgressView(
+                searchScopeValue == SearchScope.online.rawValue
+                    ? "正在搜索网络歌曲…"
+                    : "本地未找到，正在搜索网络歌曲…"
+            )
                 .frame(maxWidth: .infinity)
                 .padding(.top, 80)
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 38))
-                Text("没有找到“\(query)”")
+                Text(emptyResultTitle)
                     .font(.headline)
                 Text("试试歌曲、艺人或专辑名称")
                     .font(.subheadline)
@@ -267,6 +316,17 @@ struct SearchView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 80)
+        }
+    }
+
+    private var emptyResultTitle: String {
+        switch SearchScope(rawValue: searchScopeValue) ?? .automatic {
+        case .automatic:
+            "没有找到“\(query)”"
+        case .local:
+            "本地没有找到“\(query)”"
+        case .online:
+            "网络没有找到“\(query)”"
         }
     }
 

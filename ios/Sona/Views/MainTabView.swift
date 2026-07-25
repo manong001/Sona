@@ -67,6 +67,7 @@ struct MainTabView: View {
                     .tag(SonaTab.home)
                 tabContent(DiscoveryView(
                     isActive: selectedTab == .discovery,
+                    close: { selectedTab = .home },
                     openDrawer: openDrawer
                 ))
                     .tabItem { Label("发现", systemImage: "sparkles") }
@@ -84,8 +85,11 @@ struct MainTabView: View {
             .tint(childMode ? (childTheme == "girl" ? .pink : .cyan) : .white)
             .toolbarBackground(Color.sonaBackgroundDeep.opacity(0.98), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
+            .toolbar(selectedTab == .discovery ? .hidden : .visible, for: .tabBar)
 
-            if selectedTab != .search && selectedTab != .settings {
+            if selectedTab != .discovery
+                && selectedTab != .search
+                && selectedTab != .settings {
                 MiniPlayerView {
                     showsNowPlaying = true
                 }
@@ -242,6 +246,7 @@ struct MainTabView: View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if miniPlayerMode == "fixed"
+                    && selectedTab != .discovery
                     && selectedTab != .search
                     && selectedTab != .settings {
                     Color.clear
@@ -325,8 +330,9 @@ struct DiscoveryView: View {
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var personal: PersonalStore
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
-    @AppStorage("discoveryDisplayMode") private var displayMode = "swipe"
+    @State private var displayMode = "swipe"
     let isActive: Bool
+    let close: () -> Void
     let openDrawer: () -> Void
     @State private var recommendations: [RecommendedTrack] = []
     @State private var isLoading = false
@@ -337,6 +343,7 @@ struct DiscoveryView: View {
     @State private var feedbackToUndo: RecommendationFeedback?
     @State private var feedbackMessage: String?
     @State private var activeSwipeTrackID: String?
+    @State private var swipeLyricLines: [LyricLine] = []
 
     private var tracks: [Track] { recommendations.map(\.track) }
 
@@ -353,7 +360,9 @@ struct DiscoveryView: View {
                 DiscoveryBackground()
 
                 VStack(spacing: 0) {
-                    discoveryHeader
+                    if displayMode != "swipe" {
+                        discoveryHeader
+                    }
 
                     Group {
                         if isLoading && tracks.isEmpty {
@@ -370,6 +379,8 @@ struct DiscoveryView: View {
                             DiscoverySwipeFeed(
                                 recommendations: recommendations,
                                 activeTrackID: $activeSwipeTrackID,
+                                actionBottomInset: discoveryActionBottomInset,
+                                lyricLines: swipeLyricLines,
                                 currentTrackID: player.currentTrack?.id,
                                 favoriteIDs: personal.favoriteIDs,
                                 playlists: personal.playlists.filter {
@@ -390,22 +401,32 @@ struct DiscoveryView: View {
                                     Task { await submitFeedback(type, for: track) }
                                 }
                             )
+                            .ignoresSafeArea()
                         } else {
                             DiscoveryRiver(
                                 tracks: tracks,
                                 currentTrackID: player.currentTrack?.id,
                                 startedAt: flowStartedAt,
                                 hasFixedMiniPlayer: hasFixedMiniPlayer,
-                                play: play
+                                play: play,
+                                remix: remix
                             )
                             .id(remixID)
                             .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
                     }
                 }
+
+                if displayMode == "swipe" {
+                    immersiveSwipeHeader
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .toolbar(.hidden, for: .tabBar)
             .task { await load() }
+            .task(id: activeSwipeTrackID) {
+                await loadSwipeLyrics()
+            }
             .onAppear {
                 guard isActive, displayMode == "swipe" else { return }
                 autoplayActiveSwipeTrack()
@@ -419,7 +440,11 @@ struct DiscoveryView: View {
                 resetSwipePositionAndAutoplay()
             }
             .onChange(of: isActive) { _, newValue in
-                guard newValue, displayMode == "swipe" else { return }
+                guard newValue else { return }
+                if displayMode != "swipe" {
+                    displayMode = "swipe"
+                    return
+                }
                 autoplayActiveSwipeTrack()
             }
         }
@@ -436,8 +461,66 @@ struct DiscoveryView: View {
         }
     }
 
+    private var immersiveSwipeHeader: some View {
+        VStack {
+            HStack(spacing: 12) {
+                Button("退出刷歌", systemImage: "chevron.down", action: close)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.24), in: Circle())
+
+                Spacer()
+
+                Menu {
+                    Button(
+                        "发现池",
+                        systemImage: selectedScene == nil ? "checkmark" : "sparkles"
+                    ) {
+                        selectedScene = nil
+                        Task { await load() }
+                    }
+                    ForEach(RecommendationScene.allCases) { scene in
+                        Button(
+                            scene.title,
+                            systemImage: selectedScene == scene ? "checkmark" : scene.icon
+                        ) {
+                            selectedScene = scene
+                            Task { await load() }
+                        }
+                    }
+                } label: {
+                    Label(selectedScene?.title ?? "发现池", systemImage: "slider.horizontal.3")
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.24), in: Circle())
+                }
+
+                Menu {
+                    Button("换一批", systemImage: "shuffle") { remix() }
+                    Button("重新载入", systemImage: "arrow.clockwise") {
+                        Task { await load() }
+                    }
+                    Divider()
+                    Button("流动卡片", systemImage: "rectangle.3.group") {
+                        displayMode = "river"
+                    }
+                } label: {
+                    Label("更多", systemImage: "ellipsis")
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.24), in: Circle())
+                }
+            }
+            .font(.headline)
+            .labelStyle(.iconOnly)
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+
+            Spacer()
+        }
+    }
+
     private var discoveryHeader: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             SonaAvatarButton(
                 username: session.currentUser?.username ?? "Sona",
                 action: openDrawer
@@ -456,25 +539,31 @@ struct DiscoveryView: View {
             Spacer(minLength: 8)
 
             Menu {
-                Button("发现池", systemImage: "sparkles") {
+                Button(
+                    "发现池",
+                    systemImage: selectedScene == nil ? "checkmark" : "sparkles"
+                ) {
                     selectedScene = nil
                     Task { await load() }
                 }
                 ForEach(RecommendationScene.allCases) { scene in
-                    Button(scene.title, systemImage: scene.icon) {
+                    Button(
+                        scene.title,
+                        systemImage: selectedScene == scene ? "checkmark" : scene.icon
+                    ) {
                         selectedScene = scene
                         Task { await load() }
                     }
                 }
             } label: {
-                Label(selectedScene?.title ?? "发现池", systemImage: selectedScene?.icon ?? "sparkles")
-                    .font(.caption.bold())
+                Image(systemName: selectedScene?.icon ?? "sparkles")
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .frame(height: 34)
-                    .background(.white.opacity(0.10), in: Capsule())
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.24), in: Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(selectedScene?.title ?? "发现池")
 
             Button(
                 displayMode == "swipe" ? "流动卡片" : "刷歌模式",
@@ -483,16 +572,18 @@ struct DiscoveryView: View {
                 displayMode = displayMode == "swipe" ? "river" : "swipe"
             }
             .labelStyle(.iconOnly)
+            .font(.system(size: 17, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 34, height: 34)
-            .background(.white.opacity(0.10), in: Circle())
+            .frame(width: 44, height: 44)
+            .background(.black.opacity(0.24), in: Circle())
+            .buttonStyle(.plain)
 
-            Button("换一批", systemImage: "sparkles") { remix() }
-                .font(.caption.bold())
-                .foregroundStyle(.black.opacity(0.86))
-                .padding(.horizontal, 12)
-                .frame(height: 34)
-                .background(Color.sonaGreen, in: Capsule())
+            Button("换一批", systemImage: "shuffle") { remix() }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.24), in: Circle())
                 .buttonStyle(.plain)
                 .disabled(tracks.isEmpty)
 
@@ -500,10 +591,10 @@ struct DiscoveryView: View {
                 Task { await load() }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.subheadline.bold())
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(.white.opacity(0.10), in: Circle())
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.24), in: Circle())
             }
             .buttonStyle(.plain)
             .disabled(isLoading)
@@ -529,6 +620,27 @@ struct DiscoveryView: View {
 #else
         miniPlayerMode == "fixed"
 #endif
+    }
+
+    private var discoveryActionBottomInset: CGFloat {
+        30
+    }
+
+    @MainActor
+    private func loadSwipeLyrics() async {
+        swipeLyricLines = []
+        guard displayMode == "swipe",
+              let track = recommendations.first(where: {
+                  $0.track.id == activeSwipeTrackID
+              })?.track,
+              track.hasLyrics else { return }
+        do {
+            let lyrics = try await APIClient.shared.lyrics(for: track)
+            guard !Task.isCancelled, activeSwipeTrackID == track.id else { return }
+            swipeLyricLines = LyricsParser.parse(synced: lyrics.synced, plain: lyrics.plain)
+        } catch {
+            swipeLyricLines = []
+        }
     }
 
     private func remix() {
@@ -637,6 +749,8 @@ struct DiscoveryView: View {
 private struct DiscoverySwipeFeed: View {
     let recommendations: [RecommendedTrack]
     @Binding var activeTrackID: String?
+    let actionBottomInset: CGFloat
+    let lyricLines: [LyricLine]
     let currentTrackID: String?
     let favoriteIDs: Set<String>
     let playlists: [Playlist]
@@ -650,8 +764,11 @@ private struct DiscoverySwipeFeed: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     ForEach(recommendations) { recommendation in
-                        swipeCard(recommendation)
-                            .frame(width: proxy.size.width, height: max(1, proxy.size.height))
+                        swipeCard(recommendation, size: proxy.size)
+                            .frame(
+                                width: proxy.size.width,
+                                height: max(1, proxy.size.height)
+                            )
                             .id(recommendation.id)
                     }
                 }
@@ -662,18 +779,64 @@ private struct DiscoverySwipeFeed: View {
         }
     }
 
-    private func swipeCard(_ recommendation: RecommendedTrack) -> some View {
+    private func swipeCard(
+        _ recommendation: RecommendedTrack, size: CGSize
+    ) -> some View {
         let track = recommendation.track
         return ZStack(alignment: .bottom) {
-            CachedRemoteImage(url: sonaArtworkURL(path: track.artworkURL, thumbnailSize: 1024)) {
-                Image(uiImage: $0).resizable().scaledToFill()
-            } placeholder: {
-                LinearGradient(
-                    colors: [.indigo, Color.sonaBackgroundDeep],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
+            CachedRemoteImage(
+                url: sonaArtworkURL(path: track.artworkURL, thumbnailSize: 1024),
+                content: { artwork in
+                    let displaySize = fittedArtworkSize(artwork, pageSize: size)
+                    ZStack {
+                        Color.black
+                        Image(uiImage: artwork)
+                            .resizable()
+                            .scaledToFill()
+                            .scaleEffect(1.08)
+                            .blur(radius: 32)
+                            .opacity(0.62)
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.26)
+                        Image(uiImage: artwork)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: displaySize.width, height: displaySize.height)
+                            .mask(
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .clear, location: 0),
+                                        .init(color: .white, location: 0.05),
+                                        .init(color: .white, location: 0.86),
+                                        .init(color: .clear, location: 1)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .offset(y: -size.height * 0.11)
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black.opacity(0.22), location: 0),
+                                .init(color: .clear, location: 0.22),
+                                .init(color: .clear, location: 0.58),
+                                .init(color: .black.opacity(0.42), location: 1)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+                },
+                placeholder: {
+                    LinearGradient(
+                        colors: [.indigo, Color.sonaBackgroundDeep],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
+            )
+            .frame(width: size.width, height: max(1, size.height))
             .clipped()
 
             LinearGradient(
@@ -681,6 +844,7 @@ private struct DiscoverySwipeFeed: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+            .frame(width: size.width, height: max(1, size.height))
 
             VStack(alignment: .leading, spacing: 14) {
                 Label(recommendation.reason, systemImage: "sparkles")
@@ -696,6 +860,8 @@ private struct DiscoverySwipeFeed: View {
                         .foregroundStyle(.white.opacity(0.74))
                         .lineLimit(1)
                 }
+
+                DiscoverySwipeLyrics(lines: lyricLines)
 
                 HStack(spacing: 24) {
                     Button {
@@ -744,13 +910,63 @@ private struct DiscoverySwipeFeed: View {
                 .foregroundStyle(.white)
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 30)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, actionBottomInset)
+            .frame(
+                width: max(1, size.width - 48),
+                alignment: .leading
+            )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .frame(width: size.width, height: max(1, size.height))
+        .clipped()
+    }
+
+    private func fittedArtworkSize(_ artwork: UIImage, pageSize: CGSize) -> CGSize {
+        let originalWidth = max(1, artwork.size.width)
+        let originalHeight = max(1, artwork.size.height)
+        let scale = min(
+            pageSize.width / originalWidth,
+            pageSize.height * 0.58 / originalHeight
+        )
+        return CGSize(width: originalWidth * scale, height: originalHeight * scale)
+    }
+}
+
+private struct DiscoverySwipeLyrics: View {
+    @EnvironmentObject private var playbackProgress: PlaybackProgress
+    let lines: [LyricLine]
+
+    private var activeLine: LyricLine? {
+        LyricsParser.activeLine(
+            in: lines,
+            at: playbackProgress.elapsed,
+            duration: playbackProgress.duration
+        )
+    }
+
+    private var visibleLines: [LyricLine] {
+        guard !lines.isEmpty else { return [] }
+        let activeIndex = activeLine.flatMap { active in
+            lines.firstIndex { $0.id == active.id }
+        } ?? 0
+        let start = max(0, min(activeIndex - 1, max(0, lines.count - 3)))
+        return Array(lines.dropFirst(start).prefix(3))
+    }
+
+    var body: some View {
+        if !visibleLines.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(visibleLines) { line in
+                    Text(line.text)
+                        .font(activeLine?.id == line.id ? .body.bold() : .subheadline)
+                        .foregroundStyle(
+                            activeLine?.id == line.id ? .white : .white.opacity(0.52)
+                        )
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.22), value: activeLine?.id)
+        }
     }
 }
 
@@ -780,6 +996,9 @@ private struct DiscoveryRiver: View {
     let startedAt: Date
     let hasFixedMiniPlayer: Bool
     let play: (Track) -> Void
+    let remix: () -> Void
+    @State private var hasUserScrolled = false
+    @State private var hasTriggeredEnd = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -819,9 +1038,65 @@ private struct DiscoveryRiver: View {
                         currentTrackID: currentTrackID,
                         play: play
                     )
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color.sonaGreen.opacity(0.06),
+                                Color.sonaGreen.opacity(0.16),
+                                Color.sonaBackgroundDeep
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        RadialGradient(
+                            colors: [Color.sonaGreen.opacity(0.22), .clear],
+                            center: .top,
+                            startRadius: 0,
+                            endRadius: 260
+                        )
+                        VStack(spacing: 10) {
+                            Image(systemName: "chevron.down")
+                                .font(.subheadline.bold())
+                            Text("继续下滑，换一批声音")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundStyle(.white.opacity(0.58))
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .padding(.top, 16)
+                    }
+                    .frame(height: max(180, availableHeight * 0.22))
+                    .background {
+                        GeometryReader { marker in
+                            Color.clear.preference(
+                                key: DiscoveryRiverBottomPreferenceKey.self,
+                                value: marker.frame(
+                                    in: .named("discoveryRiverScroll")
+                                ).maxY
+                            )
+                        }
+                    }
                 }
                 .padding(.vertical, 2)
                 .frame(minHeight: proxy.size.height, alignment: .top)
+            }
+            .coordinateSpace(name: "discoveryRiverScroll")
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { _ in hasUserScrolled = true }
+            )
+            .onPreferenceChange(DiscoveryRiverBottomPreferenceKey.self) { bottomY in
+                let visibleBottom = proxy.size.height
+                    - max(12, proxy.safeAreaInsets.bottom)
+                if bottomY > proxy.size.height + 80 {
+                    hasTriggeredEnd = false
+                }
+                guard hasUserScrolled,
+                      !hasTriggeredEnd,
+                      bottomY > 0,
+                      bottomY <= visibleBottom else { return }
+                hasTriggeredEnd = true
+                hasUserScrolled = false
+                remix()
             }
         }
     }
@@ -831,6 +1106,14 @@ private struct DiscoveryRiver: View {
             index % 3 == lane ? track : nil
         }
         return values.isEmpty ? tracks : values
+    }
+}
+
+private struct DiscoveryRiverBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = min(value, nextValue())
     }
 }
 

@@ -18,27 +18,31 @@ struct MacMainView: View {
             ZStack(alignment: .trailing) {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
-                        MacSidebar(
-                            selectedTab: $selectedTab,
-                            openLibraryCollection: { collectionID in
-                                requestedCollectionID = collectionID
-                                libraryNavigationRequestID += 1
-                                selectedTab = .library
-                            },
-                            createPlaylist: {
-                                createPlaylistRequestID += 1
-                                selectedTab = .library
-                            },
-                            openProfileMenu: openDrawer
-                        )
+                        if selectedTab != .discovery {
+                            MacSidebar(
+                                selectedTab: $selectedTab,
+                                openLibraryCollection: { collectionID in
+                                    requestedCollectionID = collectionID
+                                    libraryNavigationRequestID += 1
+                                    selectedTab = .library
+                                },
+                                createPlaylist: {
+                                    createPlaylistRequestID += 1
+                                    selectedTab = .library
+                                },
+                                openProfileMenu: openDrawer
+                            )
                             .frame(width: 246)
+                        }
 
                         page
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(Color.sonaBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                        if showsQueue && proxy.size.width >= 1_080 {
+                        if selectedTab != .discovery
+                            && showsQueue
+                            && proxy.size.width >= 1_080 {
                             MacQueuePanel()
                                 .frame(width: min(320, proxy.size.width * 0.24))
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -47,18 +51,20 @@ struct MacMainView: View {
                     .padding(.horizontal, 8)
                     .padding(.top, 8)
 
-                    MacPlayerBar(
-                        queueIsVisible: proxy.size.width >= 1_080 ? showsQueue : showsCompactQueue,
-                        toggleQueue: {
-                            if proxy.size.width >= 1_080 {
-                                showsQueue.toggle()
-                            } else {
-                                showsCompactQueue.toggle()
-                            }
-                        },
-                        openNowPlaying: { showsNowPlaying = true }
-                    )
-                    .frame(height: 92)
+                    if selectedTab != .discovery {
+                        MacPlayerBar(
+                            queueIsVisible: proxy.size.width >= 1_080 ? showsQueue : showsCompactQueue,
+                            toggleQueue: {
+                                if proxy.size.width >= 1_080 {
+                                    showsQueue.toggle()
+                                } else {
+                                    showsCompactQueue.toggle()
+                                }
+                            },
+                            openNowPlaying: { showsNowPlaying = true }
+                        )
+                        .frame(height: 92)
+                    }
                 }
 
                 if showsCompactQueue && proxy.size.width < 1_080 {
@@ -91,7 +97,11 @@ struct MacMainView: View {
         case .home:
             HomeView(openDrawer: {})
         case .discovery:
-            DiscoveryView(isActive: true, openDrawer: {})
+            DiscoveryView(
+                isActive: true,
+                close: { selectedTab = .home },
+                openDrawer: {}
+            )
         case .search:
             SearchView(openDrawer: {})
         case .library:
