@@ -95,6 +95,12 @@ class SchemaMigration implements ApplicationRunner {
                             """).update();
                 }
             }
+            if (trackColumns.contains("artwork_path") && trackColumns.contains("created_at")) {
+                jdbcClient.sql("""
+                        CREATE INDEX IF NOT EXISTS idx_tracks_missing_artwork
+                        ON tracks(artwork_path, created_at)
+                        """).update();
+            }
             if (trackColumns.contains("title") && trackColumns.contains("artist")) {
                 jdbcClient.sql("""
                         CREATE INDEX IF NOT EXISTS idx_tracks_subscription_match
@@ -105,6 +111,20 @@ class SchemaMigration implements ApplicationRunner {
                         """).update();
             }
         }
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS artwork_backfill_attempts (
+                    track_id TEXT PRIMARY KEY,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    retry_at INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                )
+                """).update();
+        jdbcClient.sql("""
+                CREATE INDEX IF NOT EXISTS idx_artwork_backfill_retry
+                ON artwork_backfill_attempts(retry_at)
+                """).update();
         jdbcClient.sql("""
                 CREATE TABLE IF NOT EXISTS track_audio_features (
                     track_id TEXT PRIMARY KEY,

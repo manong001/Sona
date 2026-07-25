@@ -765,7 +765,7 @@ class JdbcTrackStore implements TrackStore {
         return jdbcClient.sql("DELETE FROM tracks WHERE id = :id").param("id", id).update() == 1;
     }
 
-    private static TrackRecord mapTrack(ResultSet resultSet, int rowNumber) throws SQLException {
+    static TrackRecord mapTrack(ResultSet resultSet, int rowNumber) throws SQLException {
         return new TrackRecord(
             resultSet.getString("id"),
             Path.of(resultSet.getString("path")),

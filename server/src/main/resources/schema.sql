@@ -280,6 +280,21 @@ CREATE TABLE IF NOT EXISTS tracks (
     updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS artwork_backfill_attempts (
+    track_id TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    retry_at INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_artwork_backfill_retry
+ON artwork_backfill_attempts(retry_at);
+
+CREATE INDEX IF NOT EXISTS idx_tracks_missing_artwork
+ON tracks(artwork_path, created_at);
+
 CREATE TABLE IF NOT EXISTS ai_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     enabled INTEGER NOT NULL DEFAULT 0,
