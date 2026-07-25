@@ -142,11 +142,12 @@ class PlaylistSubscriptionService {
         if (offset >= suggested.size()) {
             return new ItemPage(List.of(), false);
         }
-        var end = Math.min(offset + limit, suggested.size());
         var session = matcher.open();
         var page = new ArrayList<ItemDetail>();
         var matchedAny = false;
-        for (var item : suggested.subList(offset, end)) {
+        var index = offset;
+        while (index < suggested.size() && page.size() < limit) {
+            var item = suggested.get(index++);
             var match = subscription.strictMode()
                 ? session.match(asCandidate(item), Set.of())
                 : session.match(asCandidate(item), Set.of(), false);
@@ -155,6 +156,10 @@ class PlaylistSubscriptionService {
                 userId, id, item.itemKey(), exactTrackId
             )) {
                 matchedAny = true;
+                continue;
+            }
+            if (match.suggestions().isEmpty()) {
+                subscriptions.updateItemState(id, item.itemKey(), "MISSING");
                 continue;
             }
             page.add(new ItemDetail(
@@ -167,7 +172,7 @@ class PlaylistSubscriptionService {
                 userId, subscription.playlistId(), subscriptions.matchedTrackIds(id)
             );
         }
-        return new ItemPage(List.copyOf(page), end < suggested.size());
+        return new ItemPage(List.copyOf(page), index < suggested.size());
     }
 
     @Transactional
