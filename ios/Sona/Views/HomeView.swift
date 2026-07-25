@@ -12,6 +12,7 @@ struct HomeView: View {
     @State private var dailyTracks: [Track] = []
     @State private var genres: [String] = []
     @State private var madeForYouMixes: [MadeForYouMix] = []
+    @State private var listeningMemories: [ListeningMemory] = []
     @State private var favoriteRotationOffset = 0
     @State private var loadedHomePlaylistTracks: [String: Track] = [:]
     @State private var homePlaylistPlaybackTask: Task<Void, Never>?
@@ -221,7 +222,8 @@ struct HomeView: View {
             return SonaCollection(
                 id: mix.id,
                 title: "\(mix.artist) 合辑",
-                subtitle: artistSummary(from: mix.tracks, limit: 3),
+                subtitle: "因为你喜欢 \(mix.artist) · "
+                    + artistSummary(from: mix.tracks, limit: 3),
                 artworkURL: sonaFirstArtworkURL(in: mix.tracks),
                 tracks: mix.tracks,
                 shape: .square
@@ -345,6 +347,7 @@ struct HomeView: View {
                 collections: dailyCollections,
                 titleDestination: dailyCollection
             )
+            listeningMemorySection
             recommendedRadioSection
             madeForYouSection
             recommendationNavigation
@@ -471,6 +474,53 @@ struct HomeView: View {
                     }
                 }
                 .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var listeningMemorySection: some View {
+        if !childMode, !listeningMemories.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                SonaSectionHeader(title: "音乐时光机")
+                    .padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(listeningMemories) { memory in
+                            Button {
+                                Task { await playMemory(memory) }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ArtworkView(
+                                        path: memory.artworkURL,
+                                        cornerRadius: 8,
+                                        thumbnailSize: 384
+                                    )
+                                    .frame(width: 76, height: 76)
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(memory.title)
+                                            .font(.headline.bold())
+                                            .foregroundStyle(Color.sonaGreen)
+                                        Text(memory.trackTitle)
+                                            .font(.subheadline.bold())
+                                            .foregroundStyle(.white)
+                                            .lineLimit(1)
+                                        Text(memory.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(Color.sonaSecondaryText)
+                                            .lineLimit(2)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(12)
+                                .frame(width: 294, height: 104)
+                                .background(Color.sonaSurface, in: RoundedRectangle(cornerRadius: 14))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
             }
         }
     }
@@ -747,6 +797,9 @@ struct HomeView: View {
         async let loadedDaily = APIClient.shared.dailyRecommendations()
         async let loadedGenres = APIClient.shared.recommendationGenres()
         async let loadedMadeForYou = APIClient.shared.madeForYouRecommendations()
+        async let loadedMemories = childMode
+            ? [ListeningMemory]()
+            : APIClient.shared.listeningMemories()
         do {
             let (daily, loadedGenreValues) = try await (loadedDaily, loadedGenres)
             dailyTracks = uniqueTracks(daily)
@@ -760,6 +813,31 @@ struct HomeView: View {
         } catch {
             madeForYouMixes = []
         }
+        do {
+            listeningMemories = try await loadedMemories
+        } catch {
+            listeningMemories = []
+        }
+    }
+
+    @MainActor
+    private func playMemory(_ memory: ListeningMemory) async {
+        let track: Track
+        if let cached = library.track(id: memory.trackId) {
+            track = cached
+        } else {
+            guard let loaded = try? await APIClient.shared.track(id: memory.trackId) else {
+                return
+            }
+            track = loaded
+        }
+        player.play(
+            track: track,
+            queue: [track],
+            prioritizedQueueTitle: "音乐时光机",
+            queueContextID: memory.id,
+            offlineURLProvider: offline.localURL(for:)
+        )
     }
 
     private func rotateFavorites() async {

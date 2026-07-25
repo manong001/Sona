@@ -500,6 +500,7 @@ class JdbcTrackStore implements TrackStore {
                 SELECT COUNT(*) FROM track_audio_features
                 WHERE track_id = :trackId AND file_size = :fileSize
                   AND modified_at = :modifiedAt AND version = :version
+                  AND tempo_bpm IS NOT NULL AND energy IS NOT NULL
                 """)
             .param("trackId", trackId)
             .param("fileSize", fileSize)
@@ -516,15 +517,19 @@ class JdbcTrackStore implements TrackStore {
         var now = System.currentTimeMillis();
         jdbcClient.sql("""
                 INSERT INTO track_audio_features(
-                    track_id, version, file_size, modified_at, vector, created_at, updated_at
+                    track_id, version, file_size, modified_at, vector, tempo_bpm, energy,
+                    created_at, updated_at
                 ) VALUES (
-                    :trackId, :version, :fileSize, :modifiedAt, :vector, :createdAt, :updatedAt
+                    :trackId, :version, :fileSize, :modifiedAt, :vector, :tempoBpm, :energy,
+                    :createdAt, :updatedAt
                 )
                 ON CONFLICT(track_id) DO UPDATE SET
                     version = excluded.version,
                     file_size = excluded.file_size,
                     modified_at = excluded.modified_at,
                     vector = excluded.vector,
+                    tempo_bpm = excluded.tempo_bpm,
+                    energy = excluded.energy,
                     updated_at = excluded.updated_at
                 """)
             .param("trackId", trackId)
@@ -532,6 +537,8 @@ class JdbcTrackStore implements TrackStore {
             .param("fileSize", fileSize)
             .param("modifiedAt", modifiedAt)
             .param("vector", encodeVector(features.vector()))
+            .param("tempoBpm", features.tempoBpm())
+            .param("energy", features.energy())
             .param("createdAt", now)
             .param("updatedAt", now)
             .update();
@@ -543,6 +550,8 @@ class JdbcTrackStore implements TrackStore {
     ) {
         return jdbcClient.sql("""
                 SELECT tracks.*, track_audio_features.vector AS audio_feature_vector,
+                  track_audio_features.tempo_bpm AS audio_tempo_bpm,
+                  track_audio_features.energy AS audio_energy,
                   EXISTS (
                     SELECT 1 FROM favorites
                     WHERE favorites.user_id = :userId AND favorites.track_id = tracks.id
@@ -565,7 +574,11 @@ class JdbcTrackStore implements TrackStore {
             .param("version", AudioFeatures.VERSION)
             .query((resultSet, rowNumber) -> new AcousticTrackData(
                 mapTrack(resultSet, rowNumber),
-                new AudioFeatures(decodeVector(resultSet.getString("audio_feature_vector"))),
+                new AudioFeatures(
+                    decodeVector(resultSet.getString("audio_feature_vector")),
+                    resultSet.getDouble("audio_tempo_bpm"),
+                    resultSet.getDouble("audio_energy")
+                ),
                 resultSet.getInt("favorite") == 1
             ))
             .list();
@@ -760,6 +773,10 @@ class JdbcTrackStore implements TrackStore {
         jdbcClient.sql("DELETE FROM track_play_stats WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM favorites WHERE track_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM playlist_tracks WHERE track_id = :id").param("id", id).update();
+        jdbcClient.sql("""
+                DELETE FROM recommendation_feedback
+                WHERE target_type = 'TRACK' AND target_value = LOWER(:id)
+                """).param("id", id).update();
         jdbcClient.sql("DELETE FROM track_audio_features WHERE track_id = :id")
             .param("id", id).update();
         return jdbcClient.sql("DELETE FROM tracks WHERE id = :id").param("id", id).update() == 1;

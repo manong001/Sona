@@ -668,6 +668,80 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/AchievementSummary"}
+  /me/listening-memories:
+    get:
+      operationId: listeningMemories
+      description: 根据完整播放记录和收藏时间生成去年今日、收藏周年、久未播放和近月循环卡片；无匹配项时不返回空卡
+      parameters:
+        - name: timezone
+          in: query
+          schema: {type: string, default: UTC}
+      responses:
+        "200":
+          description: 当前用户的音乐时光机卡片
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/ListeningMemory"}}
+  /me/recommendations:
+    get:
+      operationId: recommendationPreferences
+      responses:
+        "200":
+          description: 当前用户的个性化开关和负反馈
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecommendationPreferences"}
+    put:
+      operationId: updateRecommendationPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [personalizedEnabled]
+              properties:
+                personalizedEnabled: {type: boolean}
+      responses:
+        "200":
+          description: 更新后的推荐偏好
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecommendationPreferences"}
+  /me/recommendations/feedback:
+    post:
+      operationId: addRecommendationFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, trackId]
+              properties:
+                type: {type: string, enum: [TRACK, ARTIST, GENRE]}
+                trackId: {type: string}
+      responses:
+        "200":
+          description: 已创建或已存在的反馈
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecommendationFeedback"}
+    delete:
+      operationId: clearRecommendationFeedback
+      responses:
+        "204": {description: 已清除全部推荐反馈}
+  /me/recommendations/feedback/{id}:
+    delete:
+      operationId: removeRecommendationFeedback
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: 已撤销反馈}
+        "404": {description: 反馈不存在}
   /recommendations/daily:
     get:
       operationId: dailyRecommendations
@@ -704,6 +778,64 @@ paths:
                     tracks:
                       type: array
                       items: {$ref: "#/components/schemas/Track"}
+  /recommendations/discovery-feed:
+    get:
+      operationId: discoveryRecommendationFeed
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 带可解释理由且应用当前用户负反馈的刷歌推荐
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/RecommendedTrack"}}
+  /recommendations/similar/{id}:
+    get:
+      operationId: explainableSimilarRecommendations
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 应用负反馈后的相似歌曲及理由
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/RecommendedTrack"}}
+  /recommendations/scenes/{scene}:
+    get:
+      operationId: sceneRecommendations
+      parameters:
+        - name: scene
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [FOCUS, COMMUTE, WORKOUT, SLEEP, LATE_NIGHT, CHILD]
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 50}
+        - name: childMode
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: 按具名 BPM、能量和儿童歌曲池筛选的场景队列
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/RecommendedTrack"}}
   /recommendations/genres:
     get:
       operationId: recommendationGenres
@@ -1726,6 +1858,46 @@ components:
           description: 艺人归属列表；不切割联名名称，包含“林俊杰”的名称统一归属为“林俊杰”
           items:
             type: string
+    RecommendedTrack:
+      type: object
+      required: [track, reason, source]
+      properties:
+        track: {$ref: "#/components/schemas/Track"}
+        reason: {type: string}
+        source: {type: string, enum: [DISCOVERY, SIMILAR, SCENE]}
+    RecommendationFeedback:
+      type: object
+      required: [id, type, targetValue, displayValue, createdAt]
+      properties:
+        id: {type: string}
+        type: {type: string, enum: [TRACK, ARTIST, GENRE]}
+        targetValue: {type: string}
+        displayValue: {type: string}
+        createdAt: {type: integer, format: int64}
+    RecommendationPreferences:
+      type: object
+      required: [personalizedEnabled, feedback]
+      properties:
+        personalizedEnabled: {type: boolean}
+        feedback:
+          type: array
+          items: {$ref: "#/components/schemas/RecommendationFeedback"}
+    ListeningMemory:
+      type: object
+      required:
+        [id, type, title, subtitle, trackId, trackTitle, artist, occurredAt]
+      properties:
+        id: {type: string}
+        type:
+          type: string
+          enum: [ON_THIS_DAY, FAVORITE_ANNIVERSARY, LONG_AGO, MONTHLY_TOP]
+        title: {type: string}
+        subtitle: {type: string}
+        trackId: {type: string}
+        trackTitle: {type: string}
+        artist: {type: string}
+        artworkURL: {type: [string, "null"], format: uri-reference}
+        occurredAt: {type: integer, format: int64}
     AiTrackAnalysis:
       type: object
       required: [correctedTitle, primaryGenre, relatedGenres, reason, similarTracks]

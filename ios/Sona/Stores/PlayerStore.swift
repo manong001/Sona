@@ -52,6 +52,10 @@ final class PlayerStore: ObservableObject {
     @Published private(set) var queueErrorMessage: String?
     @Published private(set) var queueType = "RANDOM"
     @Published private(set) var queueContextID: String?
+    @Published private(set) var smartAutoplayEnabled =
+        UserDefaults.standard.bool(forKey: "smartAutoplayEnabled")
+    @Published private(set) var automaticallyAddedTrackIDs: Set<String> = []
+    @Published private(set) var automaticRecommendationReasons: [String: String] = [:]
     let progress = PlaybackProgress()
 
     var elapsed: Double { progress.elapsed }
@@ -83,6 +87,8 @@ final class PlayerStore: ObservableObject {
     private var stateRestoreTask: Task<Void, Never>?
     private var stateSaveTask: Task<Void, Never>?
     private var carPlayPlaybackTask: Task<Void, Never>?
+    private var smartAutoplayTask: Task<Void, Never>?
+    private var lastAutomaticBatchIDs: Set<String> = []
     private var dailyRecommendationQueues: [[Track]]?
     private var dailyRecommendationQueueIndex: Int?
     private var nowPlayingArtwork: MPMediaItemArtwork?
@@ -133,6 +139,7 @@ final class PlayerStore: ObservableObject {
         stateRestoreTask?.cancel()
         stateSaveTask?.cancel()
         carPlayPlaybackTask?.cancel()
+        smartAutoplayTask?.cancel()
         stalledRecoveryTask?.cancel()
         seekTimeoutTask?.cancel()
         durationResolutionTask?.cancel()
@@ -161,6 +168,7 @@ final class PlayerStore: ObservableObject {
         stateRestoreTask?.cancel()
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
+        resetAutomaticRecommendations()
         queueErrorMessage = nil
 
         if let prioritizedQueueTitle {
@@ -202,6 +210,7 @@ final class PlayerStore: ObservableObject {
         queueErrorMessage = nil
         dailyRecommendationQueues = queues
         dailyRecommendationQueueIndex = queueIndex
+        resetAutomaticRecommendations()
         playbackQueue = prioritizedQueue(queues[queueIndex], startingWith: track)
         queueTitle = "每日推荐 \(queueIndex + 1)"
         queueType = "DAILY"
@@ -285,6 +294,7 @@ final class PlayerStore: ObservableObject {
         if persistState {
             self.persistState()
         }
+        scheduleSmartAutoplayIfNeeded()
     }
 
     private func restartPlayback(
@@ -404,6 +414,9 @@ final class PlayerStore: ObservableObject {
 
     func playNext(_ track: Track) {
         playbackQueue.removeAll { $0.id == track.id }
+        automaticallyAddedTrackIDs.remove(track.id)
+        automaticRecommendationReasons.removeValue(forKey: track.id)
+        lastAutomaticBatchIDs.remove(track.id)
         let insertion = min((currentIndex ?? -1) + 1, playbackQueue.count)
         playbackQueue.insert(track, at: insertion)
         saveState()
@@ -411,7 +424,11 @@ final class PlayerStore: ObservableObject {
 
     func addToQueue(_ track: Track) {
         guard !playbackQueue.contains(where: { $0.id == track.id }) else { return }
-        playbackQueue.append(track)
+        let current = currentIndex ?? -1
+        let automaticInsertion = playbackQueue.indices.first {
+            $0 > current && automaticallyAddedTrackIDs.contains(playbackQueue[$0].id)
+        }
+        playbackQueue.insert(track, at: automaticInsertion ?? playbackQueue.endIndex)
         saveState()
     }
 
@@ -422,7 +439,13 @@ final class PlayerStore: ObservableObject {
 
     func removeQueueItems(at offsets: IndexSet) {
         let currentID = currentTrack?.id
+        let removedIDs = Set(offsets.compactMap {
+            playbackQueue.indices.contains($0) ? playbackQueue[$0].id : nil
+        })
         playbackQueue.remove(atOffsets: offsets)
+        automaticallyAddedTrackIDs.subtract(removedIDs)
+        lastAutomaticBatchIDs.subtract(removedIDs)
+        removedIDs.forEach { automaticRecommendationReasons.removeValue(forKey: $0) }
         if let currentID, !playbackQueue.contains(where: { $0.id == currentID }) {
             stop()
         } else {
@@ -433,6 +456,9 @@ final class PlayerStore: ObservableObject {
     func removeTrack(id: String) {
         let wasCurrent = currentTrack?.id == id
         playbackQueue.removeAll { $0.id == id }
+        automaticallyAddedTrackIDs.remove(id)
+        automaticRecommendationReasons.removeValue(forKey: id)
+        lastAutomaticBatchIDs.remove(id)
         if wasCurrent {
             stop()
         } else {
@@ -443,7 +469,32 @@ final class PlayerStore: ObservableObject {
     func clearUpcomingQueue() {
         guard let currentTrack else { return }
         playbackQueue = [currentTrack]
+        automaticallyAddedTrackIDs = automaticallyAddedTrackIDs.intersection([currentTrack.id])
+        automaticRecommendationReasons = automaticRecommendationReasons.filter {
+            $0.key == currentTrack.id
+        }
+        lastAutomaticBatchIDs = lastAutomaticBatchIDs.intersection([currentTrack.id])
         saveState()
+    }
+
+    func setSmartAutoplayEnabled(_ enabled: Bool) {
+        smartAutoplayEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "smartAutoplayEnabled")
+        if enabled {
+            scheduleSmartAutoplayIfNeeded()
+        } else {
+            smartAutoplayTask?.cancel()
+            smartAutoplayTask = nil
+            removeFutureAutomaticTracks(automaticallyAddedTrackIDs)
+        }
+    }
+
+    func continueWithSimilarTracks() {
+        scheduleSmartAutoplayIfNeeded(force: true)
+    }
+
+    func undoLastAutomaticAdditions() {
+        removeFutureAutomaticTracks(lastAutomaticBatchIDs)
     }
 
     func stop() {
@@ -493,6 +544,7 @@ final class PlayerStore: ObservableObject {
         resolvedItemDuration = nil
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
+        resetAutomaticRecommendations()
         playbackQueue = []
         queueTitle = "随机播放"
         isLoadingQueue = false
@@ -1037,6 +1089,75 @@ final class PlayerStore: ObservableObject {
         startPlayback(last)
     }
 
+    private func scheduleSmartAutoplayIfNeeded(force: Bool = false) {
+        guard force || smartAutoplayEnabled,
+              smartAutoplayTask == nil,
+              let currentTrack else { return }
+        let current = currentIndex ?? 0
+        let remaining = max(0, playbackQueue.count - current - 1)
+        guard force || remaining <= 3 else { return }
+        let anchor = playbackQueue.last ?? currentTrack
+        let capturedQueueType = queueType
+        let capturedContext = queueContextID
+        let api = activeAPI
+        smartAutoplayTask = Task { [weak self] in
+            defer { self?.smartAutoplayTask = nil }
+            do {
+                let recommendations = try await api.similarRecommendations(
+                    id: anchor.id, limit: 20
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.queueType == capturedQueueType,
+                      self.queueContextID == capturedContext,
+                      self.playbackQueue.contains(where: { $0.id == anchor.id }) else { return }
+                var existing = Set(self.playbackQueue.map(\.id))
+                let additions = recommendations.filter {
+                    existing.insert($0.track.id).inserted
+                }.prefix(12)
+                guard !additions.isEmpty else { return }
+                let ids = Set(additions.map(\.track.id))
+                self.playbackQueue.append(contentsOf: additions.map(\.track))
+                self.automaticallyAddedTrackIDs.formUnion(ids)
+                self.lastAutomaticBatchIDs = ids
+                additions.forEach {
+                    self.automaticRecommendationReasons[$0.track.id] = $0.reason
+                }
+                self.queueErrorMessage = nil
+                self.persistState()
+            } catch {
+                guard force, !Task.isCancelled, let self else { return }
+                self.queueErrorMessage = "无法载入相似歌曲：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func removeFutureAutomaticTracks(_ ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        let currentID = currentTrack?.id
+        playbackQueue.removeAll { ids.contains($0.id) && $0.id != currentID }
+        let retainedCurrent: Set<String>
+        if let currentID, ids.contains(currentID) {
+            retainedCurrent = [currentID]
+        } else {
+            retainedCurrent = []
+        }
+        automaticallyAddedTrackIDs.subtract(ids.subtracting(retainedCurrent))
+        lastAutomaticBatchIDs.subtract(ids.subtracting(retainedCurrent))
+        ids.subtracting(retainedCurrent).forEach {
+            automaticRecommendationReasons.removeValue(forKey: $0)
+        }
+        persistState()
+    }
+
+    private func resetAutomaticRecommendations() {
+        smartAutoplayTask?.cancel()
+        smartAutoplayTask = nil
+        automaticallyAddedTrackIDs = []
+        automaticRecommendationReasons = [:]
+        lastAutomaticBatchIDs = []
+    }
+
     private func advanceToNextDailyRecommendationQueue() -> Bool {
         guard let queues = dailyRecommendationQueues,
               let currentQueueIndex = dailyRecommendationQueueIndex else { return false }
@@ -1101,6 +1222,7 @@ final class PlayerStore: ObservableObject {
         guard !isLoadingQueue else { return }
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
+        resetAutomaticRecommendations()
         isPlaying = false
         isLoadingQueue = true
         queueErrorMessage = nil
@@ -1368,6 +1490,7 @@ final class PlayerStore: ObservableObject {
         stateRestoreTask?.cancel()
         dailyRecommendationQueues = nil
         dailyRecommendationQueueIndex = nil
+        resetAutomaticRecommendations()
         queueErrorMessage = nil
         isLoadingQueue = true
         if currentTrack?.poolType != "CHILD" {

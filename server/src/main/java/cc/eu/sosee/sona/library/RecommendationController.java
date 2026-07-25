@@ -37,10 +37,14 @@ class RecommendationController {
 
     private final TrackStore trackStore;
     private final Clock clock;
+    private final RecommendationPreferenceRepository preferences;
 
-    RecommendationController(TrackStore trackStore, Clock clock) {
+    RecommendationController(
+        TrackStore trackStore, Clock clock, RecommendationPreferenceRepository preferences
+    ) {
         this.trackStore = trackStore;
         this.clock = clock;
+        this.preferences = preferences;
     }
 
     @GetMapping("/recommendations/daily")
@@ -49,10 +53,13 @@ class RecommendationController {
         @RequestParam(defaultValue = "false") boolean childMode
     ) {
         var today = LocalDate.now(clock.withZone(ZoneId.systemDefault()));
-        var seed = Objects.hash(user.id(), today, childMode);
+        var personalized = preferences.personalizedEnabled(user.id());
+        var seed = Objects.hash(personalized ? user.id() : "shared", today, childMode);
         if (childMode) {
             var childTracks = new ArrayList<>(
-                trackStore.findDailyCandidates("CHILD", user.id(), true)
+                preferences.allowed(
+                    user.id(), trackStore.findDailyCandidates("CHILD", user.id(), true)
+                )
             );
             Collections.shuffle(childTracks, new Random(Objects.hash(seed, "child")));
             var selected = new ArrayList<TrackRecord>();
@@ -63,10 +70,14 @@ class RecommendationController {
             return selected.stream().map(TrackResponse::from).toList();
         }
         var discovery = new ArrayList<>(
-            trackStore.findDailyCandidates("DISCOVERY", user.id(), false)
+            preferences.allowed(
+                user.id(), trackStore.findDailyCandidates("DISCOVERY", user.id(), false)
+            )
         );
         var normal = new ArrayList<>(
-            trackStore.findDailyCandidates("NORMAL", user.id(), false)
+            preferences.allowed(
+                user.id(), trackStore.findDailyCandidates("NORMAL", user.id(), false)
+            )
         );
         Collections.shuffle(discovery, new Random(Objects.hash(seed, "discovery")));
         Collections.shuffle(normal, new Random(Objects.hash(seed, "normal")));
@@ -119,14 +130,18 @@ class RecommendationController {
         @AuthenticationPrincipal AuthenticatedUser user,
         @RequestParam(defaultValue = "false") boolean childMode
     ) {
+        if (!preferences.personalizedEnabled(user.id())) return List.of();
         var acousticCandidates = trackStore.findAcousticRecommendationCandidates(
             user.id(), childMode
         );
+        acousticCandidates = preferences.allowedAcoustic(user.id(), acousticCandidates);
         if (acousticCandidates.stream().anyMatch(AcousticTrackData::favorite)) {
             return acousticMixes(acousticCandidates);
         }
 
-        var candidates = trackStore.findMadeForYouCandidates(user.id(), childMode);
+        var candidates = preferences.allowed(
+            user.id(), trackStore.findMadeForYouCandidates(user.id(), childMode)
+        );
         var anchors = new ArrayList<String>();
         for (var candidate : candidates) {
             var artist = ArtistNames.canonical(candidate.artist());
@@ -330,7 +345,10 @@ class RecommendationController {
         @RequestParam(defaultValue = "false") boolean childMode
     ) {
         var safeLimit = Math.max(1, Math.min(limit, 50));
-        return trackStore.findByGenre(genre, user.id(), childMode, safeLimit).stream()
+        return preferences.allowed(
+            user.id(), trackStore.findByGenre(genre, user.id(), childMode, safeLimit * 2)
+        ).stream()
+            .limit(safeLimit)
             .map(TrackResponse::from)
             .toList();
     }

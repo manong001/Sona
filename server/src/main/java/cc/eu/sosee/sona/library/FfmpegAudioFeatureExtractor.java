@@ -71,16 +71,18 @@ class FfmpegAudioFeatureExtractor implements AudioFeatureExtractor {
         if (frameCount == 0) throw new IOException("音频中没有可分析的 PCM 数据");
 
         var vector = new double[15];
-        vector[0] = featureSums[0] / frameCount;
+        var energy = featureSums[0] / frameCount;
+        vector[0] = energy;
         vector[1] = standardDeviation(featureSums[0], featureSquares[0], frameCount);
         vector[2] = featureSums[1] / frameCount;
         vector[3] = standardDeviation(featureSums[1], featureSquares[1], frameCount);
         for (var index = 2; index < featureSums.length; index++) {
             vector[index + 2] = featureSums[index] / frameCount;
         }
-        vector[14] = estimateTempo(rmsValues);
+        var tempoBpm = estimateTempo(rmsValues);
+        vector[14] = tempoBpm / 200.0;
         normalize(vector);
-        return new AudioFeatures(vector);
+        return new AudioFeatures(vector, tempoBpm, energy);
     }
 
     private int readFrame(InputStream input, byte[] bytes) throws IOException {
@@ -186,7 +188,7 @@ class FfmpegAudioFeatureExtractor implements AudioFeatureExtractor {
                 bestBpm = bpm;
             }
         }
-        return bestBpm / 200.0;
+        return bestBpm;
     }
 
     private double standardDeviation(double sum, double squareSum, int count) {

@@ -482,6 +482,98 @@ final class APIClient {
         return try await request(url: components.url!)
     }
 
+    func recommendationPreferences() async throws -> RecommendationPreferences {
+        try await request(path: "/api/v1/me/recommendations")
+    }
+
+    func setPersonalizedRecommendations(
+        enabled: Bool
+    ) async throws -> RecommendationPreferences {
+        struct Body: Encodable { let personalizedEnabled: Bool }
+        return try await request(
+            path: "/api/v1/me/recommendations",
+            method: "PUT",
+            body: try encoder.encode(Body(personalizedEnabled: enabled))
+        )
+    }
+
+    func addRecommendationFeedback(
+        type: RecommendationFeedbackType, trackID: String
+    ) async throws -> RecommendationFeedback {
+        struct Body: Encodable {
+            let type: RecommendationFeedbackType
+            let trackId: String
+        }
+        return try await request(
+            path: "/api/v1/me/recommendations/feedback",
+            method: "POST",
+            body: try encoder.encode(Body(type: type, trackId: trackID))
+        )
+    }
+
+    func removeRecommendationFeedback(id: String) async throws {
+        try await requestVoid(
+            path: "/api/v1/me/recommendations/feedback/\(id)", method: "DELETE"
+        )
+    }
+
+    func clearRecommendationFeedback() async throws {
+        try await requestVoid(
+            path: "/api/v1/me/recommendations/feedback", method: "DELETE"
+        )
+    }
+
+    func discoveryFeed(limit: Int = 20) async throws -> [RecommendedTrack] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/discovery-feed"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
+    }
+
+    func sceneRecommendations(
+        _ scene: RecommendationScene, limit: Int = 50
+    ) async throws -> [RecommendedTrack] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/scenes/\(scene.rawValue)"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
+    }
+
+    func similarRecommendations(
+        id: String, limit: Int = 20
+    ) async throws -> [RecommendedTrack] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/recommendations/similar/\(id)"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "childMode", value: childModeValue)
+        ]
+        return try await request(url: components.url!)
+    }
+
+    func listeningMemories() async throws -> [ListeningMemory] {
+        var components = URLComponents(
+            url: url(for: "/api/v1/me/listening-memories"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "timezone", value: TimeZone.current.identifier)
+        ]
+        return try await request(url: components.url!)
+    }
+
     func recommendationGenres() async throws -> [String] {
         var components = URLComponents(
             url: url(for: "/api/v1/recommendations/genres"), resolvingAgainstBaseURL: false

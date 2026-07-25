@@ -265,3 +265,83 @@ struct MadeForYouMix: Decodable, Identifiable {
     let artist: String
     let tracks: [Track]
 }
+
+enum RecommendationFeedbackType: String, Codable, CaseIterable {
+    case track = "TRACK"
+    case artist = "ARTIST"
+    case genre = "GENRE"
+
+    var title: String {
+        switch self {
+        case .track: "不喜欢这首"
+        case .artist: "少推该艺人"
+        case .genre: "少推该曲风"
+        }
+    }
+}
+
+struct RecommendationFeedback: Decodable, Identifiable {
+    let id: String
+    let type: RecommendationFeedbackType
+    let targetValue: String
+    let displayValue: String
+    let createdAt: Int64
+}
+
+struct RecommendationPreferences: Decodable {
+    let personalizedEnabled: Bool
+    let feedback: [RecommendationFeedback]
+}
+
+struct RecommendedTrack: Decodable, Identifiable {
+    let track: Track
+    let reason: String
+    let source: String
+
+    var id: String { track.id }
+}
+
+enum RecommendationScene: String, CaseIterable, Identifiable {
+    case focus = "FOCUS"
+    case commute = "COMMUTE"
+    case workout = "WORKOUT"
+    case sleep = "SLEEP"
+    case lateNight = "LATE_NIGHT"
+    case child = "CHILD"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .focus: "专注"
+        case .commute: "通勤"
+        case .workout: "运动"
+        case .sleep: "睡眠"
+        case .lateNight: "深夜"
+        case .child: "儿童陪伴"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .focus: "brain.head.profile"
+        case .commute: "car.fill"
+        case .workout: "figure.run"
+        case .sleep: "moon.zzz.fill"
+        case .lateNight: "sparkles"
+        case .child: "figure.2.and.child.holdinghands"
+        }
+    }
+}
+
+struct ListeningMemory: Decodable, Identifiable {
+    let id: String
+    let type: String
+    let title: String
+    let subtitle: String
+    let trackId: String
+    let trackTitle: String
+    let artist: String
+    let artworkURL: String?
+    let occurredAt: Int64
+}

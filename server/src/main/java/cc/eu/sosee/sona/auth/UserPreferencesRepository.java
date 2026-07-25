@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 @Repository
 class UserPreferencesRepository {
@@ -48,7 +49,12 @@ class UserPreferencesRepository {
 
     private UserPreferencesValue read(String json) {
         try {
-            return objectMapper.readValue(json, UserPreferencesValue.class);
+            var value = objectMapper.readTree(json);
+            if (value instanceof ObjectNode object
+                && !object.has("playlistVersionManagementEnabled")) {
+                object.put("playlistVersionManagementEnabled", false);
+            }
+            return objectMapper.treeToValue(value, UserPreferencesValue.class);
         } catch (JacksonException exception) {
             throw new IllegalStateException("Stored user preferences are invalid", exception);
         }

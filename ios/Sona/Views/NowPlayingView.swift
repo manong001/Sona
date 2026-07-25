@@ -12,6 +12,9 @@ struct NowPlayingView: View {
     @State private var isSeeking = false
     @State private var seekPreview = 0.0
     @State private var seekCommitTask: Task<Void, Never>?
+    @State private var feedbackToUndo: RecommendationFeedback?
+    @State private var feedbackMessage: String?
+    @State private var isUpdatingRecommendation = false
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -105,6 +108,36 @@ struct NowPlayingView: View {
                                     )
                                     .frame(width: 44, height: 44)
                             }
+                            Menu {
+                                Button(
+                                    RecommendationFeedbackType.track.title,
+                                    systemImage: "hand.thumbsdown"
+                                ) {
+                                    Task { await submitFeedback(.track, for: track) }
+                                }
+                                Button(
+                                    RecommendationFeedbackType.artist.title,
+                                    systemImage: "person.crop.circle.badge.minus"
+                                ) {
+                                    Task { await submitFeedback(.artist, for: track) }
+                                }
+                                Button(
+                                    RecommendationFeedbackType.genre.title,
+                                    systemImage: "guitars"
+                                ) {
+                                    Task { await submitFeedback(.genre, for: track) }
+                                }
+                                .disabled(track.genre == "未分类")
+                            } label: {
+                                if isUpdatingRecommendation {
+                                    ProgressView().frame(width: 44, height: 44)
+                                } else {
+                                    Image(systemName: "ellipsis")
+                                        .font(.title3)
+                                        .frame(width: 44, height: 44)
+                                }
+                            }
+                            .disabled(isUpdatingRecommendation)
                         }
 
                         VStack(spacing: 5) {
@@ -209,8 +242,10 @@ struct NowPlayingView: View {
                                 }
                             }
                             Spacer()
-                            Text(track.qualityText)
-                                .foregroundStyle(Color.sonaGreen)
+                            Button("相似续听", systemImage: "infinity") {
+                                player.continueWithSimilarTracks()
+                            }
+                            .foregroundStyle(Color.sonaGreen)
                             Spacer()
                             Button("歌词", systemImage: "quote.bubble") {
                                 showsLyrics = true
@@ -251,6 +286,17 @@ struct NowPlayingView: View {
             seekPreview = 0
             await loadLyrics(for: player.currentTrack)
         }
+        .alert("推荐已调整", isPresented: Binding(
+            get: { feedbackMessage != nil },
+            set: { if !$0 { feedbackMessage = nil } }
+        )) {
+            if feedbackToUndo != nil {
+                Button("撤销") { Task { await undoFeedback() } }
+            }
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(feedbackMessage ?? "")
+        }
     }
 
     private var displayQueueTitle: String {
@@ -283,6 +329,39 @@ struct NowPlayingView: View {
             offline.remove(track)
         } else {
             Task { await offline.download(track) }
+        }
+    }
+
+    @MainActor
+    private func submitFeedback(
+        _ type: RecommendationFeedbackType, for track: Track
+    ) async {
+        isUpdatingRecommendation = true
+        defer { isUpdatingRecommendation = false }
+        do {
+            let feedback = try await APIClient.shared.addRecommendationFeedback(
+                type: type, trackID: track.id
+            )
+            feedbackToUndo = feedback
+            feedbackMessage = "\(type.title)：\(feedback.displayValue)"
+            if type == .track {
+                player.next()
+            }
+        } catch {
+            feedbackToUndo = nil
+            feedbackMessage = "操作失败：\(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func undoFeedback() async {
+        guard let feedback = feedbackToUndo else { return }
+        do {
+            try await APIClient.shared.removeRecommendationFeedback(id: feedback.id)
+            feedbackToUndo = nil
+            feedbackMessage = nil
+        } catch {
+            feedbackMessage = "撤销失败：\(error.localizedDescription)"
         }
     }
 
@@ -327,6 +406,19 @@ struct PlaybackQueueView: View {
                                     Image(systemName: "speaker.wave.2.fill")
                                         .foregroundStyle(Color.sonaGreen)
                                 }
+                                if player.automaticallyAddedTrackIDs.contains(track.id) {
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Label("智能续播", systemImage: "sparkles")
+                                            .font(.caption2.bold())
+                                            .foregroundStyle(Color.sonaGreen)
+                                        if let reason = player.automaticRecommendationReasons[track.id] {
+                                            Text(reason)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                }
                             }
                         }
                         .buttonStyle(.plain)
@@ -347,6 +439,12 @@ struct PlaybackQueueView: View {
 
                 if let message = player.queueErrorMessage {
                     Text(message).foregroundStyle(.red)
+                }
+
+                if !player.automaticallyAddedTrackIDs.isEmpty {
+                    Button("撤回最近智能续播", systemImage: "arrow.uturn.backward") {
+                        player.undoLastAutomaticAdditions()
+                    }
                 }
             }
             .listStyle(.plain)

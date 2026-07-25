@@ -201,6 +201,21 @@ struct SettingsView: View {
                             Text(strength.title).tag(strength.rawValue)
                         }
                     }
+                    Toggle(
+                        "智能续播",
+                        isOn: Binding(
+                            get: { player.smartAutoplayEnabled },
+                            set: { player.setSmartAutoplayEnabled($0) }
+                        )
+                    )
+                    Text("队列即将结束时追加相似歌曲；默认关闭，手动加入的歌曲始终优先。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    NavigationLink {
+                        RecommendationPreferenceSettingsView()
+                    } label: {
+                        Label("推荐偏好", systemImage: "slider.horizontal.3")
+                    }
                     Toggle("儿童模式", isOn: $childMode)
                     if childMode {
                         Picker("儿童主题", selection: $childTheme) {
@@ -517,6 +532,113 @@ struct SettingsView: View {
         case "SYNCING_PLAYLIST": "正在同步歌单"
         case "FINALIZING": "正在完成扫描"
         default: nil
+        }
+    }
+}
+
+private struct RecommendationPreferenceSettingsView: View {
+    @State private var preferences: RecommendationPreferences?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section("个性化推荐") {
+                Toggle(
+                    "启用个性化推荐",
+                    isOn: Binding(
+                        get: { preferences?.personalizedEnabled ?? true },
+                        set: { value in Task { await setPersonalized(value) } }
+                    )
+                )
+                .disabled(preferences == nil || isLoading)
+                Text("关闭后暂停使用收藏和播放偏好生成“为你打造”；已有历史和反馈不会被删除。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("已减少推荐") {
+                if let feedback = preferences?.feedback, !feedback.isEmpty {
+                    ForEach(feedback) { item in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(item.displayValue)
+                                Text(item.type.title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("撤销", role: .destructive) {
+                                Task { await remove(item) }
+                            }
+                        }
+                    }
+                    Button("清除全部反馈", role: .destructive) {
+                        Task { await clearFeedback() }
+                    }
+                } else if isLoading {
+                    ProgressView()
+                } else {
+                    Text("暂无反馈")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let errorMessage {
+                Section {
+                    Text(errorMessage).foregroundStyle(.red)
+                }
+            }
+        }
+        .navigationTitle("推荐偏好")
+        .task { await load() }
+    }
+
+    @MainActor
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            preferences = try await APIClient.shared.recommendationPreferences()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func setPersonalized(_ enabled: Bool) async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            preferences = try await APIClient.shared.setPersonalizedRecommendations(
+                enabled: enabled
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func remove(_ feedback: RecommendationFeedback) async {
+        do {
+            try await APIClient.shared.removeRecommendationFeedback(id: feedback.id)
+            preferences = try await APIClient.shared.recommendationPreferences()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func clearFeedback() async {
+        do {
+            try await APIClient.shared.clearRecommendationFeedback()
+            preferences = try await APIClient.shared.recommendationPreferences()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

@@ -138,10 +138,43 @@ class SchemaMigration implements ApplicationRunner {
                     file_size INTEGER NOT NULL,
                     modified_at INTEGER NOT NULL,
                     vector TEXT NOT NULL,
+                    tempo_bpm REAL,
+                    energy REAL,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
                     FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
                 )
+                """).update();
+        var audioFeatureColumns = columns("track_audio_features");
+        if (!audioFeatureColumns.contains("tempo_bpm")) {
+            jdbcClient.sql("ALTER TABLE track_audio_features ADD COLUMN tempo_bpm REAL").update();
+        }
+        if (!audioFeatureColumns.contains("energy")) {
+            jdbcClient.sql("ALTER TABLE track_audio_features ADD COLUMN energy REAL").update();
+        }
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS recommendation_settings (
+                    user_id TEXT PRIMARY KEY,
+                    personalized_enabled INTEGER NOT NULL DEFAULT 1,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS recommendation_feedback (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_value TEXT NOT NULL,
+                    display_value TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE (user_id, target_type, target_value),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """).update();
+        jdbcClient.sql("""
+                CREATE INDEX IF NOT EXISTS idx_recommendation_feedback_user
+                ON recommendation_feedback(user_id, created_at DESC)
                 """).update();
         if (tableExists("track_play_stats")) {
             var statColumns = columns("track_play_stats");

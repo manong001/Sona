@@ -91,7 +91,7 @@ struct MacMainView: View {
         case .home:
             HomeView(openDrawer: {})
         case .discovery:
-            DiscoveryView(openDrawer: {})
+            DiscoveryView(isActive: true, openDrawer: {})
         case .search:
             SearchView(openDrawer: {})
         case .library:

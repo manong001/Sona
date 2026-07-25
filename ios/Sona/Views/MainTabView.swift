@@ -65,7 +65,10 @@ struct MainTabView: View {
                 tabContent(HomeView(openDrawer: openDrawer))
                     .tabItem { Label("首页", systemImage: "house.fill") }
                     .tag(SonaTab.home)
-                tabContent(DiscoveryView(openDrawer: openDrawer))
+                tabContent(DiscoveryView(
+                    isActive: selectedTab == .discovery,
+                    openDrawer: openDrawer
+                ))
                     .tabItem { Label("发现", systemImage: "sparkles") }
                     .tag(SonaTab.discovery)
                 tabContent(SearchView(openDrawer: openDrawer))
@@ -320,13 +323,22 @@ struct DiscoveryView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var player: PlayerStore
     @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var personal: PersonalStore
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
+    @AppStorage("discoveryDisplayMode") private var displayMode = "swipe"
+    let isActive: Bool
     let openDrawer: () -> Void
-    @State private var tracks: [Track] = []
+    @State private var recommendations: [RecommendedTrack] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var flowStartedAt = Date()
     @State private var remixID = 0
+    @State private var selectedScene: RecommendationScene?
+    @State private var feedbackToUndo: RecommendationFeedback?
+    @State private var feedbackMessage: String?
+    @State private var activeSwipeTrackID: String?
+
+    private var tracks: [Track] { recommendations.map(\.track) }
 
     private let subtitles = [
         "在熟悉之外，遇见一首歌",
@@ -354,6 +366,30 @@ struct DiscoveryView: View {
                                 description: Text(errorMessage ?? "管理员将歌曲划入发现池后会显示在这里。")
                             )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if displayMode == "swipe" {
+                            DiscoverySwipeFeed(
+                                recommendations: recommendations,
+                                activeTrackID: $activeSwipeTrackID,
+                                currentTrackID: player.currentTrack?.id,
+                                favoriteIDs: personal.favoriteIDs,
+                                playlists: personal.playlists.filter {
+                                    !$0.featured && $0.directoryPath == nil
+                                },
+                                play: play,
+                                toggleFavorite: { track in
+                                    Task { await personal.toggleFavorite(trackID: track.id) }
+                                },
+                                addToPlaylist: { track, playlist in
+                                    Task {
+                                        await personal.setTrack(
+                                            track.id, in: playlist.id, isIncluded: true
+                                        )
+                                    }
+                                },
+                                feedback: { type, track in
+                                    Task { await submitFeedback(type, for: track) }
+                                }
+                            )
                         } else {
                             DiscoveryRiver(
                                 tracks: tracks,
@@ -370,6 +406,33 @@ struct DiscoveryView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .task { await load() }
+            .onAppear {
+                guard isActive, displayMode == "swipe" else { return }
+                autoplayActiveSwipeTrack()
+            }
+            .onChange(of: activeSwipeTrackID) { oldValue, newValue in
+                guard oldValue != newValue, isActive, displayMode == "swipe" else { return }
+                autoplaySwipeTrack(id: newValue)
+            }
+            .onChange(of: displayMode) { _, newValue in
+                guard isActive, newValue == "swipe" else { return }
+                resetSwipePositionAndAutoplay()
+            }
+            .onChange(of: isActive) { _, newValue in
+                guard newValue, displayMode == "swipe" else { return }
+                autoplayActiveSwipeTrack()
+            }
+        }
+        .alert("推荐已调整", isPresented: Binding(
+            get: { feedbackMessage != nil },
+            set: { if !$0 { feedbackMessage = nil } }
+        )) {
+            if feedbackToUndo != nil {
+                Button("撤销") { Task { await undoFeedback() } }
+            }
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(feedbackMessage ?? "")
         }
     }
 
@@ -391,6 +454,38 @@ struct DiscoveryView: View {
             }
 
             Spacer(minLength: 8)
+
+            Menu {
+                Button("发现池", systemImage: "sparkles") {
+                    selectedScene = nil
+                    Task { await load() }
+                }
+                ForEach(RecommendationScene.allCases) { scene in
+                    Button(scene.title, systemImage: scene.icon) {
+                        selectedScene = scene
+                        Task { await load() }
+                    }
+                }
+            } label: {
+                Label(selectedScene?.title ?? "发现池", systemImage: selectedScene?.icon ?? "sparkles")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .frame(height: 34)
+                    .background(.white.opacity(0.10), in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button(
+                displayMode == "swipe" ? "流动卡片" : "刷歌模式",
+                systemImage: displayMode == "swipe" ? "rectangle.3.group" : "rectangle.portrait.on.rectangle.portrait"
+            ) {
+                displayMode = displayMode == "swipe" ? "river" : "swipe"
+            }
+            .labelStyle(.iconOnly)
+            .foregroundStyle(.white)
+            .frame(width: 34, height: 34)
+            .background(.white.opacity(0.10), in: Circle())
 
             Button("换一批", systemImage: "sparkles") { remix() }
                 .font(.caption.bold())
@@ -437,25 +532,225 @@ struct DiscoveryView: View {
     }
 
     private func remix() {
-        guard !tracks.isEmpty else { return }
+        guard !recommendations.isEmpty else { return }
         withAnimation(.easeInOut(duration: 0.28)) {
-            tracks.shuffle()
+            recommendations.shuffle()
             remixID += 1
             flowStartedAt = Date()
         }
+        resetSwipePositionAndAutoplay()
     }
 
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            tracks = try await APIClient.shared.discoveryTracks(limit: 50).shuffled()
+            recommendations = if let selectedScene {
+                try await APIClient.shared.sceneRecommendations(selectedScene, limit: 50)
+            } else {
+                try await APIClient.shared.discoveryFeed(limit: 50)
+            }
+            recommendations.shuffle()
             errorMessage = nil
             remixID += 1
             flowStartedAt = Date()
+            resetSwipePositionAndAutoplay()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func resetSwipePositionAndAutoplay() {
+        guard isActive, displayMode == "swipe" else { return }
+        let firstID = recommendations.first?.track.id
+        if activeSwipeTrackID == firstID {
+            autoplaySwipeTrack(id: firstID)
+        } else {
+            activeSwipeTrackID = firstID
+        }
+    }
+
+    private func autoplayActiveSwipeTrack() {
+        if activeSwipeTrackID == nil {
+            activeSwipeTrackID = recommendations.first?.track.id
+        } else {
+            autoplaySwipeTrack(id: activeSwipeTrackID)
+        }
+    }
+
+    private func autoplaySwipeTrack(id: String?) {
+        guard let id,
+              let track = recommendations.first(where: { $0.track.id == id })?.track else {
+            return
+        }
+        play(track)
+    }
+
+    @MainActor
+    private func submitFeedback(
+        _ type: RecommendationFeedbackType, for track: Track
+    ) async {
+        do {
+            let activeIndex = recommendations.firstIndex {
+                $0.track.id == activeSwipeTrackID
+            }
+            let feedback = try await APIClient.shared.addRecommendationFeedback(
+                type: type, trackID: track.id
+            )
+            feedbackToUndo = feedback
+            feedbackMessage = "\(type.title)：\(feedback.displayValue)"
+            recommendations.removeAll { item in
+                switch type {
+                case .track:
+                    item.track.id == track.id
+                case .artist:
+                    item.track.artist.localizedCaseInsensitiveCompare(track.artist) == .orderedSame
+                case .genre:
+                    item.track.genre.localizedCaseInsensitiveCompare(track.genre) == .orderedSame
+                }
+            }
+            if recommendations.allSatisfy({ $0.track.id != activeSwipeTrackID }) {
+                let replacementIndex = min(activeIndex ?? 0, max(0, recommendations.count - 1))
+                activeSwipeTrackID = recommendations.indices.contains(replacementIndex)
+                    ? recommendations[replacementIndex].track.id : nil
+            }
+        } catch {
+            feedbackToUndo = nil
+            feedbackMessage = "操作失败：\(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func undoFeedback() async {
+        guard let feedback = feedbackToUndo else { return }
+        do {
+            try await APIClient.shared.removeRecommendationFeedback(id: feedback.id)
+            feedbackToUndo = nil
+            feedbackMessage = nil
+            await load()
+        } catch {
+            feedbackMessage = "撤销失败：\(error.localizedDescription)"
+        }
+    }
+}
+
+private struct DiscoverySwipeFeed: View {
+    let recommendations: [RecommendedTrack]
+    @Binding var activeTrackID: String?
+    let currentTrackID: String?
+    let favoriteIDs: Set<String>
+    let playlists: [Playlist]
+    let play: (Track) -> Void
+    let toggleFavorite: (Track) -> Void
+    let addToPlaylist: (Track, Playlist) -> Void
+    let feedback: (RecommendationFeedbackType, Track) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    ForEach(recommendations) { recommendation in
+                        swipeCard(recommendation)
+                            .frame(width: proxy.size.width, height: max(1, proxy.size.height))
+                            .id(recommendation.id)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $activeTrackID)
+        }
+    }
+
+    private func swipeCard(_ recommendation: RecommendedTrack) -> some View {
+        let track = recommendation.track
+        return ZStack(alignment: .bottom) {
+            CachedRemoteImage(url: sonaArtworkURL(path: track.artworkURL, thumbnailSize: 1024)) {
+                Image(uiImage: $0).resizable().scaledToFill()
+            } placeholder: {
+                LinearGradient(
+                    colors: [.indigo, Color.sonaBackgroundDeep],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+            .clipped()
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.2), .black.opacity(0.94)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 14) {
+                Label(recommendation.reason, systemImage: "sparkles")
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.sonaGreen)
+                    .lineLimit(2)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(track.title)
+                        .font(.title.bold())
+                        .lineLimit(2)
+                    Text("\(track.artist) · \(track.album)")
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 24) {
+                    Button {
+                        play(track)
+                    } label: {
+                        Image(systemName: currentTrackID == track.id ? "waveform" : "play.fill")
+                            .font(.title2.bold())
+                            .foregroundStyle(.black)
+                            .frame(width: 58, height: 58)
+                            .background(Color.sonaGreen, in: Circle())
+                    }
+
+                    Button {
+                        toggleFavorite(track)
+                    } label: {
+                        Image(systemName: favoriteIDs.contains(track.id) ? "heart.fill" : "heart")
+                    }
+
+                    Menu {
+                        if playlists.isEmpty {
+                            Text("请先创建歌单")
+                        } else {
+                            ForEach(playlists) { playlist in
+                                Button(playlist.name, systemImage: "music.note.list") {
+                                    addToPlaylist(track, playlist)
+                                }
+                                .disabled(playlist.trackIDs.contains(track.id))
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "text.badge.plus")
+                    }
+
+                    Menu {
+                        ForEach(RecommendationFeedbackType.allCases, id: \.rawValue) { type in
+                            Button(type.title, systemImage: "hand.thumbsdown") {
+                                feedback(type, track)
+                            }
+                            .disabled(type == .genre && track.genre == "未分类")
+                        }
+                    } label: {
+                        Image(systemName: "hand.thumbsdown")
+                    }
+                }
+                .font(.title2)
+                .foregroundStyle(.white)
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 30)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 }
 
