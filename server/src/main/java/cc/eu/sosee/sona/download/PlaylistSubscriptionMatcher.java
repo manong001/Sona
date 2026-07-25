@@ -43,12 +43,13 @@ class PlaylistSubscriptionMatcher {
 
     Session open() {
         var tracks = jdbcClient.sql("""
-                SELECT id, title, artist, album, duration_ms, codec,
+                SELECT id, path, title, artist, album, duration_ms, codec,
                        sample_rate, bit_depth, file_size
                 FROM tracks ORDER BY updated_at DESC, id
                 """)
             .query((resultSet, rowNumber) -> new LocalTrack(
-                resultSet.getString("id"), resultSet.getString("title"),
+                resultSet.getString("id"), resultSet.getString("path"),
+                resultSet.getString("title"),
                 resultSet.getString("artist"), resultSet.getString("album"),
                 resultSet.getLong("duration_ms"), resultSet.getString("codec"),
                 (Integer) resultSet.getObject("sample_rate"),
@@ -270,7 +271,7 @@ class PlaylistSubscriptionMatcher {
         return !candidateTitle.isEmpty()
             && candidateTitle.equals(normalizedBaseTitle(track.title()))
             && artistsMatch(candidate.artist(), track.artist(), strictMode)
-            && !hasVersionMismatch(candidate.title(), track.title());
+            && !hasMetadataVersionMismatch(candidate, track);
     }
 
     private static boolean artistsMatch(String source, String local, boolean strictMode) {
@@ -323,10 +324,39 @@ class PlaylistSubscriptionMatcher {
         return Optional.of(new ScoredTrack(track, score));
     }
 
+    private boolean hasMetadataVersionMismatch(
+        DownloadCandidate candidate, LocalTrack track
+    ) {
+        var remoteTitle = normalizedVersionText(candidate.title());
+        var remoteAlbum = normalizedVersionText(candidate.album());
+        var localTitle = normalizedVersionText(track.title());
+        var localAlbum = normalizedVersionText(track.album());
+        var localFileName = normalizedVersionText(fileName(track.path()));
+        return VERSION_MARKERS.stream().anyMatch(marker ->
+            (hasMarker(remoteTitle, marker) || hasMarker(remoteAlbum, marker))
+                != (hasMarker(localTitle, marker) || hasMarker(localAlbum, marker)
+                    || hasMarker(localFileName, marker))
+        );
+    }
+
     private boolean hasVersionMismatch(String remoteTitle, String localTitle) {
-        var remote = Normalizer.normalize(remoteTitle, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);
-        var local = Normalizer.normalize(localTitle, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);
-        return VERSION_MARKERS.stream().anyMatch(marker -> hasMarker(remote, marker) != hasMarker(local, marker));
+        var remote = normalizedVersionText(remoteTitle);
+        var local = normalizedVersionText(localTitle);
+        return VERSION_MARKERS.stream().anyMatch(marker ->
+            hasMarker(remote, marker) != hasMarker(local, marker)
+        );
+    }
+
+    private String normalizedVersionText(String value) {
+        return Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)
+            .toLowerCase(Locale.ROOT);
+    }
+
+    private String fileName(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.substring(Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\')) + 1);
     }
 
     private static String normalizedTitleForSimilarity(String value) {
@@ -438,7 +468,7 @@ class PlaylistSubscriptionMatcher {
     }
 
     private record LocalTrack(
-        String trackId, String title, String artist, String album, long durationMs,
+        String trackId, String path, String title, String artist, String album, long durationMs,
         String codec, Integer sampleRate, Integer bitDepth, long fileSize
     ) {
     }
