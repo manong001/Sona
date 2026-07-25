@@ -132,22 +132,35 @@ private actor PlaybackCacheStore {
     ) throws {
         guard !data.isEmpty else { return }
         let dataURL = dataURL(for: key)
+        let existingMetadata = loadMetadata(for: key)
+        let contentLengthChanged = existingMetadata?.contentLength != nil
+            && contentLength != nil
+            && existingMetadata?.contentLength != contentLength
+        let shouldReset = existingMetadata?.originalURL != originalURL.absoluteString
+            || contentLengthChanged
         if !fileManager.fileExists(atPath: dataURL.path) {
             fileManager.createFile(atPath: dataURL.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: dataURL)
         defer { try? handle.close() }
+        if shouldReset {
+            try handle.truncate(atOffset: 0)
+        }
         try handle.seek(toOffset: UInt64(offset))
         try handle.write(contentsOf: data)
 
-        var metadata = loadMetadata(for: key) ?? PlaybackCacheMetadata(
-            originalURL: originalURL.absoluteString,
-            contentLength: nil,
-            contentType: nil,
-            supportsByteRanges: false,
-            ranges: [],
-            lastAccessedAt: Date()
-        )
+        var metadata = shouldReset ? nil : existingMetadata
+        if metadata == nil {
+            metadata = PlaybackCacheMetadata(
+                originalURL: originalURL.absoluteString,
+                contentLength: nil,
+                contentType: nil,
+                supportsByteRanges: false,
+                ranges: [],
+                lastAccessedAt: Date()
+            )
+        }
+        guard var metadata else { return }
         metadata.contentLength = contentLength ?? metadata.contentLength
         metadata.contentType = contentType ?? metadata.contentType
         metadata.supportsByteRanges = supportsByteRanges
@@ -229,6 +242,7 @@ private struct PlaybackHTTPResponse {
 private enum PlaybackCacheError: LocalizedError {
     case invalidResponse
     case invalidStatusCode(Int)
+    case invalidContentRange
     case emptyResponse
 
     var errorDescription: String? {
@@ -237,6 +251,8 @@ private enum PlaybackCacheError: LocalizedError {
             "音频服务器返回了无效响应"
         case let .invalidStatusCode(code):
             "音频服务器返回错误 \(code)"
+        case .invalidContentRange:
+            "音频服务器返回了错误的分段范围"
         case .emptyResponse:
             "音频服务器没有返回数据"
         }
@@ -258,8 +274,9 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
             .joined()
         let configuration = URLSessionConfiguration.default
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.waitsForConnectivity = true
         configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
+        configuration.timeoutIntervalForResource = 30 * 60
         session = URLSession(configuration: configuration)
         super.init()
     }
@@ -410,14 +427,19 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
     private func fetchWithRetry(
         range: Range<Int64>
     ) async throws -> PlaybackHTTPResponse {
+        let maximumAttempts = 4
         var lastError: Error?
-        for attempt in 0..<2 {
+        for attempt in 0..<maximumAttempts {
             do {
                 return try await fetch(range: range)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 lastError = error
-                guard attempt == 0 else { break }
-                try await Task.sleep(for: .milliseconds(500))
+                guard attempt + 1 < maximumAttempts,
+                      shouldRetry(error) else { break }
+                let delay = 250 * (1 << attempt)
+                try await Task.sleep(for: .milliseconds(delay))
             }
         }
         throw lastError ?? PlaybackCacheError.emptyResponse
@@ -442,8 +464,19 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
         }
         let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range")
         let parsedRange = parseContentRange(contentRange)
+        if httpResponse.statusCode == 206 {
+            guard let parsedRange,
+                  parsedRange.start == range.lowerBound,
+                  parsedRange.end >= parsedRange.start,
+                  Int64(data.count) == parsedRange.end - parsedRange.start + 1 else {
+                throw PlaybackCacheError.invalidContentRange
+            }
+        }
+        guard !data.isEmpty else {
+            throw PlaybackCacheError.emptyResponse
+        }
         let responseStart = httpResponse.statusCode == 206
-            ? parsedRange?.start ?? range.lowerBound
+            ? parsedRange!.start
             : 0
         let contentLength = parsedRange?.total
             ?? (httpResponse.statusCode == 200 && httpResponse.expectedContentLength > 0
@@ -463,7 +496,7 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
 
     private func parseContentRange(
         _ value: String?
-    ) -> (start: Int64, total: Int64)? {
+    ) -> (start: Int64, end: Int64, total: Int64)? {
         guard let value,
               let rangeAndTotal = value.split(separator: " ").last else {
             return nil
@@ -471,9 +504,31 @@ final class PlaybackCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate
         let sections = rangeAndTotal.split(separator: "/")
         guard sections.count == 2,
               let total = Int64(sections[1]),
-              let startText = sections[0].split(separator: "-").first,
-              let start = Int64(startText) else { return nil }
-        return (start, total)
+              sections[0].split(separator: "-").count == 2,
+              let start = Int64(sections[0].split(separator: "-")[0]),
+              let end = Int64(sections[0].split(separator: "-")[1]) else {
+            return nil
+        }
+        return (start, end, total)
+    }
+
+    private func shouldRetry(_ error: Error) -> Bool {
+        if let cacheError = error as? PlaybackCacheError {
+            switch cacheError {
+            case .invalidResponse, .invalidContentRange, .emptyResponse:
+                return true
+            case let .invalidStatusCode(code):
+                return code == 408 || code == 429 || (500...599).contains(code)
+            }
+        }
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .cancelled, .badURL, .unsupportedURL, .userAuthenticationRequired,
+             .noPermissionsToReadFile:
+            return false
+        default:
+            return true
+        }
     }
 
     private func uniformTypeIdentifier(for mimeType: String?) -> String {

@@ -240,7 +240,7 @@ final class PlayerStore: ObservableObject {
                 item = AVPlayerItem(asset: asset)
             }
         }
-        item.preferredForwardBufferDuration = 30
+        item.preferredForwardBufferDuration = 60
         item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         player.replaceCurrentItem(with: item)
         currentTrack = track
@@ -271,13 +271,38 @@ final class PlayerStore: ObservableObject {
         startPlayback(
             track,
             streamURLOverride: streamURLOverride,
+            autoplay: false,
             persistState: false,
             usePlaybackCache: usePlaybackCache
         )
-        if seconds > 0 {
-            seek(to: seconds, persistState: false)
-        }
-        persistState()
+        guard let recoveryItem = player.currentItem else { return }
+        let recoveryTime = CMTime(
+            seconds: max(0, seconds),
+            preferredTimescale: 600
+        )
+        progress.update(elapsed: max(0, seconds))
+        player.seek(
+            to: recoveryTime,
+            toleranceBefore: .zero,
+            toleranceAfter: .zero,
+            completionHandler: { [weak self, weak recoveryItem] finished in
+                Task { @MainActor in
+                    guard let self,
+                          let recoveryItem,
+                          recoveryItem === self.player.currentItem else { return }
+                    guard finished else {
+                        self.currentItemNeedsReload = true
+                        self.queueErrorMessage = "恢复播放位置失败，请重试"
+                        return
+                    }
+                    self.activateAudioSession()
+                    self.player.play()
+                    self.isPlaying = true
+                    self.updateNowPlaying()
+                    self.persistState()
+                }
+            }
+        )
     }
 
     func previous() {

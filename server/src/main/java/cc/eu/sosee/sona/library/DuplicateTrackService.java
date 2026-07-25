@@ -40,9 +40,6 @@ class DuplicateTrackService {
     private static final Pattern DOWNLOAD_FILENAME_SUFFIX = Pattern.compile(
         "\\s+-\\s+[\\p{Alnum}_-]{6,}(?:\\s*\\(\\d+\\))?$"
     );
-    private static final Pattern NUMBERED_COPY_QUALIFIER = Pattern.compile(
-        "^[\\(\\[\\{]\\s*\\d+\\s*[\\)\\]\\}]$"
-    );
     private static final long MAX_EXACT_DURATION_DIFFERENCE_MS = 5_000;
 
     private final TrackStore trackStore;
@@ -220,7 +217,7 @@ class DuplicateTrackService {
             && artistsMatch(first.artist(), second.artist())
             && (mode != DuplicateMatchMode.EXACT
                 || (exactDurationMatches(first, second)
-                    && filenameQualifiersMatch(first, second)));
+                    && exactIdentityTitlesMatch(first, second)));
     }
 
     private String normalizedTitle(TrackRecord track, DuplicateMatchMode mode) {
@@ -293,32 +290,23 @@ class DuplicateTrackService {
                 <= MAX_EXACT_DURATION_DIFFERENCE_MS;
     }
 
-    private boolean filenameQualifiersMatch(TrackRecord first, TrackRecord second) {
-        return filenameTitleQualifiers(first).equals(filenameTitleQualifiers(second));
+    private boolean exactIdentityTitlesMatch(TrackRecord first, TrackRecord second) {
+        return exactIdentityTitle(first).equals(exactIdentityTitle(second));
     }
 
-    private List<String> filenameTitleQualifiers(TrackRecord track) {
+    private String exactIdentityTitle(TrackRecord track) {
         var filename = track.path().getFileName().toString();
         var extensionIndex = filename.lastIndexOf('.');
         var stem = extensionIndex > 0 ? filename.substring(0, extensionIndex) : filename;
         stem = Normalizer.normalize(stem, Normalizer.Form.NFKC);
-        stem = DOWNLOAD_FILENAME_SUFFIX.matcher(stem).replaceFirst("").strip();
-
-        var matcher = BRACKETED_CONTENT.matcher(stem);
-        if (!matcher.find()
-            || !TextNormalizer.sortKey(ZhConverterUtil.toSimple(stem.substring(0, matcher.start())))
-                .equals(normalizedTitle(track, DuplicateMatchMode.EXACT))) {
-            return List.of();
+        var suffix = DOWNLOAD_FILENAME_SUFFIX.matcher(stem);
+        if (!suffix.find()) {
+            return normalizedTitle(track, DuplicateMatchMode.EXACT);
         }
-
-        var qualifiers = new ArrayList<String>();
-        do {
-            var qualifier = Normalizer.normalize(matcher.group(), Normalizer.Form.NFKC);
-            if (!NUMBERED_COPY_QUALIFIER.matcher(qualifier).matches()) {
-                qualifiers.add(TextNormalizer.sortKey(ZhConverterUtil.toSimple(qualifier)));
-            }
-        } while (matcher.find());
-        return List.copyOf(qualifiers);
+        var filenameTitle = stem.substring(0, suffix.start()).strip();
+        return filenameTitle.isEmpty()
+            ? normalizedTitle(track, DuplicateMatchMode.EXACT)
+            : TextNormalizer.sortKey(ZhConverterUtil.toSimple(filenameTitle));
     }
 
     private DuplicateTrackGroup group(
