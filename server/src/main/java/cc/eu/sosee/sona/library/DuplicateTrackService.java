@@ -33,6 +33,7 @@ class DuplicateTrackService {
         "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*]|【[^【】]*】"
             + "|\\{[^{}]*}|「[^「」]*」|『[^『』]*』"
     );
+    private static final long MAX_EXACT_DURATION_DIFFERENCE_MS = 5_000;
 
     private final TrackStore trackStore;
     private final JdbcClient jdbcClient;
@@ -57,16 +58,18 @@ class DuplicateTrackService {
             }
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(track);
         }
-
-        var duplicateIds = grouped.values().stream()
+        var candidateGroups = grouped.values().stream()
+            .flatMap(tracks -> splitByExactDuration(tracks, mode).stream())
             .filter(tracks -> tracks.size() > 1)
+            .toList();
+
+        var duplicateIds = candidateGroups.stream()
             .flatMap(List::stream)
             .map(TrackRecord::id)
             .collect(java.util.stream.Collectors.toSet());
         var usage = usageByTrack(duplicateIds);
 
-        return grouped.values().stream()
-            .filter(tracks -> tracks.size() > 1)
+        return candidateGroups.stream()
             .map(tracks -> group(tracks, usage))
             .sorted(Comparator.comparing(DuplicateTrackGroup::artist, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(DuplicateTrackGroup::title, String.CASE_INSENSITIVE_ORDER))
@@ -89,7 +92,8 @@ class DuplicateTrackService {
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
         var target = trackStore.findById(targetId)
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Replacement track not found"));
-        if (!duplicateKey(source, mode).equals(duplicateKey(target, mode))) {
+        if (!duplicateKey(source, mode).equals(duplicateKey(target, mode))
+            || mode == DuplicateMatchMode.EXACT && !exactDurationMatches(source, target)) {
             throw new ResponseStatusException(BAD_REQUEST, "Tracks are not duplicates");
         }
 
@@ -216,6 +220,40 @@ class DuplicateTrackService {
             result = BRACKETED_CONTENT.matcher(result).replaceAll("");
         } while (!result.equals(previous));
         return result;
+    }
+
+    private List<List<TrackRecord>> splitByExactDuration(
+        List<TrackRecord> tracks, DuplicateMatchMode mode
+    ) {
+        if (mode != DuplicateMatchMode.EXACT) {
+            return List.of(tracks);
+        }
+        var sorted = tracks.stream()
+            .sorted(Comparator.comparingLong(TrackRecord::durationMs))
+            .toList();
+        var result = new ArrayList<List<TrackRecord>>();
+        for (var track : sorted) {
+            if (track.durationMs() <= 0) {
+                result.add(new ArrayList<>(List.of(track)));
+                continue;
+            }
+            var current = result.isEmpty() ? null : result.get(result.size() - 1);
+            if (current == null || current.get(0).durationMs() <= 0
+                || track.durationMs() - current.get(0).durationMs()
+                    > MAX_EXACT_DURATION_DIFFERENCE_MS) {
+                current = new ArrayList<>();
+                result.add(current);
+            }
+            current.add(track);
+        }
+        return result;
+    }
+
+    private boolean exactDurationMatches(TrackRecord first, TrackRecord second) {
+        return first.durationMs() > 0
+            && second.durationMs() > 0
+            && Math.abs(first.durationMs() - second.durationMs())
+                <= MAX_EXACT_DURATION_DIFFERENCE_MS;
     }
 
     private DuplicateTrackGroup group(
