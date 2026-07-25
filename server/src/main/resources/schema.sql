@@ -295,6 +295,9 @@ ON artwork_backfill_attempts(retry_at);
 CREATE INDEX IF NOT EXISTS idx_tracks_missing_artwork
 ON tracks(artwork_path, created_at);
 
+CREATE INDEX IF NOT EXISTS idx_tracks_duration
+ON tracks(duration_ms);
+
 CREATE TABLE IF NOT EXISTS ai_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     enabled INTEGER NOT NULL DEFAULT 0,

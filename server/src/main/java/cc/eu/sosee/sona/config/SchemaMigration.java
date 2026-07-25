@@ -101,6 +101,12 @@ class SchemaMigration implements ApplicationRunner {
                         ON tracks(artwork_path, created_at)
                         """).update();
             }
+            if (trackColumns.contains("duration_ms")) {
+                jdbcClient.sql("""
+                        CREATE INDEX IF NOT EXISTS idx_tracks_duration
+                        ON tracks(duration_ms)
+                        """).update();
+            }
             if (trackColumns.contains("title") && trackColumns.contains("artist")) {
                 jdbcClient.sql("""
                         CREATE INDEX IF NOT EXISTS idx_tracks_subscription_match

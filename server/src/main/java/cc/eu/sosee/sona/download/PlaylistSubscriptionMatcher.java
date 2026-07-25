@@ -431,7 +431,7 @@ class PlaylistSubscriptionMatcher {
         return normalizedText(normalized);
     }
 
-    private static String normalizedBaseTitle(String value) {
+    static String normalizedBaseTitle(String value) {
         var result = value == null ? "" : value;
         String previous;
         do {

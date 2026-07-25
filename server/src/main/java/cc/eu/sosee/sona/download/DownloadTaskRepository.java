@@ -131,20 +131,11 @@ class DownloadTaskRepository {
     }
 
     boolean existsInLibrary(DownloadCandidate candidate) {
-        return jdbcClient.sql("""
-                SELECT COUNT(*) FROM tracks
-                WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
-                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
-                      replace(trim(:artist), '、', '/') COLLATE NOCASE
-                """)
-            .param("title", candidate.title())
-            .param("artist", candidate.artist())
-            .query(Integer.class)
-            .single() > 0;
+        return findLibraryTrackId(candidate).isPresent();
     }
 
     Optional<String> findLibraryTrackId(DownloadCandidate candidate) {
-        return jdbcClient.sql("""
+        var exact = jdbcClient.sql("""
                 SELECT id FROM tracks
                 WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
                   AND replace(trim(artist), '、', '/') COLLATE NOCASE =
@@ -156,6 +147,28 @@ class DownloadTaskRepository {
             .param("artist", candidate.artist())
             .query(String.class)
             .optional();
+        if (exact.isPresent() || candidate.durationMs() == null || candidate.durationMs() <= 0) {
+            return exact;
+        }
+        return jdbcClient.sql("""
+                SELECT id, path, title, artist, duration_ms
+                FROM tracks
+                WHERE duration_ms BETWEEN :minimumDuration AND :maximumDuration
+                ORDER BY updated_at DESC, id
+                """)
+            .param("minimumDuration", Math.max(1, candidate.durationMs() - 5_000))
+            .param("maximumDuration", candidate.durationMs() + 5_000)
+            .query((resultSet, rowNumber) -> new LibraryTrackIdentityMatcher.StoredTrack(
+                resultSet.getString("id"),
+                resultSet.getString("path"),
+                resultSet.getString("title"),
+                resultSet.getString("artist"),
+                resultSet.getLong("duration_ms")
+            ))
+            .stream()
+            .filter(track -> LibraryTrackIdentityMatcher.matches(candidate, track))
+            .map(LibraryTrackIdentityMatcher.StoredTrack::id)
+            .findFirst();
     }
 
     Optional<DownloadTaskState> findExistingState(DownloadCandidate candidate) {
