@@ -97,6 +97,15 @@ struct LoginView: View {
                 rememberPassword = true
             }
         }
+        .onChange(of: serverURL) { _, _ in
+            session.clearError()
+        }
+        .onChange(of: username) { _, _ in
+            session.clearError()
+        }
+        .onChange(of: password) { _, _ in
+            session.clearError()
+        }
     }
 
     private func prepareLogin() async {

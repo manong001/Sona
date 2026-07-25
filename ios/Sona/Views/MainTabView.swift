@@ -141,7 +141,7 @@ struct MainTabView: View {
                 .desktopSheetSize(.large)
         }
         .sheet(isPresented: $showsSocial) {
-            SocialHubView().macModalBackButton()
+            SocialHubView()
                 .desktopSheetSize(.large)
         }
         .alert("发现新版本", isPresented: $showsUpdateAlert) {

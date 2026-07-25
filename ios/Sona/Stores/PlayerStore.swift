@@ -64,6 +64,9 @@ final class PlayerStore: ObservableObject {
     private var itemEndObserver: NSObjectProtocol?
     private var itemFailureObserver: NSObjectProtocol?
     private var itemStalledObserver: NSObjectProtocol?
+    private var seekRequestID = 0
+    private var isSeekInProgress = false
+    private var resumeAfterSeeking = false
     private var audioInterruptionObserver: NSObjectProtocol?
     private var audioRouteChangeObserver: NSObjectProtocol?
     private var playbackResourceLoader: PlaybackCacheResourceLoader?
@@ -222,6 +225,9 @@ final class PlayerStore: ObservableObject {
         playbackResourceLoader?.cancelAll()
         playbackResourceLoader = nil
         currentItemNeedsReload = false
+        seekRequestID &+= 1
+        isSeekInProgress = false
+        resumeAfterSeeking = false
         let item: AVPlayerItem
         if let offlineURL = offlineURLProvider?(track) {
             item = AVPlayerItem(url: offlineURL)
@@ -446,6 +452,11 @@ final class PlayerStore: ObservableObject {
     }
 
     private func resume(persistState: Bool = true) {
+        if isSeekInProgress {
+            resumeAfterSeeking = true
+            isPlaying = true
+            return
+        }
         if currentItemNeedsReload, let currentTrack {
             restartPlayback(
                 currentTrack,
@@ -466,6 +477,7 @@ final class PlayerStore: ObservableObject {
     private func pause() {
         stalledRecoveryTask?.cancel()
         stalledRecoveryTask = nil
+        resumeAfterSeeking = false
         player.pause()
         isPlaying = false
         resumeAfterInterruption = false
@@ -474,12 +486,53 @@ final class PlayerStore: ObservableObject {
     }
 
     func seek(to seconds: Double, persistState: Bool = true) {
-        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
-        progress.update(elapsed: seconds)
-        updateNowPlaying()
-        if persistState {
-            self.persistState()
-        }
+        guard let seekItem = player.currentItem else { return }
+        let maximum = resolvedPlaybackDuration() ?? progress.duration
+        let targetSeconds = min(
+            max(0, seconds),
+            maximum > 0 ? maximum : max(0, seconds)
+        )
+        let targetTime = CMTime(seconds: targetSeconds, preferredTimescale: 600)
+        resumeAfterSeeking = resumeAfterSeeking || isPlaying
+        seekRequestID &+= 1
+        let requestID = seekRequestID
+        isSeekInProgress = true
+        player.pause()
+        progress.update(elapsed: targetSeconds)
+        player.seek(
+            to: targetTime,
+            toleranceBefore: .zero,
+            toleranceAfter: .zero,
+            completionHandler: { [weak self, weak seekItem] finished in
+                Task { @MainActor in
+                    guard let self,
+                          let seekItem,
+                          seekItem === self.player.currentItem,
+                          requestID == self.seekRequestID else { return }
+                    self.isSeekInProgress = false
+                    let shouldResume = self.resumeAfterSeeking
+                    self.resumeAfterSeeking = false
+                    guard finished else {
+                        self.isPlaying = false
+                        self.updateNowPlaying()
+                        return
+                    }
+                    let actualSeconds = self.player.currentTime().seconds
+                    self.progress.update(
+                        elapsed: max(0, actualSeconds.isFinite ? actualSeconds : targetSeconds)
+                    )
+                    if shouldResume {
+                        self.activateAudioSession()
+                        self.player.play()
+                        self.isPlaying = true
+                    }
+                    self.updateNowPlaying()
+                    if persistState {
+                        self.persistState()
+                    }
+                }
+            }
+        )
     }
 
     private func configureAudioSession() {
@@ -501,13 +554,34 @@ final class PlayerStore: ObservableObject {
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
-                self?.progress.update(elapsed: max(0, time.seconds.isFinite ? time.seconds : 0))
-                if self?.isPlaying == true {
-                    self?.listenedSeconds += 0.5
+                guard let self else { return }
+                let elapsed = max(0, time.seconds.isFinite ? time.seconds : 0)
+                let actualDuration = self.resolvedPlaybackDuration()
+                let durationChanged = actualDuration.map {
+                    abs($0 - self.progress.duration) > 0.5
+                } ?? false
+                self.progress.update(
+                    elapsed: self.isSeekInProgress ? nil : elapsed,
+                    duration: actualDuration
+                )
+                if durationChanged {
+                    self.updateNowPlaying()
                 }
-                self?.persistProgressIfNeeded()
+                if self.isPlaying && !self.isSeekInProgress {
+                    self.listenedSeconds += 0.5
+                }
+                self.persistProgressIfNeeded()
             }
         }
+    }
+
+    private func resolvedPlaybackDuration() -> Double? {
+        guard let duration = player.currentItem?.duration.seconds,
+              duration.isFinite,
+              duration > 0 else {
+            return nil
+        }
+        return duration
     }
 
     private func observeItemEnd() {

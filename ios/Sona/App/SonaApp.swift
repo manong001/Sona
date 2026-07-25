@@ -54,6 +54,35 @@ enum DesktopSheetSize {
     }
 }
 
+private struct DesktopSheetModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+    let size: DesktopSheetSize
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if targetEnvironment(macCatalyst)
+        content
+            .frame(
+                minWidth: size.width,
+                idealWidth: size.width,
+                minHeight: size.height,
+                idealHeight: size.height
+            )
+            .background {
+                Button("") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+            }
+#else
+        content.presentationDragIndicator(.visible)
+#endif
+    }
+}
+
 struct ModalDismissButton: View {
     @Environment(\.dismiss) private var dismiss
     private let mobileTitle: LocalizedStringKey
@@ -80,18 +109,8 @@ struct ModalDismissButton: View {
 }
 
 extension View {
-    @ViewBuilder
     func desktopSheetSize(_ size: DesktopSheetSize) -> some View {
-#if targetEnvironment(macCatalyst)
-        frame(
-            minWidth: size.width,
-            idealWidth: size.width,
-            minHeight: size.height,
-            idealHeight: size.height
-        )
-#else
-        presentationDragIndicator(.visible)
-#endif
+        modifier(DesktopSheetModifier(size: size))
     }
 
     @ViewBuilder

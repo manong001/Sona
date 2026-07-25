@@ -47,9 +47,13 @@ final class SessionStore: ObservableObject {
             state = .signedIn(user)
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = loginErrorMessage(for: error)
             return false
         }
+    }
+
+    func clearError() {
+        errorMessage = nil
     }
 
     func logout() async {
@@ -108,6 +112,28 @@ final class SessionStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    private func loginErrorMessage(for error: Error) -> String {
+        guard let urlError = error as? URLError else {
+            return error.localizedDescription
+        }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
+            return "网络不可用，请检查设备网络、VPN 和 Sona 的本地网络权限"
+        case .timedOut:
+            return "连接服务器超时，请检查服务器地址和网络"
+        case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .resourceUnavailable:
+            return "无法连接服务器，请检查服务器地址、端口和 VPN"
+        case .appTransportSecurityRequiresSecureConnection:
+            return "服务器连接被系统安全策略拦截，请检查 HTTP/HTTPS 配置"
+        case .secureConnectionFailed, .serverCertificateHasBadDate,
+             .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateNotYetValid:
+            return "服务器安全连接失败，请检查证书或改用正确的 HTTPS 地址"
+        default:
+            return error.localizedDescription
         }
     }
 }

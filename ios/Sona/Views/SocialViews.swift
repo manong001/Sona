@@ -34,6 +34,11 @@ struct SocialHubView: View {
             .navigationTitle("乐友圈")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if targetEnvironment(macCatalyst)
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("返回")
+                }
+#endif
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showsProfileEditor = true } label: {
                         SonaAvatarView(
