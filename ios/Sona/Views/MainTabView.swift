@@ -20,6 +20,7 @@ struct MainTabView: View {
     @State private var availableRelease: AppReleaseInfo?
     @State private var showsUpdateAlert = false
     @State private var selectedTab: SonaTab = .home
+    @State private var hasActivatedDiscoverySwipeFeed = false
     @State private var childModeRefreshTask: Task<Void, Never>?
     @AppStorage("childMode") private var childMode = false
     @AppStorage("childTheme") private var childTheme = "boy"
@@ -67,6 +68,7 @@ struct MainTabView: View {
                     .tag(SonaTab.home)
                 tabContent(DiscoveryView(
                     isActive: selectedTab == .discovery,
+                    hasActivatedSwipeFeed: $hasActivatedDiscoverySwipeFeed,
                     close: { selectedTab = .home },
                     openDrawer: openDrawer
                 ))
@@ -332,6 +334,7 @@ struct DiscoveryView: View {
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     @State private var displayMode = "swipe"
     let isActive: Bool
+    @Binding var hasActivatedSwipeFeed: Bool
     let close: () -> Void
     let openDrawer: () -> Void
     @State private var recommendations: [RecommendedTrack] = []
@@ -344,6 +347,7 @@ struct DiscoveryView: View {
     @State private var feedbackMessage: String?
     @State private var activeSwipeTrackID: String?
     @State private var swipeLyricLines: [LyricLine] = []
+    @State private var swipeTrackIDToPositionWithoutAutoplay: String?
 
     private var tracks: [Track] { recommendations.map(\.track) }
 
@@ -423,16 +427,20 @@ struct DiscoveryView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
-            .task { await load() }
+            .task { await load(autoplay: !hasActivatedSwipeFeed) }
             .task(id: activeSwipeTrackID) {
                 await loadSwipeLyrics()
             }
             .onAppear {
-                guard isActive, displayMode == "swipe" else { return }
-                autoplayActiveSwipeTrack()
+                activateSwipeFeedIfNeeded()
             }
             .onChange(of: activeSwipeTrackID) { oldValue, newValue in
                 guard oldValue != newValue, isActive, displayMode == "swipe" else { return }
+                if swipeTrackIDToPositionWithoutAutoplay == newValue {
+                    swipeTrackIDToPositionWithoutAutoplay = nil
+                    return
+                }
+                swipeTrackIDToPositionWithoutAutoplay = nil
                 autoplaySwipeTrack(id: newValue)
             }
             .onChange(of: displayMode) { _, newValue in
@@ -441,11 +449,7 @@ struct DiscoveryView: View {
             }
             .onChange(of: isActive) { _, newValue in
                 guard newValue else { return }
-                if displayMode != "swipe" {
-                    displayMode = "swipe"
-                    return
-                }
-                autoplayActiveSwipeTrack()
+                activateSwipeFeedIfNeeded()
             }
         }
         .alert("推荐已调整", isPresented: Binding(
@@ -464,9 +468,13 @@ struct DiscoveryView: View {
     private var immersiveSwipeHeader: some View {
         VStack {
             HStack(spacing: 12) {
-                Button("退出刷歌", systemImage: "chevron.down", action: close)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.24), in: Circle())
+                Button(action: close) {
+                    Image(systemName: "chevron.down")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                        .background(.black.opacity(0.24), in: Circle())
+                }
+                .accessibilityLabel("退出刷歌")
 
                 Spacer()
 
@@ -653,7 +661,7 @@ struct DiscoveryView: View {
         resetSwipePositionAndAutoplay()
     }
 
-    private func load() async {
+    private func load(autoplay: Bool = true) async {
         isLoading = true
         defer { isLoading = false }
         do {
@@ -666,15 +674,21 @@ struct DiscoveryView: View {
             errorMessage = nil
             remixID += 1
             flowStartedAt = Date()
-            resetSwipePositionAndAutoplay()
+            resetSwipePositionAndAutoplay(autoplay: autoplay)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func resetSwipePositionAndAutoplay() {
+    private func resetSwipePositionAndAutoplay(autoplay: Bool = true) {
         guard isActive, displayMode == "swipe" else { return }
         let firstID = recommendations.first?.track.id
+        if !autoplay {
+            swipeTrackIDToPositionWithoutAutoplay = firstID
+            activeSwipeTrackID = firstID
+            return
+        }
+        hasActivatedSwipeFeed = true
         if activeSwipeTrackID == firstID {
             autoplaySwipeTrack(id: firstID)
         } else {
@@ -688,6 +702,15 @@ struct DiscoveryView: View {
         } else {
             autoplaySwipeTrack(id: activeSwipeTrackID)
         }
+    }
+
+    private func activateSwipeFeedIfNeeded() {
+        guard isActive,
+              displayMode == "swipe",
+              !hasActivatedSwipeFeed,
+              !recommendations.isEmpty else { return }
+        hasActivatedSwipeFeed = true
+        autoplayActiveSwipeTrack()
     }
 
     private func autoplaySwipeTrack(id: String?) {
