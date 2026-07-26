@@ -10,7 +10,7 @@ struct RootView: View {
             switch session.state {
             case .checking:
                 ZStack {
-                    Color.black.ignoresSafeArea()
+                    Color.sonaBackgroundDeep.ignoresSafeArea()
                     ProgressView("正在连接 Sona…")
                 }
             case .signedOut:

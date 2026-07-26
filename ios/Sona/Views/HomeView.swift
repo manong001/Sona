@@ -1,6 +1,7 @@
 import SwiftUI
 
 private let favoriteRotationInterval: Duration = .seconds(30)
+private let playlistRecommendationRotationInterval: Duration = .seconds(30 * 60)
 
 struct HomeView: View {
     @EnvironmentObject private var session: SessionStore
@@ -13,6 +14,12 @@ struct HomeView: View {
     @State private var genres: [String] = []
     @State private var madeForYouMixes: [MadeForYouMix] = []
     @State private var listeningMemories: [ListeningMemory] = []
+    @State private var playlistSubscriptions: [PlaylistSubscription] = []
+    @State private var cachedSubscriptionPlaylistIDs: [String] = []
+    @State private var recommendedSubscriptionPlaylistIDs: [String] = []
+    @State private var favoriteUpdatingPlaylistIDs: Set<String> = []
+    @State private var isLoadingDailyRecommendations = true
+    @State private var isLoadingPlaylistSubscriptions = true
     @State private var favoriteRotationOffset = 0
     @State private var loadedHomePlaylistTracks: [String: Track] = [:]
     @State private var homePlaylistPlaybackTask: Task<Void, Never>?
@@ -91,6 +98,53 @@ struct HomeView: View {
                 rotatesArtworkHourly: playlist.artworkTrackID == nil,
                 tracks: tracks,
                 shape: .square
+            )
+        }
+    }
+
+    private var subscriptionPlaylistCollections: [SonaCollection] {
+        let liveIDs = playlistSubscriptions.map(\.playlistId)
+        let subscriptionPlaylistIDs = Set(
+            liveIDs.isEmpty ? cachedSubscriptionPlaylistIDs : liveIDs
+        )
+        return personal.playlists.filter {
+            subscriptionPlaylistIDs.contains($0.id)
+        }.map { playlist in
+            let tracks = playlist.trackIDs.compactMap(library.track(id:))
+            return SonaCollection(
+                id: "playlist-\(playlist.id)",
+                title: playlist.name,
+                subtitle: "订阅歌单 · \(username)",
+                artworkURL: sonaArtworkPaths(playlist.artworkURLs).first
+                    ?? sonaFirstArtworkURL(in: tracks),
+                artworkURLs: sonaArtworkPaths(playlist.artworkURLs),
+                rotatesArtworkHourly: playlist.artworkTrackID == nil,
+                tracks: tracks,
+                shape: .square
+            )
+        }
+    }
+
+    private var recommendedSubscriptionPlaylistCollections: [SonaCollection] {
+        let collectionsByID = Dictionary(
+            uniqueKeysWithValues: subscriptionPlaylistCollections.map { ($0.id, $0) }
+        )
+        return recommendedSubscriptionPlaylistIDs.compactMap { collectionsByID[$0] }
+    }
+
+    private var recommendedSubscriptionPlaylistGroups: [[SonaCollection]] {
+        stride(
+            from: 0,
+            to: recommendedSubscriptionPlaylistCollections.count,
+            by: 3
+        ).map { start in
+            Array(
+                recommendedSubscriptionPlaylistCollections[
+                    start..<min(
+                        start + 3,
+                        recommendedSubscriptionPlaylistCollections.count
+                    )
+                ]
             )
         }
     }
@@ -303,12 +357,20 @@ struct HomeView: View {
                     .padding(.bottom, homeBottomPadding)
                 }
                 .refreshable {
-                    await personal.refresh()
-                    await loadRecommendations()
+                    async let personalRefresh: Void = personal.refresh()
+                    async let recommendations: Void = loadRecommendations()
+                    async let subscriptions: Void = loadPlaylistSubscriptions()
+                    _ = await (personalRefresh, recommendations, subscriptions)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .task(id: childMode) { await loadRecommendations() }
+            .task(id: homeContentCacheKey) {
+                loadCachedHomeContent()
+                async let recommendations: Void = loadRecommendations()
+                async let subscriptions: Void = loadPlaylistSubscriptions()
+                _ = await (recommendations, subscriptions)
+            }
+            .task { await rotatePlaylistRecommendations() }
             .task { await rotateFavorites() }
         }
     }
@@ -319,6 +381,18 @@ struct HomeView: View {
 #else
         miniPlayerMode == "fixed" ? 92 : 24
 #endif
+    }
+
+    private var homeContentCacheKey: String? {
+        guard let userID = session.currentUser?.id else { return nil }
+        let serverURL = APIClient.shared.serverURL
+        let server = [
+            serverURL.scheme ?? "http",
+            serverURL.host ?? "server",
+            String(serverURL.port ?? 0)
+        ].joined(separator: "-")
+        let mode = childMode ? "child" : "general"
+        return "\(server)-\(userID)-\(mode)"
     }
 
     private var header: some View {
@@ -342,11 +416,21 @@ struct HomeView: View {
     @ViewBuilder
     private var homeContent: some View {
         if selectedFilter != "歌单" {
-            mediaSection(
-                title: "今日推荐",
-                collections: dailyCollections,
-                titleDestination: dailyCollection
-            )
+            if dailyCollections.isEmpty && isLoadingDailyRecommendations {
+                dailyRecommendationPlaceholder
+            } else {
+                mediaSection(
+                    title: "今日推荐",
+                    collections: dailyCollections,
+                    titleDestination: dailyCollection
+                )
+            }
+            if recommendedSubscriptionPlaylistGroups.isEmpty
+                && isLoadingPlaylistSubscriptions {
+                playlistRecommendationPlaceholder
+            } else {
+                playlistRecommendationSection
+            }
             listeningMemorySection
             recommendedRadioSection
             madeForYouSection
@@ -369,6 +453,130 @@ struct HomeView: View {
         if selectedFilter != "歌单" {
             mediaSection(title: "浏览专辑", collections: albums)
             mediaSection(title: "常听艺人", collections: artists)
+        }
+    }
+
+    private var dailyRecommendationPlaceholder: some View {
+        homeRecommendationPlaceholder(title: "今日推荐")
+    }
+
+    private var playlistRecommendationPlaceholder: some View {
+        homeRecommendationPlaceholder(title: "歌单推荐")
+    }
+
+    private func homeRecommendationPlaceholder(title: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SonaSectionHeader(title: title)
+                .padding(.horizontal, 16)
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(0..<3, id: \.self) { _ in
+                    VStack(alignment: .leading, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.sonaSurface)
+                            .aspectRatio(1, contentMode: .fit)
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.sonaSurface)
+                            .frame(height: 14)
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.sonaSurface.opacity(0.7))
+                            .frame(width: 72, height: 11)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 16)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("正在载入\(title)")
+        }
+    }
+
+    @ViewBuilder
+    private var playlistRecommendationSection: some View {
+        if !recommendedSubscriptionPlaylistGroups.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                NavigationLink {
+                    RecommendedPlaylistListView(
+                        collections: recommendedSubscriptionPlaylistCollections
+                    )
+                } label: {
+                    HStack {
+                        SonaSectionHeader(title: "歌单推荐")
+                        Image(systemName: "chevron.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(Color.sonaSecondaryText)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .sonaNavigationHaptic()
+                .padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 0) {
+                        ForEach(
+                            Array(recommendedSubscriptionPlaylistGroups.enumerated()),
+                            id: \.offset
+                        ) { _, group in
+                            HStack(alignment: .top, spacing: 12) {
+                                ForEach(group) { collection in
+                                    if let playlist = playlist(for: collection) {
+                                        ZStack(alignment: .topTrailing) {
+                                            NavigationLink {
+                                                SonaTrackListView(
+                                                    collection: collection,
+                                                    playbackQueue: playbackQueue(for: collection)
+                                                )
+                                            } label: {
+                                                RecommendedPlaylistCard(collection: collection)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .sonaNavigationHaptic()
+
+                                            Button {
+                                                favoriteRecommendedPlaylist(playlist)
+                                            } label: {
+                                                Group {
+                                                    if favoriteUpdatingPlaylistIDs
+                                                        .contains(playlist.id) {
+                                                        ProgressView()
+                                                    } else {
+                                                        Image(systemName: playlist.shownOnHome
+                                                            ? "heart.fill" : "heart")
+                                                    }
+                                                }
+                                                .font(.caption.weight(.bold))
+                                                .foregroundStyle(playlist.shownOnHome
+                                                    ? Color.sonaGreen : .white)
+                                                .frame(width: 30, height: 30)
+                                                .background(.black.opacity(0.68), in: Circle())
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(
+                                                playlist.shownOnHome
+                                                    || favoriteUpdatingPlaylistIDs
+                                                        .contains(playlist.id)
+                                            )
+                                            .accessibilityLabel(
+                                                playlist.shownOnHome ? "已收藏" : "收藏歌单"
+                                            )
+                                            .padding(6)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .top)
+                                    }
+                                }
+                                ForEach(0..<(3 - group.count), id: \.self) { _ in
+                                    Color.clear
+                                        .frame(maxWidth: .infinity)
+                                        .accessibilityHidden(true)
+                                }
+                            }
+                            .containerRelativeFrame(.horizontal)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .contentMargins(.horizontal, 16, for: .scrollContent)
+                .scrollTargetBehavior(.paging)
+            }
         }
     }
 
@@ -794,6 +1002,8 @@ struct HomeView: View {
     }
 
     private func loadRecommendations() async {
+        isLoadingDailyRecommendations = true
+        defer { isLoadingDailyRecommendations = false }
         async let loadedDaily = APIClient.shared.dailyRecommendations()
         async let loadedGenres = APIClient.shared.recommendationGenres()
         async let loadedMadeForYou = APIClient.shared.madeForYouRecommendations()
@@ -801,11 +1011,12 @@ struct HomeView: View {
             ? [ListeningMemory]()
             : APIClient.shared.listeningMemories()
         do {
-            let (daily, loadedGenreValues) = try await (loadedDaily, loadedGenres)
-            dailyTracks = uniqueTracks(daily)
-            genres = loadedGenreValues
+            dailyTracks = uniqueTracks(try await loadedDaily)
+            saveCachedHomeContent()
+        } catch { }
+        do {
+            genres = try await loadedGenres
         } catch {
-            dailyTracks = []
             genres = []
         }
         do {
@@ -817,6 +1028,120 @@ struct HomeView: View {
             listeningMemories = try await loadedMemories
         } catch {
             listeningMemories = []
+        }
+    }
+
+    private func loadPlaylistSubscriptions() async {
+        isLoadingPlaylistSubscriptions = true
+        defer { isLoadingPlaylistSubscriptions = false }
+        guard let subscriptions = try? await APIClient.shared.playlistSubscriptions() else {
+            return
+        }
+        playlistSubscriptions = subscriptions
+        cachedSubscriptionPlaylistIDs = subscriptions.map(\.playlistId)
+        reconcilePlaylistRecommendations()
+        saveCachedHomeContent()
+    }
+
+    private func reconcilePlaylistRecommendations() {
+        let allIDs = playlistSubscriptions.map { "playlist-\($0.playlistId)" }
+        let allIDSet = Set(allIDs)
+        let retainedIDs = recommendedSubscriptionPlaylistIDs.filter {
+            allIDSet.contains($0)
+        }
+        let retainedIDSet = Set(retainedIDs)
+        let newIDs = allIDs.filter { !retainedIDSet.contains($0) }.shuffled()
+        recommendedSubscriptionPlaylistIDs = retainedIDs + newIDs
+    }
+
+    private func selectPlaylistRecommendations() {
+        let liveIDs = playlistSubscriptions.map(\.playlistId)
+        let allIDs = (liveIDs.isEmpty ? cachedSubscriptionPlaylistIDs : liveIDs)
+            .map { "playlist-\($0)" }
+        recommendedSubscriptionPlaylistIDs = allIDs.shuffled()
+    }
+
+    private func rotatePlaylistRecommendations() async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: playlistRecommendationRotationInterval)
+            } catch {
+                return
+            }
+            withAnimation(.easeInOut(duration: 0.35)) {
+                selectPlaylistRecommendations()
+            }
+            saveCachedHomeContent()
+        }
+    }
+
+    private func loadCachedHomeContent() {
+        guard let cacheURL = homeContentCacheURL,
+              let data = try? Data(contentsOf: cacheURL),
+              let cache = try? JSONDecoder().decode(HomeContentCache.self, from: data) else {
+            return
+        }
+        dailyTracks = cache.dailyTracks
+        cachedSubscriptionPlaylistIDs = cache.subscriptionPlaylistIDs
+        recommendedSubscriptionPlaylistIDs = cache.recommendedPlaylistIDs.isEmpty
+            ? cache.subscriptionPlaylistIDs.map { "playlist-\($0)" }
+            : cache.recommendedPlaylistIDs
+    }
+
+    private func saveCachedHomeContent() {
+        guard let cacheURL = homeContentCacheURL else { return }
+        let liveIDs = playlistSubscriptions.map(\.playlistId)
+        let subscriptionIDs = liveIDs.isEmpty ? cachedSubscriptionPlaylistIDs : liveIDs
+        guard !dailyTracks.isEmpty || !subscriptionIDs.isEmpty else { return }
+        let cache = HomeContentCache(
+            dailyTracks: dailyTracks,
+            subscriptionPlaylistIDs: subscriptionIDs,
+            recommendedPlaylistIDs: recommendedSubscriptionPlaylistIDs
+        )
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        try? FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: cacheURL, options: .atomic)
+    }
+
+    private var homeContentCacheURL: URL? {
+        guard let homeContentCacheKey,
+              let caches = FileManager.default.urls(
+                for: .cachesDirectory,
+                in: .userDomainMask
+              ).first else { return nil }
+        return caches
+            .appendingPathComponent("SonaHomeCache", isDirectory: true)
+            .appendingPathComponent("\(homeContentCacheKey).json")
+    }
+
+    private func playlist(for collection: SonaCollection) -> Playlist? {
+        guard collection.id.hasPrefix("playlist-") else { return nil }
+        let playlistID = String(collection.id.dropFirst("playlist-".count))
+        return personal.playlists.first { $0.id == playlistID }
+    }
+
+    private func favoriteRecommendedPlaylist(_ playlist: Playlist) {
+        guard !playlist.shownOnHome else { return }
+        favoriteUpdatingPlaylistIDs.insert(playlist.id)
+        Task {
+            let succeeded = await personal.setPlaylistShownOnHome(id: playlist.id, shown: true)
+            if succeeded {
+                let olderIDs = personal.playlists
+                    .filter { $0.shownOnHome && $0.id != playlist.id }
+                    .sorted {
+                        ($0.homePosition ?? Int.max) < ($1.homePosition ?? Int.max)
+                    }
+                    .map(\.id)
+                var orderedIDs = [playlist.id] + olderIDs
+                if personal.favoritesShownOnHome {
+                    orderedIDs.insert("liked-songs", at: 0)
+                }
+                _ = await personal.reorderHomeItems(ids: orderedIDs)
+            }
+            favoriteUpdatingPlaylistIDs.remove(playlist.id)
         }
     }
 
@@ -856,6 +1181,85 @@ struct HomeView: View {
         }
     }
 
+}
+
+private struct HomeContentCache: Codable {
+    let dailyTracks: [Track]
+    let subscriptionPlaylistIDs: [String]
+    let recommendedPlaylistIDs: [String]
+}
+
+private struct RecommendedPlaylistCard: View {
+    let collection: SonaCollection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    GeometryReader { proxy in
+                        SonaCollectionArtwork(
+                            collection: collection,
+                            size: proxy.size.width
+                        )
+                    }
+                }
+            Text(collection.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            Text(collection.subtitle)
+                .font(.caption)
+                .foregroundStyle(Color.sonaSecondaryText)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct RecommendedPlaylistListView: View {
+    let collections: [SonaCollection]
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(collections) { collection in
+                    NavigationLink {
+                        SonaTrackListView(
+                            collection: collection,
+                            playbackQueue: collection.tracks
+                        )
+                    } label: {
+                        HStack(spacing: 14) {
+                            SonaCollectionArtwork(collection: collection, size: 64)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(collection.title)
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Text(collection.subtitle)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.sonaSecondaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color.sonaSecondaryText)
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(height: 80)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .sonaNavigationHaptic()
+                }
+            }
+        }
+        .background(Color.sonaBackground)
+        .navigationTitle("歌单推荐")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 }
 
 private func homePlaylistPoolTitle(_ poolType: String) -> String {

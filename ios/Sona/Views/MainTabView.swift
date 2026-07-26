@@ -165,7 +165,6 @@ struct MainTabView: View {
         }
         .task {
             guard let userID = session.currentUser?.id else { return }
-            await userPreferences.beginSession(userID: userID)
             personal.configure(userID: userID)
             player.configureFavoriteCommand(
                 isFavorite: { personal.favoriteIDs.contains($0) },
@@ -179,14 +178,14 @@ struct MainTabView: View {
             )
             player.beginSession(userID: userID)
             player.restoreCachedStateIfAvailable { offline.localURL(for: $0) }
+            async let preferencesLoad: Void = userPreferences.beginSession(userID: userID)
+            async let libraryRefresh: Void = refreshLibraryOnLaunch()
+            async let personalRefresh: Void = personal.refresh()
             await player.restoreStateIfNeeded { offline.localURL(for: $0) }
-            if library.tracks.isEmpty {
-                await library.refresh()
-            }
+            _ = await (preferencesLoad, libraryRefresh, personalRefresh)
             Task(priority: .utility) {
                 _ = await library.prepareAlphabeticalIndex()
             }
-            await personal.refresh()
             await player.startCarPlayPlaybackIfNeeded()
             await player.prepareRandomQueueIfNeeded { offline.localURL(for: $0) }
         }
@@ -264,6 +263,12 @@ struct MainTabView: View {
 
     private func closeDrawer() {
         showsDrawer = false
+    }
+
+    private func refreshLibraryOnLaunch() async {
+        if library.tracks.isEmpty {
+            await library.refresh()
+        }
     }
 
     @MainActor

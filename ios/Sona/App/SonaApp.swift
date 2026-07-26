@@ -21,6 +21,7 @@ struct SonaApp: App {
                 .environmentObject(personal)
                 .environmentObject(social)
                 .environmentObject(userPreferences)
+                .background(Color.sonaBackgroundDeep.ignoresSafeArea())
                 .tint(.sonaGreen)
                 .preferredColorScheme(.dark)
         }
