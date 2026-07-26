@@ -682,6 +682,14 @@ class MusicDlBackend:
         return name, cover, candidates
 
     def _parse_qq_playlist(self, url: str) -> tuple[str, str | None, list[BackendCandidate]]:
+        parsed = urlparse(url)
+        parts = [part for part in parsed.path.split("/") if part]
+        if "toplist" in parts:
+            toplist_id = _playlist_id(url, query_keys=("topid", "id"), path_marker="toplist")
+            if not toplist_id:
+                raise ValueError("QQ 音乐排行榜链接无效")
+            return self._parse_qq_toplist(toplist_id)
+
         playlist_id = _playlist_id(url, query_keys=("id", "disstid"), path_marker="playlist")
         if not playlist_id:
             raise ValueError("QQ 音乐歌单链接无效")
@@ -753,6 +761,62 @@ class MusicDlBackend:
             ))
         if not name or not candidates:
             raise ValueError("QQ 音乐公开歌单没有可同步曲目")
+        return name, cover, candidates
+
+    def _parse_qq_toplist(
+        self, toplist_id: str
+    ) -> tuple[str, str | None, list[BackendCandidate]]:
+        response = self._fetch_json(
+            "https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg?" + urlencode({
+                "topid": toplist_id,
+                "page": "detail",
+                "format": "json",
+                "inCharset": "utf8",
+                "outCharset": "utf-8",
+                "notice": 0,
+                "platform": "yqq.json",
+                "needNewCode": 0,
+            }),
+            "https://y.qq.com/",
+        )
+        topinfo = response.get("topinfo") or {}
+        name = _text(topinfo.get("ListName")).strip()[:80]
+        cover = _optional_text(topinfo.get("pic") or topinfo.get("pic_v12"))
+        if cover and cover.startswith("http://"):
+            cover = "https://" + cover.removeprefix("http://")
+        candidates = []
+        for item in response.get("songlist", [])[:MAX_CANDIDATES]:
+            if not isinstance(item, dict):
+                continue
+            song = item.get("data") or item
+            if not isinstance(song, dict):
+                continue
+            title = _text(song.get("songname") or song.get("songorig")).strip()
+            artist = "、".join(
+                _text(singer.get("name")).strip()
+                for singer in song.get("singer", [])
+                if isinstance(singer, dict) and _text(singer.get("name")).strip()
+            )
+            identifier = _text(song.get("songmid")).strip()
+            duration_s = _positive_int(song.get("interval"))
+            if not title or not artist or not identifier:
+                continue
+            candidates.append(BackendCandidate(
+                source="QQMusicClient",
+                title=title,
+                artist=artist,
+                album=_text(song.get("albumname")).strip(),
+                extension="mp3",
+                duration_ms=duration_s * 1_000 if duration_s else None,
+                file_size_bytes=None,
+                bitrate=None,
+                sample_rate=None,
+                artwork_url=cover,
+                lyrics=None,
+                opaque=PublicPlaylistItem("QQMusicClient", identifier),
+            ))
+        if not name or not candidates:
+            raise ValueError("QQ 音乐排行榜没有可同步曲目")
         return name, cover, candidates
 
     def _fetch_text(self, url: str) -> str:
@@ -1262,14 +1326,40 @@ def _normalize_playlist_url(value: str) -> str:
     url = url.rstrip(".,;:!?，。；：！？、)]}）】》")
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower().strip(".")
-    if (
-        (hostname == "y.qq.com" or hostname.endswith(".y.qq.com"))
-        and parsed.path == "/n3/other/pages/details/playlist.html"
-    ):
-        playlist_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
-        if playlist_id.isdigit():
-            return f"https://y.qq.com/n/ryqq/playlist/{playlist_id}"
+    if hostname == "y.qq.com" or hostname.endswith(".y.qq.com"):
+        canonical_url = _canonical_qq_playlist_url(url)
+        if canonical_url != url:
+            return canonical_url
+        if parsed.path == "/base/fcgi-bin/u":
+            return _resolve_qq_short_playlist_url(url)
     return _resolve_short_playlist_url(url) if hostname == "163cn.tv" else url
+
+
+def _canonical_qq_playlist_url(url: str) -> str:
+    parsed = urlparse(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    query_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
+    if (
+        parsed.path == "/n3/other/pages/details/playlist.html"
+        and query_id.isdigit()
+    ):
+        return f"https://y.qq.com/n/ryqq/playlist/{query_id}"
+    if (
+        parsed.path == "/n3/other/pages/details/toplist.html"
+        and query_id.isdigit()
+    ):
+        return f"https://y.qq.com/n/ryqq/toplist/{query_id}"
+    if "toplist" in parts:
+        position = parts.index("toplist")
+        if position + 1 < len(parts) and parts[position + 1].isdigit():
+            return f"https://y.qq.com/n/ryqq/toplist/{parts[position + 1]}"
+    return url
+
+
+def _resolve_qq_short_playlist_url(url: str) -> str:
+    request = Request(url, method="GET", headers={"User-Agent": "Mozilla/5.0 Sona/1.0"})
+    with urlopen(request, timeout=10) as response:
+        return _canonical_qq_playlist_url(response.geturl())
 
 
 def _playlist_id(

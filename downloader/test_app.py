@@ -3,6 +3,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -342,6 +343,35 @@ class DownloaderApiTest(unittest.TestCase):
             self.backend.parsed_playlist_urls,
         )
 
+    def test_extracts_and_resolves_qq_toplist_short_url_from_share_text(self):
+        canonical_url = "https://y.qq.com/n/ryqq/toplist/62"
+        with patch("app.urlopen") as opener:
+            opener.return_value.__enter__.return_value.geturl.return_value = (
+                "https://y.qq.com/n/ryqq_v2/toplist/62"
+                "?ADTAG=h5_share_toplist&redirecttag=mn.redirect.custom"
+            )
+            status, body = self.request(
+                "POST",
+                "/v1/playlists/parse",
+                {
+                    "url": (
+                        "分享排行榜《飙升榜 2026年第206天》 "
+                        "https://c6.y.qq.com/base/fcgi-bin/u?__=AA9bLIO9HyNm "
+                        "@QQ音乐"
+                    )
+                },
+            )
+
+        self.assertEqual(200, status)
+        self.assertEqual("测试歌单", body["name"])
+        request = opener.call_args.args[0]
+        self.assertEqual("GET", request.get_method())
+        self.assertEqual(
+            "https://c6.y.qq.com/base/fcgi-bin/u?__=AA9bLIO9HyNm",
+            request.full_url,
+        )
+        self.assertEqual([canonical_url], self.backend.parsed_playlist_urls)
+
     def test_rejects_unknown_source_and_candidate(self):
         with self.assertRaises(HTTPError) as source_error:
             self.request("GET", "/v1/search?q=test&sources=UnknownClient")
@@ -548,6 +578,42 @@ class DownloaderApiTest(unittest.TestCase):
 
         self.assertEqual(411, len(candidates))
         self.assertEqual([0, 100, 200, 300, 400], requested_starts)
+
+    def test_qq_toplist_uses_public_metadata(self):
+        response = {
+            "code": 0,
+            "topinfo": {
+                "ListName": "飙升榜",
+                "pic": "https://image.example.test/toplist.jpg",
+            },
+            "songlist": [{
+                "data": {
+                    "songmid": "song-mid",
+                    "songname": "Less than a Lover",
+                    "interval": 145,
+                    "singer": [{"name": "JENNIE (제니)"}],
+                    "albumname": "Less than a Lover",
+                },
+            }],
+        }
+        requested_urls = []
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("NeteaseMusicClient", "QQMusicClient")
+        backend._fetch_json = lambda url, referer=None: requested_urls.append(url) or response
+        backend._lock_for = lambda sources: nullcontext()
+        backend._client = lambda sources: self.fail("不应调用 musicdl QQ 解析器")
+
+        name, artwork_url, candidates = backend.parse_playlist(
+            "https://y.qq.com/n/ryqq/toplist/62"
+        )
+
+        self.assertEqual("飙升榜", name)
+        self.assertEqual("https://image.example.test/toplist.jpg", artwork_url)
+        self.assertEqual("Less than a Lover", candidates[0].title)
+        self.assertEqual("JENNIE (제니)", candidates[0].artist)
+        self.assertEqual(145_000, candidates[0].duration_ms)
+        self.assertIn("topid=62", requested_urls[0])
+        self.assertIsInstance(candidates[0].opaque, PublicPlaylistItem)
 
     def test_spotify_playlist_uses_spotify_parser_outside_default_sources(self):
         song = SimpleNamespace(
