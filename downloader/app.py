@@ -697,7 +697,7 @@ class MusicDlBackend:
             host_uin = _qq_playlist_host_uin(url)
             if not host_uin:
                 raise ValueError("QQ 音乐官方歌单链接缺少 hosteuin 参数")
-            return self._parse_qq_official_playlist(playlist_id, host_uin)
+            return self._parse_qq_modern_playlist(playlist_id, host_uin)
         page_size = 100
         playlist = None
         songs = []
@@ -720,7 +720,12 @@ class MusicDlBackend:
                 }),
                 "https://y.qq.com/",
             )
-            page = response["cdlist"][0]
+            pages = response.get("cdlist")
+            if not isinstance(pages, list) or not pages:
+                return self._parse_qq_modern_playlist(
+                    playlist_id, _qq_playlist_host_uin(url)
+                )
+            page = pages[0]
             if playlist is None:
                 playlist = page
             page_songs = page.get("songlist", [])
@@ -768,7 +773,7 @@ class MusicDlBackend:
             raise ValueError("QQ 音乐公开歌单没有可同步曲目")
         return name, cover, candidates
 
-    def _parse_qq_official_playlist(
+    def _parse_qq_modern_playlist(
         self, playlist_id: str, host_uin: str
     ) -> tuple[str, str | None, list[BackendCandidate]]:
         response = self._post_json(
@@ -795,7 +800,7 @@ class MusicDlBackend:
         request = response.get("req_0") or {}
         data = request.get("data") or {}
         if response.get("code") != 0 or request.get("code") != 0 or data.get("code") != 0:
-            raise ValueError("QQ 音乐官方歌单无法访问")
+            raise ValueError("QQ 音乐歌单无法访问")
         playlist = data.get("dirinfo") or {}
         name = _text(playlist.get("title")).strip()[:80]
         cover = _optional_text(playlist.get("picurl") or playlist.get("picurl2"))
@@ -831,7 +836,7 @@ class MusicDlBackend:
                 opaque=PublicPlaylistItem("QQMusicClient", identifier),
             ))
         if not name or not candidates:
-            raise ValueError("QQ 音乐官方歌单没有可同步曲目")
+            raise ValueError("QQ 音乐歌单没有可同步曲目")
         return name, cover, candidates
 
     def _parse_qq_toplist(

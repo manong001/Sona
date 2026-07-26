@@ -599,6 +599,48 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(411, len(candidates))
         self.assertEqual([0, 100, 200, 300, 400], requested_starts)
 
+    def test_qq_playlist_uses_modern_metadata_after_legacy_privacy_error(self):
+        response = {
+            "code": 0,
+            "req_0": {
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "dirinfo": {
+                        "title": "抖音超火热歌榜（持续更新）",
+                        "picurl": "https://image.example.test/qq.jpg",
+                    },
+                    "songlist": [{
+                        "mid": "song-mid",
+                        "title": "偏向（摇滚版）",
+                        "interval": 185,
+                        "singer": [{"name": "孟维来"}],
+                        "album": {"name": "偏向（爆燃摇滚版）"},
+                    }],
+                },
+            },
+        }
+        requests = []
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("QQMusicClient",)
+        backend._fetch_json = lambda url, referer=None: {
+            "code": 0, "subcode": 4000, "msg": "check privacy error!"
+        }
+        backend._post_json = lambda url, payload, referer=None: (
+            requests.append((url, payload, referer)) or response
+        )
+        backend._client = lambda sources: self.fail("不应调用 musicdl QQ 解析器")
+
+        name, artwork_url, candidates = backend.parse_playlist(
+            "https://y.qq.com/n/ryqq/playlist/9210971828"
+        )
+
+        self.assertEqual("抖音超火热歌榜（持续更新）", name)
+        self.assertEqual("https://image.example.test/qq.jpg", artwork_url)
+        self.assertEqual("偏向（摇滚版）", candidates[0].title)
+        self.assertEqual(9210971828, requests[0][1]["req_0"]["param"]["disstid"])
+        self.assertEqual("", requests[0][1]["req_0"]["param"]["enc_host_uin"])
+
     def test_qq_official_playlist_uses_host_uin_and_modern_metadata(self):
         response = {
             "code": 0,
