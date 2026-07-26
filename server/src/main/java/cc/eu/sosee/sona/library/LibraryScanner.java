@@ -77,6 +77,19 @@ class LibraryScanner {
     ScanResult scan(
         String relativeDirectory, ScrapeMode mode, Consumer<ScanResult> progress
     ) throws IOException {
+        return scan(relativeDirectory, mode, true, progress);
+    }
+
+    ScanResult scanWithoutEnrichment(
+        String relativeDirectory, Consumer<ScanResult> progress
+    ) throws IOException {
+        return scan(relativeDirectory, ScrapeMode.STANDARD, false, progress);
+    }
+
+    private ScanResult scan(
+        String relativeDirectory, ScrapeMode mode, boolean enrich,
+        Consumer<ScanResult> progress
+    ) throws IOException {
         var scanDirectory = directoryService.resolve(relativeDirectory);
         var counts = new int[5];
         var errors = new ArrayList<String>();
@@ -87,7 +100,7 @@ class LibraryScanner {
                 .forEach(path -> {
                     counts[0]++;
                     progress.accept(result(counts));
-                    scanFile(path, mode, true, counts, errors);
+                    scanFile(path, mode, enrich, counts, errors);
                     progress.accept(result(counts));
                 });
         }

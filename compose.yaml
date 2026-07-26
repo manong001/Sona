@@ -21,8 +21,11 @@ services:
       context: ./server
     container_name: sona-server
     restart: unless-stopped
+    cpus: "${SONA_SERVER_CPUS:-2.0}"
+    mem_limit: "${SONA_SERVER_MEMORY_LIMIT:-3g}"
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
+      JAVA_TOOL_OPTIONS: "${SONA_JAVA_TOOL_OPTIONS:--Xms256m -Xmx2g}"
       SONA_PORT: 6699
       SONA_MUSIC_DIR: /music
       SONA_DATA_DIR: /data

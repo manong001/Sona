@@ -20,8 +20,7 @@ class StartupScan implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments arguments) {
         if (properties.isScanOnStartup() && Files.isDirectory(properties.getMusicDir())) {
-            coordinator.start();
+            coordinator.startWithoutEnrichment();
         }
     }
 }
-

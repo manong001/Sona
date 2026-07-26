@@ -45,14 +45,24 @@ public class ScanCoordinator {
     }
 
     synchronized ScanStatus start() {
-        return start("", ScrapeMode.STANDARD);
+        return start("", ScrapeMode.STANDARD, true);
+    }
+
+    synchronized ScanStatus startWithoutEnrichment() {
+        return start("", ScrapeMode.STANDARD, false);
     }
 
     synchronized ScanStatus start(String relativeDirectory) {
-        return start(relativeDirectory, ScrapeMode.STANDARD);
+        return start(relativeDirectory, ScrapeMode.STANDARD, true);
     }
 
     synchronized ScanStatus start(String relativeDirectory, ScrapeMode mode) {
+        return start(relativeDirectory, mode, true);
+    }
+
+    private synchronized ScanStatus start(
+        String relativeDirectory, ScrapeMode mode, boolean enrich
+    ) {
         if (status.get().state() == ScanStatus.State.RUNNING) {
             rerunDirectory.set(relativeDirectory);
             rerunMode.set(mode);
@@ -81,6 +91,7 @@ public class ScanCoordinator {
                             result = add(result, scan(
                                 directory,
                                 mode,
+                                enrich,
                                 progress -> status.set(ScanStatus.running(
                                     add(completedResult, progress),
                                     ScanStatus.Phase.SCANNING_FILES, directory,
@@ -120,6 +131,7 @@ public class ScanCoordinator {
                     result = scan(
                         relativeDirectory,
                         mode,
+                        enrich,
                         progress -> status.set(ScanStatus.running(
                             progress, ScanStatus.Phase.SCANNING_FILES, relativeDirectory, 0, 1
                         ))
@@ -249,8 +261,12 @@ public class ScanCoordinator {
     }
 
     private ScanResult scan(
-        String relativeDirectory, ScrapeMode mode, Consumer<ScanResult> progress
+        String relativeDirectory, ScrapeMode mode, boolean enrich,
+        Consumer<ScanResult> progress
     ) throws IOException {
+        if (!enrich) {
+            return libraryScanner.scanWithoutEnrichment(relativeDirectory, progress);
+        }
         return mode == ScrapeMode.STANDARD
             ? libraryScanner.scan(relativeDirectory, progress)
             : libraryScanner.scan(relativeDirectory, mode, progress);

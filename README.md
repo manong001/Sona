@@ -52,6 +52,12 @@ docker compose up -d --build
 
 已有部署直接执行上述构建命令即可，服务启动时会自动升级现有 `sona.db`，不需要删除数据库。用户管理入口位于 App 的“设置 → 用户管理”。
 
+为避免大型曲库扫描挤占 NAS 的全部资源，服务端默认限制为 2 个 CPU、3 GiB
+容器内存和 2 GiB Java 堆。可通过 `SONA_SERVER_CPUS`、
+`SONA_SERVER_MEMORY_LIMIT` 和 `SONA_JAVA_TOOL_OPTIONS` 调整。启动扫描只导入本地
+文件和元数据，不执行远程刮削或整库声学特征补算；App 内手动扫描及新下载歌曲的
+后台增强不受影响。
+
 管理员可在 App 的“设置 → AI 辅助配置”中填写兼容接口 URL、模型和 API Key，保存后立即生效。API Key 在服务端加密保存，查询接口不会返回明文。
 
 也可以通过 `.env` 提供首次启动时的默认/兜底配置：
