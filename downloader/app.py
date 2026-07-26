@@ -693,6 +693,11 @@ class MusicDlBackend:
         playlist_id = _playlist_id(url, query_keys=("id", "disstid"), path_marker="playlist")
         if not playlist_id:
             raise ValueError("QQ 音乐歌单链接无效")
+        if 200_000 <= int(playlist_id) <= 300_000:
+            host_uin = _qq_playlist_host_uin(url)
+            if not host_uin:
+                raise ValueError("QQ 音乐官方歌单链接缺少 hosteuin 参数")
+            return self._parse_qq_official_playlist(playlist_id, host_uin)
         page_size = 100
         playlist = None
         songs = []
@@ -761,6 +766,72 @@ class MusicDlBackend:
             ))
         if not name or not candidates:
             raise ValueError("QQ 音乐公开歌单没有可同步曲目")
+        return name, cover, candidates
+
+    def _parse_qq_official_playlist(
+        self, playlist_id: str, host_uin: str
+    ) -> tuple[str, str | None, list[BackendCandidate]]:
+        response = self._post_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            {
+                "req_0": {
+                    "module": "music.srfDissInfo.aiDissInfo",
+                    "method": "uniform_get_Dissinfo",
+                    "param": {
+                        "disstid": int(playlist_id),
+                        "userinfo": 1,
+                        "tag": 1,
+                        "orderlist": 1,
+                        "song_begin": 0,
+                        "song_num": MAX_CANDIDATES,
+                        "onlysonglist": 0,
+                        "enc_host_uin": host_uin,
+                    },
+                },
+                "comm": {"ct": 24, "cv": 0},
+            },
+            "https://y.qq.com/",
+        )
+        request = response.get("req_0") or {}
+        data = request.get("data") or {}
+        if response.get("code") != 0 or request.get("code") != 0 or data.get("code") != 0:
+            raise ValueError("QQ 音乐官方歌单无法访问")
+        playlist = data.get("dirinfo") or {}
+        name = _text(playlist.get("title")).strip()[:80]
+        cover = _optional_text(playlist.get("picurl") or playlist.get("picurl2"))
+        if cover and cover.startswith("http://"):
+            cover = "https://" + cover.removeprefix("http://")
+        candidates = []
+        for song in data.get("songlist", [])[:MAX_CANDIDATES]:
+            if not isinstance(song, dict):
+                continue
+            title = _text(song.get("title") or song.get("name")).strip()
+            artist = "、".join(
+                _text(item.get("name")).strip()
+                for item in song.get("singer", [])
+                if isinstance(item, dict) and _text(item.get("name")).strip()
+            )
+            album = song.get("album") or {}
+            identifier = _text(song.get("mid")).strip()
+            duration_s = _positive_int(song.get("interval"))
+            if not title or not artist or not identifier:
+                continue
+            candidates.append(BackendCandidate(
+                source="QQMusicClient",
+                title=title,
+                artist=artist,
+                album=_text(album.get("name")).strip() if isinstance(album, dict) else "",
+                extension="mp3",
+                duration_ms=duration_s * 1_000 if duration_s else None,
+                file_size_bytes=None,
+                bitrate=None,
+                sample_rate=None,
+                artwork_url=cover,
+                lyrics=None,
+                opaque=PublicPlaylistItem("QQMusicClient", identifier),
+            ))
+        if not name or not candidates:
+            raise ValueError("QQ 音乐官方歌单没有可同步曲目")
         return name, cover, candidates
 
     def _parse_qq_toplist(
@@ -835,6 +906,27 @@ class MusicDlBackend:
         if referer:
             headers["Referer"] = referer
         request = Request(url, headers=headers)
+        with urlopen(request, timeout=20) as response:
+            value = json.loads(response.read().decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("公开歌单接口返回格式无效")
+        return value
+
+    def _post_json(
+        self, url: str, payload: dict[str, Any], referer: str | None = None
+    ) -> dict[str, Any]:
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 Sona/1.0",
+        }
+        if referer:
+            headers["Referer"] = referer
+        request = Request(
+            url,
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            headers=headers,
+        )
         with urlopen(request, timeout=20) as response:
             value = json.loads(response.read().decode("utf-8"))
         if not isinstance(value, dict):
@@ -1338,12 +1430,17 @@ def _normalize_playlist_url(value: str) -> str:
 def _canonical_qq_playlist_url(url: str) -> str:
     parsed = urlparse(url)
     parts = [part for part in parsed.path.split("/") if part]
-    query_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
+    query = parse_qs(parsed.query)
+    query_id = (query.get("id") or [""])[0].strip()
     if (
         parsed.path == "/n3/other/pages/details/playlist.html"
         and query_id.isdigit()
     ):
-        return f"https://y.qq.com/n/ryqq/playlist/{query_id}"
+        canonical_url = f"https://y.qq.com/n/ryqq/playlist/{query_id}"
+        host_uin = ((query.get("hosteuin") or query.get("hostuin")) or [""])[0].strip()
+        if 200_000 <= int(query_id) <= 300_000 and host_uin:
+            canonical_url += "?" + urlencode({"hosteuin": host_uin})
+        return canonical_url
     if (
         parsed.path == "/n3/other/pages/details/toplist.html"
         and query_id.isdigit()
@@ -1354,6 +1451,11 @@ def _canonical_qq_playlist_url(url: str) -> str:
         if position + 1 < len(parts) and parts[position + 1].isdigit():
             return f"https://y.qq.com/n/ryqq/toplist/{parts[position + 1]}"
     return url
+
+
+def _qq_playlist_host_uin(url: str) -> str:
+    query = parse_qs(urlparse(url).query)
+    return ((query.get("hosteuin") or query.get("hostuin")) or [""])[0].strip()
 
 
 def _resolve_qq_short_playlist_url(url: str) -> str:

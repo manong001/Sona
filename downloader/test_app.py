@@ -343,6 +343,26 @@ class DownloaderApiTest(unittest.TestCase):
             self.backend.parsed_playlist_urls,
         )
 
+    def test_preserves_qq_music_host_uin_for_official_playlist(self):
+        status, body = self.request(
+            "POST",
+            "/v1/playlists/parse",
+            {
+                "url": (
+                    "https://i2.y.qq.com/n3/other/pages/details/playlist.html"
+                    "?hosteuin=Ne4zoevAoiEA&id=211145&appversion=200605"
+                    "&ADTAG=wxfshare&appshare=iphone_wx"
+                )
+            },
+        )
+
+        self.assertEqual(200, status)
+        self.assertEqual("测试歌单", body["name"])
+        self.assertEqual(
+            ["https://y.qq.com/n/ryqq/playlist/211145?hosteuin=Ne4zoevAoiEA"],
+            self.backend.parsed_playlist_urls,
+        )
+
     def test_extracts_and_resolves_qq_toplist_short_url_from_share_text(self):
         canonical_url = "https://y.qq.com/n/ryqq/toplist/62"
         with patch("app.urlopen") as opener:
@@ -578,6 +598,51 @@ class DownloaderApiTest(unittest.TestCase):
 
         self.assertEqual(411, len(candidates))
         self.assertEqual([0, 100, 200, 300, 400], requested_starts)
+
+    def test_qq_official_playlist_uses_host_uin_and_modern_metadata(self):
+        response = {
+            "code": 0,
+            "req_0": {
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "dirinfo": {
+                        "title": "抖快热歌 | 洗脑旋律",
+                        "picurl": "http://image.example.test/qq.jpg",
+                    },
+                    "songlist": [{
+                        "mid": "003Ps5Gp0mrmH9",
+                        "title": "深夜港湾",
+                        "interval": 266,
+                        "singer": [{"name": "海南小崇"}],
+                        "album": {"name": "深夜港湾"},
+                    }],
+                },
+            },
+        }
+        requests = []
+        backend = MusicDlBackend.__new__(MusicDlBackend)
+        backend._allowed_sources = ("QQMusicClient",)
+        backend._post_json = lambda url, payload, referer=None: (
+            requests.append((url, payload, referer)) or response
+        )
+        backend._client = lambda sources: self.fail("不应调用 musicdl QQ 解析器")
+
+        name, artwork_url, candidates = backend.parse_playlist(
+            "https://y.qq.com/n/ryqq/playlist/211145?hosteuin=Ne4zoevAoiEA"
+        )
+
+        self.assertEqual("抖快热歌 | 洗脑旋律", name)
+        self.assertEqual("https://image.example.test/qq.jpg", artwork_url)
+        self.assertEqual("深夜港湾", candidates[0].title)
+        self.assertEqual("海南小崇", candidates[0].artist)
+        self.assertEqual("深夜港湾", candidates[0].album)
+        self.assertEqual(266_000, candidates[0].duration_ms)
+        self.assertEqual(
+            "Ne4zoevAoiEA",
+            requests[0][1]["req_0"]["param"]["enc_host_uin"],
+        )
+        self.assertIsInstance(candidates[0].opaque, PublicPlaylistItem)
 
     def test_qq_toplist_uses_public_metadata(self):
         response = {
