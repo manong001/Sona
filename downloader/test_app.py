@@ -1408,6 +1408,42 @@ class DownloaderApiTest(unittest.TestCase):
         self.assertEqual(["download/时间沦陷 (DJ版).flac"], files)
         self.assertEqual("qq-song-mid", direct_requests[0]["songmid"])
 
+    def test_download_reuses_existing_audio_and_lyrics_instead_of_numbered_duplicates(self):
+        with TemporaryDirectory() as directory:
+            music_dir = Path(directory)
+            output_dir = music_dir / "download" / "QQ音乐"
+            output_dir.mkdir(parents=True)
+            audio = output_dir / "歌曲.flac"
+            lyrics = output_dir / "歌曲.lrc"
+            audio.write_bytes(b"existing audio")
+            lyrics.write_text("[00:01.00]已有歌词", encoding="utf-8")
+            opaque = SimpleNamespace(
+                save_path=str(output_dir / "歌曲 (1).flac")
+            )
+            candidate = BackendCandidate(
+                "QQMusicClient", "歌曲", "歌手", "", "flac",
+                180_000, 1_000, 1_411, 44_100, None, "[00:01.00]新歌词",
+                opaque,
+            )
+            backend = MusicDlBackend.__new__(MusicDlBackend)
+            backend._music_dir = music_dir
+            backend._state_dir = music_dir / "state"
+            backend._download_runner = SimpleNamespace(
+                run=lambda *args, **kwargs: self.fail("本地文件存在时不应再次下载")
+            )
+
+            files = backend.download(candidate)
+
+            self.assertEqual(["download/QQ音乐/歌曲.flac"], files)
+            self.assertEqual(b"existing audio", audio.read_bytes())
+            self.assertEqual(
+                "[00:01.00]已有歌词", lyrics.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                ["歌曲.flac", "歌曲.lrc"],
+                sorted(path.name for path in output_dir.iterdir()),
+            )
+
     def test_subscription_candidates_resolve_concurrently(self):
         class InlineDownloadRunner:
             def run(self, task_id, action, music_dir, state_dir, source, opaque, **kwargs):

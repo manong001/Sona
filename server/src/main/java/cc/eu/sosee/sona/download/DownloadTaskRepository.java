@@ -177,11 +177,10 @@ class DownloadTaskRepository {
                 WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
                   AND replace(trim(artist), '、', '/') COLLATE NOCASE =
                       replace(trim(:artist), '、', '/') COLLATE NOCASE
+                  AND state IN ('QUEUED', 'RUNNING')
                 ORDER BY CASE state
                     WHEN 'RUNNING' THEN 0
-                    WHEN 'QUEUED' THEN 1
-                    WHEN 'COMPLETED' THEN 2
-                    ELSE 3
+                    ELSE 1
                 END
                 LIMIT 1
                 """)
@@ -201,11 +200,10 @@ class DownloadTaskRepository {
                   AND trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
                   AND replace(trim(artist), '、', '/') COLLATE NOCASE =
                       replace(trim(:artist), '、', '/') COLLATE NOCASE
+                  AND state IN ('QUEUED', 'RUNNING')
                 ORDER BY CASE state
                     WHEN 'RUNNING' THEN 0
-                    WHEN 'QUEUED' THEN 1
-                    WHEN 'COMPLETED' THEN 2
-                    ELSE 3
+                    ELSE 1
                 END
                 LIMIT 1
                 """)
@@ -307,6 +305,44 @@ class DownloadTaskRepository {
                 WHERE requested_by = :requestedBy AND state = 'FAILED'
                 """)
             .param("requestedBy", requestedBy)
+            .update();
+    }
+
+    List<String> findHistoricalFiles(DownloadCandidate candidate, String requestedBy) {
+        return jdbcClient.sql("""
+                SELECT files_json FROM download_tasks
+                WHERE requested_by = :requestedBy
+                  AND state IN ('COMPLETED', 'FAILED')
+                  AND trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
+                      replace(trim(:artist), '、', '/') COLLATE NOCASE
+                ORDER BY CASE state WHEN 'COMPLETED' THEN 0 ELSE 1 END,
+                         updated_at DESC
+                """)
+            .param("requestedBy", requestedBy)
+            .param("title", candidate.title().strip())
+            .param("artist", candidate.artist().strip())
+            .query(String.class)
+            .list()
+            .stream()
+            .map(this::readFiles)
+            .filter(files -> !files.isEmpty())
+            .findFirst()
+            .orElse(List.of());
+    }
+
+    int deleteHistorical(DownloadCandidate candidate, String requestedBy) {
+        return jdbcClient.sql("""
+                DELETE FROM download_tasks
+                WHERE requested_by = :requestedBy
+                  AND state IN ('COMPLETED', 'FAILED')
+                  AND trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
+                      replace(trim(:artist), '、', '/') COLLATE NOCASE
+                """)
+            .param("requestedBy", requestedBy)
+            .param("title", candidate.title().strip())
+            .param("artist", candidate.artist().strip())
             .update();
     }
 

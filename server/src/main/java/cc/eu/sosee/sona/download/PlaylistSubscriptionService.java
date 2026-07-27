@@ -682,18 +682,40 @@ class PlaylistSubscriptionService {
                     if (candidate == null) {
                         continue;
                     }
-                    var queued = subscription.strictMode()
-                        ? downloadService.queueForPlaylist(
-                            candidate, subscription.username(), subscription.playlistId()
-                        )
-                        : downloadService.queueForPlaylist(
-                            candidate, subscription.username(), subscription.playlistId(), false
+                    if (downloadMissing) {
+                        var restarted = downloadService.restartForPlaylist(
+                            candidate, subscription.username(), subscription.playlistId(),
+                            subscription.strictMode()
                         );
-                    if (queued.isPresent()) {
-                        items.set(index, new PlaylistSubscriptionRepository.Item(
-                            item.itemKey(), item.position(), item.title(), item.artist(),
-                            item.album(), item.matchedTrackId(), "DOWNLOADING", item.lastSeenAt()
-                        ));
+                        if (restarted.existingTrackId().isPresent()) {
+                            items.set(index, new PlaylistSubscriptionRepository.Item(
+                                item.itemKey(), item.position(), item.title(), item.artist(),
+                                item.album(), restarted.existingTrackId().orElseThrow(),
+                                "MATCHED", item.lastSeenAt()
+                            ));
+                        } else if (restarted.task().isPresent()) {
+                            items.set(index, new PlaylistSubscriptionRepository.Item(
+                                item.itemKey(), item.position(), item.title(), item.artist(),
+                                item.album(), item.matchedTrackId(),
+                                "DOWNLOADING", item.lastSeenAt()
+                            ));
+                        }
+                    } else {
+                        var queued = subscription.strictMode()
+                            ? downloadService.queueForPlaylist(
+                                candidate, subscription.username(), subscription.playlistId()
+                            )
+                            : downloadService.queueForPlaylist(
+                                candidate, subscription.username(),
+                                subscription.playlistId(), false
+                            );
+                        if (queued.isPresent()) {
+                            items.set(index, new PlaylistSubscriptionRepository.Item(
+                                item.itemKey(), item.position(), item.title(), item.artist(),
+                                item.album(), item.matchedTrackId(),
+                                "DOWNLOADING", item.lastSeenAt()
+                            ));
+                        }
                     }
                 }
             }

@@ -708,10 +708,12 @@ struct PlaylistSubscriptionsView: View {
     @State private var subscriptions: [PlaylistSubscription]
     @State private var syncingIDs: Set<String> = []
     @State private var downloadingMissingIDs: Set<String> = []
+    @State private var longPressedDownloadIDs: Set<String> = []
     @State private var isLoading: Bool
     @State private var showsCreate = false
     @State private var editingSubscription: PlaylistSubscription?
     @State private var inspectingSubscription: PlaylistSubscription?
+    @State private var missingListSubscription: PlaylistSubscription?
     @State private var versioningSubscription: PlaylistSubscription?
     @State private var pendingCancellation: PlaylistSubscription?
     @State private var errorMessage: String?
@@ -798,6 +800,10 @@ struct PlaylistSubscriptionsView: View {
                     changed()
                 }
                 .desktopSheetSize(.large)
+            }
+            .sheet(item: $missingListSubscription) { subscription in
+                PlaylistSubscriptionMissingItemsView(subscription: subscription)
+                    .desktopSheetSize(.standard)
             }
             .sheet(item: $versioningSubscription) { subscription in
                 PlaylistSubscriptionVersionsView(subscription: subscription) { updated in
@@ -972,6 +978,22 @@ struct PlaylistSubscriptionsView: View {
                     .minimumScaleFactor(0.8)
                 }
             }
+            .contextMenu {
+                if playlistVersionManagementEnabled {
+                    Button("歌单版本", systemImage: "clock") {
+                        versioningSubscription = subscription
+                    }
+                }
+                Button("修改订阅信息", systemImage: "pencil") {
+                    editingSubscription = subscription
+                }
+                Button("立即同步", systemImage: "arrow.clockwise") {
+                    Task { await sync(subscription) }
+                }
+                Button("取消订阅", systemImage: "link.badge.minus", role: .destructive) {
+                    pendingCancellation = subscription
+                }
+            }
 
             if subscription.lastSyncedAt == nil && subscription.lastError == nil {
                 Label("正在后台首次同步", systemImage: "arrow.triangle.2.circlepath")
@@ -996,6 +1018,9 @@ struct PlaylistSubscriptionsView: View {
 
             if subscription.missingCount > 0 {
                 Button {
+                    if longPressedDownloadIDs.remove(subscription.id) != nil {
+                        return
+                    }
                     Task { await downloadMissing(subscription) }
                 } label: {
                     Label(
@@ -1018,6 +1043,21 @@ struct PlaylistSubscriptionsView: View {
                         || downloadingMissingIDs.contains(subscription.id)
                         || (subscription.suggestedCount ?? 0) > 0
                 )
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5)
+                        .onEnded { _ in
+                            guard !syncingIDs.contains(subscription.id),
+                                  !downloadingMissingIDs.contains(subscription.id) else {
+                                return
+                            }
+                            longPressedDownloadIDs.insert(subscription.id)
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            missingListSubscription = subscription
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                longPressedDownloadIDs.remove(subscription.id)
+                            }
+                        }
+                )
             }
 
             if (subscription.suggestedCount ?? 0) > 0 {
@@ -1036,22 +1076,6 @@ struct PlaylistSubscriptionsView: View {
         }
         .padding(.vertical, 10)
         .listRowBackground(Color.sonaBackground)
-        .contextMenu {
-            if playlistVersionManagementEnabled {
-                Button("歌单版本", systemImage: "clock") {
-                    versioningSubscription = subscription
-                }
-            }
-            Button("修改订阅信息", systemImage: "pencil") {
-                editingSubscription = subscription
-            }
-            Button("立即同步", systemImage: "arrow.clockwise") {
-                Task { await sync(subscription) }
-            }
-            Button("取消订阅", systemImage: "link.badge.minus", role: .destructive) {
-                pendingCancellation = subscription
-            }
-        }
     }
 
     private func subscriptionMetric(
@@ -1132,6 +1156,10 @@ struct PlaylistSubscriptionsView: View {
             if let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
                 subscriptions[index] = updated
             }
+            if updated.downloadingCount <= subscription.downloadingCount,
+               updated.missingCount >= subscription.missingCount {
+                errorMessage = "没有新增下载任务，请刷新订阅后重试。"
+            }
             await personal.refreshPlaylists()
             changed()
         } catch {
@@ -1168,6 +1196,99 @@ struct PlaylistSubscriptionsView: View {
         if running > 0 { parts.append("\(running) 首下载中") }
         if queued > 0 { parts.append("\(queued) 首排队中") }
         return parts.joined(separator: " · ")
+    }
+}
+
+private struct PlaylistSubscriptionMissingItemsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let subscription: PlaylistSubscription
+    @State private var items: [PlaylistSubscriptionItem] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && items.isEmpty {
+                    ProgressView("正在载入缺失歌曲…")
+                } else if let errorMessage, items.isEmpty {
+                    ContentUnavailableView {
+                        Label("载入失败", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("重试") {
+                            Task { await load() }
+                        }
+                    }
+                    .desktopEmptyState()
+                } else if items.isEmpty {
+                    ContentUnavailableView(
+                        "没有缺失歌曲",
+                        systemImage: "checkmark.circle",
+                        description: Text("订阅状态可能已经更新，请关闭后刷新订阅。")
+                    )
+                    .desktopEmptyState()
+                } else {
+                    List {
+                        Section {
+                            ForEach(items) { item in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text("\(item.position + 1)")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(Color.sonaSecondaryText)
+                                        .frame(width: 28, alignment: .trailing)
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(item.title)
+                                            .font(.headline)
+                                        Text(item.artist)
+                                            .font(.subheadline)
+                                            .foregroundStyle(Color.sonaSecondaryText)
+                                        if let album = item.album, !album.isEmpty {
+                                            Text(album)
+                                                .font(.caption)
+                                                .foregroundStyle(Color.sonaSecondaryText)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        } header: {
+                            Text("共 \(items.count) 首")
+                        } footer: {
+                            Text("关闭浮窗后，短按绿色按钮可将这些歌曲加入下载列表。")
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .refreshable { await load() }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.sonaBackground)
+            .navigationTitle("缺失歌曲")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    ModalDismissButton("关闭")
+                }
+            }
+            .task { await load() }
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            items = try await APIClient.shared.playlistSubscriptionItems(id: subscription.id)
+                .filter { $0.matchedTrackId == nil && $0.state == "MISSING" }
+                .sorted { $0.position < $1.position }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

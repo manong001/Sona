@@ -196,6 +196,45 @@ class DownloadService {
         return Optional.of(task);
     }
 
+    synchronized PlaylistRestartResult restartForPlaylist(
+        DownloadCandidate candidate, String requestedBy, String targetPlaylistId,
+        boolean strictMatch
+    ) {
+        requireEnabled();
+        if (repository.findExistingState(candidate).isPresent()) {
+            return new PlaylistRestartResult(Optional.empty(), Optional.empty());
+        }
+        var historicalFiles = repository.findHistoricalFiles(candidate, requestedBy);
+        if (!historicalFiles.isEmpty()) {
+            try {
+                var trackId = playlistImportService
+                    .addDownloadedFiles(targetPlaylistId, historicalFiles)
+                    .stream()
+                    .findFirst();
+                if (trackId.isPresent()) {
+                    repository.deleteHistorical(candidate, requestedBy);
+                    return new PlaylistRestartResult(Optional.empty(), trackId);
+                }
+            } catch (IllegalStateException exception) {
+                LOGGER.debug(
+                    "历史下载文件已失效，重新下载：title={}, artist={}",
+                    candidate.title(), candidate.artist()
+                );
+            }
+        }
+        var existingTrackId = repository.findLibraryTrackId(candidate);
+        if (existingTrackId.isPresent()) {
+            repository.deleteHistorical(candidate, requestedBy);
+            return new PlaylistRestartResult(Optional.empty(), existingTrackId);
+        }
+        repository.deleteHistorical(candidate, requestedBy);
+        var task = repository.create(
+            candidate, requestedBy, targetPlaylistId, strictMatch
+        );
+        submit(task);
+        return new PlaylistRestartResult(Optional.of(task), Optional.empty());
+    }
+
     void reconcileCompletedPlaylistDownloads(String targetPlaylistId) {
         for (var task : repository.findCompletedByTargetPlaylist(targetPlaylistId)) {
             List<String> trackIds;
@@ -514,5 +553,10 @@ class DownloadService {
     }
 
     record PlaylistQueueResult(String playlistId, String playlistName, List<DownloadTask> tasks) {
+    }
+
+    record PlaylistRestartResult(
+        Optional<DownloadTask> task, Optional<String> existingTrackId
+    ) {
     }
 }

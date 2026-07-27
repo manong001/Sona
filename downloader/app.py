@@ -380,6 +380,31 @@ def _musicdl_downloaded_files(downloaded: list[Any], music_dir: Path) -> list[st
     return files
 
 
+def _existing_downloaded_audio(song: Any, music_dir: Path) -> str | None:
+    raw_path = getattr(song, "save_path", None)
+    if not raw_path:
+        return None
+    music_root = music_dir.resolve()
+    proposed = Path(raw_path).resolve()
+    numbered = re.fullmatch(r"(.+) \(\d+\)", proposed.stem)
+    candidates = (
+        [proposed.with_name(numbered.group(1) + proposed.suffix), proposed]
+        if numbered
+        else [proposed]
+    )
+    for path in candidates:
+        try:
+            relative = path.relative_to(music_root)
+        except ValueError:
+            continue
+        if (
+            path.is_file()
+            and path.suffix.removeprefix(".").lower() in SUPPORTED_AUDIO_EXTENSIONS
+        ):
+            return relative.as_posix()
+    return None
+
+
 class MusicDlBackend:
     def __init__(
         self,
@@ -1031,6 +1056,8 @@ class MusicDlBackend:
                     )
                 raise RuntimeError("未在已启用音源中找到歌单歌曲")
             return self.download(resolved, task_id, strict_mode)
+        if existing := _existing_downloaded_audio(candidate.opaque, self._music_dir):
+            return [existing]
         effective_task_id = task_id or str(uuid.uuid4())
         save_path = getattr(candidate.opaque, "save_path", None)
         return self._download_runner.run(
