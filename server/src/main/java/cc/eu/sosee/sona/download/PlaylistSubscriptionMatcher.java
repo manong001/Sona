@@ -74,6 +74,13 @@ class PlaylistSubscriptionMatcher {
         return result.toString();
     }
 
+    static String normalizedSearchQuery(String value) {
+        return Normalizer.normalize(
+            ZhConverterUtil.toSimple(value == null ? "" : value),
+            Normalizer.Form.NFKC
+        ).strip().toLowerCase(Locale.ROOT);
+    }
+
     static String normalizedArtists(String value) {
         if (value == null || value.isBlank()) {
             return "";

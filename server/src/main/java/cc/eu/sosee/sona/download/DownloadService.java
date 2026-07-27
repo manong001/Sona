@@ -70,7 +70,9 @@ class DownloadService {
 
     List<DownloadCandidate> search(String query, List<String> sources) {
         requireEnabled();
-        return gateway.search(query.strip(), sources).stream()
+        return gateway.search(
+                PlaylistSubscriptionMatcher.normalizedSearchQuery(query), sources
+            ).stream()
             .map(candidate -> candidate.withDownloadState(
                 existingState(candidate).orElse(null)
             ))

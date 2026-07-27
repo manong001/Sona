@@ -1,10 +1,13 @@
 package cc.eu.sosee.sona.library;
 
+import com.github.houbb.opencc4j.util.ZhConverterUtil;
 import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -184,7 +187,11 @@ class JdbcTrackStore implements TrackStore {
         String query, String cursor, int limit, String userId, boolean childOnly,
         String sort, String genre, String codec, String metadataStatus
     ) {
-        var normalizedQuery = query == null ? "" : query.strip();
+        var normalizedQuery = Normalizer.normalize(
+            query == null ? "" : query, Normalizer.Form.NFKC
+        ).strip().toLowerCase(Locale.ROOT);
+        var simplifiedQuery = ZhConverterUtil.toSimple(normalizedQuery);
+        var traditionalQuery = ZhConverterUtil.toTraditional(normalizedQuery);
         var normalizedSort = sort == null ? "TITLE" : sort.toUpperCase();
         var offset = parseOffset(cursor);
 
@@ -197,7 +204,19 @@ class JdbcTrackStore implements TrackStore {
               )
             """);
         if (!normalizedQuery.isBlank()) {
-            sql.append(" AND (title LIKE :query OR artist LIKE :query OR album LIKE :query)");
+            sql.append("""
+                     AND (
+                        title COLLATE NOCASE LIKE :query
+                        OR artist COLLATE NOCASE LIKE :query
+                        OR album COLLATE NOCASE LIKE :query
+                        OR title COLLATE NOCASE LIKE :simplifiedQuery
+                        OR artist COLLATE NOCASE LIKE :simplifiedQuery
+                        OR album COLLATE NOCASE LIKE :simplifiedQuery
+                        OR title COLLATE NOCASE LIKE :traditionalQuery
+                        OR artist COLLATE NOCASE LIKE :traditionalQuery
+                        OR album COLLATE NOCASE LIKE :traditionalQuery
+                     )
+                    """);
         }
         if (genre != null && !genre.isBlank()) {
             sql.append(" AND genre = :genre");
@@ -220,7 +239,10 @@ class JdbcTrackStore implements TrackStore {
             .param("limit", limit + 1).param("offset", offset).param("userId", userId)
             .param("visiblePool", libraryPool(childOnly));
         if (!normalizedQuery.isBlank()) {
-            statement = statement.param("query", "%" + normalizedQuery + "%");
+            statement = statement
+                .param("query", "%" + normalizedQuery + "%")
+                .param("simplifiedQuery", "%" + simplifiedQuery + "%")
+                .param("traditionalQuery", "%" + traditionalQuery + "%");
         }
         if (genre != null && !genre.isBlank()) statement = statement.param("genre", genre);
         if (codec != null && !codec.isBlank()) statement = statement.param("codec", codec.toUpperCase());

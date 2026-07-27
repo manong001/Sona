@@ -872,8 +872,8 @@ final class APIClient {
         try await request(path: "/api/v1/library/scan/status")
     }
 
-    func musicDownloadSources() async throws -> [DownloadSource] {
-        try await request(path: "/api/v1/downloads/sources")
+    func musicDownloadSources(timeout: TimeInterval? = nil) async throws -> [DownloadSource] {
+        try await request(path: "/api/v1/downloads/sources", timeout: timeout)
     }
 
     func onlinePlaybackSources() async throws -> [OnlinePlaybackSource] {

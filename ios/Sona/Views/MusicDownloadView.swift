@@ -2173,6 +2173,7 @@ struct TrackRedownloadView: View {
     @State private var queuingCandidateID: String?
     @State private var pendingCandidate: DownloadCandidate?
     @State private var errorMessage: String?
+    @State private var searchGeneration = 0
 
     init(track: Track, queued: @escaping (MusicDownloadTask) -> Void) {
         self.track = track
@@ -2231,23 +2232,32 @@ struct TrackRedownloadView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(Array(candidates.enumerated()), id: \.element.id) {
-                                index, candidate in
-                                DownloadCandidateRow(
-                                    candidate: candidate,
-                                    isQueuing: queuingCandidateID == candidate.id,
-                                    downloadState: nil
-                                ) {
-                                    pendingCandidate = candidate
-                                }
-                                if index < candidates.count - 1 {
-                                    Divider()
-                                        .overlay(Color.white.opacity(0.08))
-                                        .padding(.leading, 84)
+                    VStack(spacing: 0) {
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(Array(candidates.enumerated()), id: \.element.id) {
+                                    index, candidate in
+                                    DownloadCandidateRow(
+                                        candidate: candidate,
+                                        isQueuing: queuingCandidateID == candidate.id,
+                                        downloadState: nil
+                                    ) {
+                                        pendingCandidate = candidate
+                                    }
+                                    if index < candidates.count - 1 {
+                                        Divider()
+                                            .overlay(Color.white.opacity(0.08))
+                                            .padding(.leading, 84)
+                                    }
                                 }
                             }
+                        }
+                        if isSearching {
+                            ProgressView("正在补充其他音源…")
+                                .font(.caption)
+                                .tint(.sonaGreen)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
                         }
                     }
                 }
@@ -2297,14 +2307,55 @@ struct TrackRedownloadView: View {
 
     private func search() async {
         guard !trimmedQuery.isEmpty, !isSearching else { return }
+        let keyword = trimmedQuery
+        searchGeneration += 1
+        let generation = searchGeneration
         isSearching = true
         errorMessage = nil
+        candidates = []
         defer { isSearching = false }
         do {
-            candidates = try await APIClient.shared.searchMusicDownloads(
-                query: trimmedQuery
-            ).items
+            let sources = try await APIClient.shared.musicDownloadSources(timeout: 5)
+            guard generation == searchGeneration, !Task.isCancelled else { return }
+            let sourceIDs = sources.map(\.id)
+            let sourceGroups = sourceIDs.isEmpty ? [[]] : sourceIDs.map { [$0] }
+            var errors: [String] = []
+            await withTaskGroup(of: ([DownloadCandidate], String?).self) { group in
+                for sourceGroup in sourceGroups {
+                    group.addTask {
+                        do {
+                            let items = try await APIClient.shared.searchMusicDownloads(
+                                query: keyword,
+                                sources: sourceGroup,
+                                timeout: 12
+                            ).items
+                            return (items, nil)
+                        } catch is CancellationError {
+                            return ([], nil)
+                        } catch let error as URLError where error.code == .cancelled {
+                            return ([], nil)
+                        } catch {
+                            return ([], error.localizedDescription)
+                        }
+                    }
+                }
+                for await (items, error) in group {
+                    guard generation == searchGeneration, !Task.isCancelled else {
+                        group.cancelAll()
+                        return
+                    }
+                    var existingIDs = Set(candidates.map(\.id))
+                    candidates.append(contentsOf: items.filter {
+                        existingIDs.insert($0.id).inserted
+                    })
+                    if let error { errors.append(error) }
+                }
+            }
+            if candidates.isEmpty, let error = errors.first {
+                errorMessage = error
+            }
         } catch {
+            guard generation == searchGeneration, !Task.isCancelled else { return }
             candidates = []
             errorMessage = error.localizedDescription
         }

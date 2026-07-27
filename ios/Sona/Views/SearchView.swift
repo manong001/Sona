@@ -114,8 +114,6 @@ struct SearchView: View {
                         searchScopePicker
                         if trimmedQuery.isEmpty {
                             discoveryContent
-                        } else if submittedQuery != trimmedQuery {
-                            searchSubmitHint
                         } else {
                             resultsContent
                         }
@@ -176,6 +174,20 @@ struct SearchView: View {
             case .online:
                 await searchOnline(query: value, generation: generation)
             }
+        }
+        .task(id: query) {
+            let value = trimmedQuery
+            guard !value.isEmpty else {
+                submittedQuery = ""
+                return
+            }
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, trimmedQuery == value else { return }
+            submittedQuery = value
         }
         .onDisappear { addedToastTask?.cancel() }
         .sheet(item: $redownloadingTrack) { track in
@@ -239,20 +251,6 @@ struct SearchView: View {
         .frame(height: 52)
         .background(.white, in: RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 16)
-    }
-
-    private var searchSubmitHint: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "keyboard")
-                .font(.system(size: 34))
-            Text("输入完成后，点击键盘上的“搜索”")
-                .font(.headline)
-            Text("输入过程中不会打断你或自动发起查询")
-                .font(.subheadline)
-                .foregroundStyle(Color.sonaSecondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 70)
     }
 
     private var searchScopePicker: some View {
@@ -319,7 +317,11 @@ struct SearchView: View {
 
     @ViewBuilder
     private var resultsContent: some View {
-        if library.isSearching && filteredTracks.isEmpty {
+        if submittedQuery != trimmedQuery {
+            ProgressView("搜索中…")
+                .frame(maxWidth: .infinity)
+                .padding(.top, 80)
+        } else if library.isSearching && filteredTracks.isEmpty {
             ProgressView("搜索中…")
                 .frame(maxWidth: .infinity)
                 .padding(.top, 80)
