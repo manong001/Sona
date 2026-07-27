@@ -35,6 +35,8 @@ struct MusicLibraryView: View {
     @State private var selectedCodec: String?
     @State private var selectedMetadata: String?
     @State private var editingTrack: Track?
+    @State private var redownloadingTrack: Track?
+    @State private var replacementMessage: String?
     @State private var pendingForceScrapePlaylist: Playlist?
     @State private var isForceScrapingPlaylist = false
     @State private var forceScrapeMessage: String?
@@ -189,6 +191,13 @@ struct MusicLibraryView: View {
             }
             .desktopSheetSize(.standard)
         }
+        .sheet(item: $redownloadingTrack) { track in
+            TrackRedownloadView(track: track) { task in
+                replacementMessage = "新音源已加入下载队列，完成后会自动替换原歌曲"
+                Task { await monitorTrackReplacement(task.id) }
+            }
+            .desktopSheetSize(.large)
+        }
         .sheet(isPresented: $showsHomePlaylistPicker) {
             HomePlaylistSelectionView()
                 .environmentObject(personal)
@@ -271,6 +280,14 @@ struct MusicLibraryView: View {
             Button("好", role: .cancel) { }
         } message: {
             Text(playlistDeletionErrorMessage ?? "未知错误")
+        }
+        .alert("歌曲替换", isPresented: Binding(
+            get: { replacementMessage != nil },
+            set: { if !$0 { replacementMessage = nil } }
+        )) {
+            Button("好") { replacementMessage = nil }
+        } message: {
+            Text(replacementMessage ?? "")
         }
         .alert("歌单排序失败", isPresented: Binding(
             get: { playlistOrderErrorMessage != nil },
@@ -558,6 +575,9 @@ struct MusicLibraryView: View {
                     .task { await library.loadNextPageIfNeeded(currentTrack: track) }
                     .contextMenu {
                         if session.currentUser?.isAdmin == true {
+                            Button("重新查询下载", systemImage: "arrow.triangle.2.circlepath") {
+                                redownloadingTrack = track
+                            }
                             Button("编辑歌曲名和歌手", systemImage: "pencil") {
                                 editingTrack = track
                             }
@@ -687,6 +707,34 @@ struct MusicLibraryView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 60)
             }
+        }
+    }
+
+    private func monitorTrackReplacement(_ taskID: String) async {
+        for _ in 0..<120 {
+            do {
+                guard let task = try await APIClient.shared.musicDownloadTasks()
+                    .first(where: { $0.id == taskID }) else {
+                    return
+                }
+                switch task.state {
+                case .completed:
+                    await library.refresh(
+                        query: selectedFilter == .songs ? query : ""
+                    )
+                    await personal.refreshPlaylists()
+                    replacementMessage = "歌曲已替换，原本地资源已删除"
+                    return
+                case .failed:
+                    replacementMessage = task.message ?? "重新下载失败，原歌曲已保留"
+                    return
+                case .queued, .running:
+                    break
+                }
+            } catch {
+                return
+            }
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 

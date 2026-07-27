@@ -8,6 +8,7 @@ struct SearchView: View {
     @EnvironmentObject private var personal: PersonalStore
     @SceneStorage("search.query") private var query = ""
     @SceneStorage("search.scope") private var searchScopeValue = SearchScope.automatic.rawValue
+    @State private var submittedQuery = ""
     @State private var onlineCandidates: [DownloadCandidate] = []
     @State private var queuedCandidateIDs: Set<String> = []
     @State private var candidateStates: [String: MusicDownloadState] = [:]
@@ -16,6 +17,8 @@ struct SearchView: View {
     @State private var searchErrorMessage: String?
     @State private var showsAddedToast = false
     @State private var addedToastTask: Task<Void, Never>?
+    @State private var redownloadingTrack: Track?
+    @State private var replacementMessage: String?
     @FocusState private var isSearchFocused: Bool
     let openDrawer: () -> Void
 
@@ -109,8 +112,10 @@ struct SearchView: View {
                         header
                         searchField
                         searchScopePicker
-                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if trimmedQuery.isEmpty {
                             discoveryContent
+                        } else if submittedQuery != trimmedQuery {
+                            searchSubmitHint
                         } else {
                             resultsContent
                         }
@@ -143,8 +148,8 @@ struct SearchView: View {
                 .padding()
             }
         }
-        .task(id: SearchRequest(query: query, scope: searchScopeValue)) {
-            let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        .task(id: SearchRequest(query: submittedQuery, scope: searchScopeValue)) {
+            let value = submittedQuery
             let scope = SearchScope(rawValue: searchScopeValue) ?? .automatic
             onlineSearchGeneration += 1
             let generation = onlineSearchGeneration
@@ -159,16 +164,11 @@ struct SearchView: View {
                 library.clearSearch()
                 return
             }
-            do {
-                try await Task.sleep(for: .milliseconds(300))
-            } catch {
-                return
-            }
             switch scope {
             case .automatic:
                 await library.search(query: value)
                 guard !Task.isCancelled,
-                      query.trimmingCharacters(in: .whitespacesAndNewlines) == value,
+                      submittedQuery == value,
                       library.searchResults.isEmpty else { return }
                 await searchOnline(query: value, generation: generation)
             case .local:
@@ -178,6 +178,21 @@ struct SearchView: View {
             }
         }
         .onDisappear { addedToastTask?.cancel() }
+        .sheet(item: $redownloadingTrack) { track in
+            TrackRedownloadView(track: track) { task in
+                replacementMessage = "新音源已加入下载队列，完成后会自动替换原歌曲"
+                Task { await monitorTrackReplacement(task.id) }
+            }
+            .desktopSheetSize(.large)
+        }
+        .alert("歌曲替换", isPresented: Binding(
+            get: { replacementMessage != nil },
+            set: { if !$0 { replacementMessage = nil } }
+        )) {
+            Button("好") { replacementMessage = nil }
+        } message: {
+            Text(replacementMessage ?? "")
+        }
     }
 
     private var header: some View {
@@ -206,10 +221,12 @@ struct SearchView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .focused($isSearchFocused)
+            .submitLabel(.search)
+            .onSubmit(submitSearch)
             .accessibilityLabel("搜索")
             if !query.isEmpty {
                 Button {
-                    query = ""
+                    clearSearchInput()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.black.opacity(0.55))
@@ -222,6 +239,20 @@ struct SearchView: View {
         .frame(height: 52)
         .background(.white, in: RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 16)
+    }
+
+    private var searchSubmitHint: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "keyboard")
+                .font(.system(size: 34))
+            Text("输入完成后，点击键盘上的“搜索”")
+                .font(.headline)
+            Text("输入过程中不会打断你或自动发起查询")
+                .font(.subheadline)
+                .foregroundStyle(Color.sonaSecondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 70)
     }
 
     private var searchScopePicker: some View {
@@ -369,6 +400,19 @@ struct SearchView: View {
                 )
                 .padding(.horizontal, 16)
                 .padding(.vertical, 4)
+                .contextMenu {
+                    if session.currentUser?.isAdmin == true {
+                        Button("重新查询下载", systemImage: "arrow.triangle.2.circlepath") {
+                            redownloadingTrack = track
+                        }
+                    }
+                    Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                        player.playNext(track)
+                    }
+                    Button("添加到播放队列", systemImage: "text.badge.plus") {
+                        player.addToQueue(track)
+                    }
+                }
                 .task {
                     await library.loadNextSearchPageIfNeeded(currentTrack: track)
                 }
@@ -445,7 +489,7 @@ struct SearchView: View {
                 for await (items, error) in group {
                     guard generation == onlineSearchGeneration,
                           !Task.isCancelled,
-                          self.query.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                          submittedQuery == query else {
                         group.cancelAll()
                         return
                     }
@@ -469,6 +513,58 @@ struct SearchView: View {
         } catch {
             guard !Task.isCancelled else { return }
             searchErrorMessage = error.localizedDescription
+        }
+    }
+
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func submitSearch() {
+        guard !trimmedQuery.isEmpty else {
+            clearSearchInput()
+            return
+        }
+        submittedQuery = trimmedQuery
+    }
+
+    private func clearSearchInput() {
+        query = ""
+        submittedQuery = ""
+        onlineSearchGeneration += 1
+        onlineCandidates = []
+        candidateStates = [:]
+        isSearchingOnline = false
+        searchErrorMessage = nil
+        library.clearSearch()
+    }
+
+    private func monitorTrackReplacement(_ taskID: String) async {
+        for _ in 0..<120 {
+            do {
+                guard let task = try await APIClient.shared.musicDownloadTasks()
+                    .first(where: { $0.id == taskID }) else {
+                    return
+                }
+                switch task.state {
+                case .completed:
+                    await library.refresh()
+                    await personal.refreshPlaylists()
+                    if !submittedQuery.isEmpty {
+                        await library.search(query: submittedQuery)
+                    }
+                    replacementMessage = "歌曲已替换，原本地资源已删除"
+                    return
+                case .failed:
+                    replacementMessage = task.message ?? "重新下载失败，原歌曲已保留"
+                    return
+                case .queued, .running:
+                    break
+                }
+            } catch {
+                return
+            }
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 
