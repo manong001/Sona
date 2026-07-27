@@ -954,6 +954,36 @@ final class PersonalStore: ObservableObject {
         }
     }
 
+    func blacklistTracks(
+        _ trackIDs: Set<String>, from playlistID: String, subscriptionID: String
+    ) async {
+        guard !trackIDs.isEmpty else { return }
+        do {
+            _ = try await api.blacklistPlaylistSubscriptionTracks(
+                id: subscriptionID,
+                trackIDs: Array(trackIDs)
+            )
+            guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+            let playlist = playlists[index]
+            playlists[index] = Playlist(
+                id: playlist.id,
+                name: playlist.name,
+                trackIDs: playlist.trackIDs.filter { !trackIDs.contains($0) },
+                artworkURLs: playlist.artworkURLs,
+                artworkTrackID: playlist.artworkTrackID,
+                sourceArtworkURL: playlist.sourceArtworkURL,
+                createdAt: playlist.createdAt,
+                featured: playlist.featured,
+                directoryPath: playlist.directoryPath,
+                poolType: playlist.poolType,
+                shownOnHome: playlist.shownOnHome,
+                homePosition: playlist.homePosition
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func notePlayback(trackID: String) {
         history.insert(
             HistoryItem(trackID: trackID, playedAt: Int64(Date().timeIntervalSince1970 * 1_000)),

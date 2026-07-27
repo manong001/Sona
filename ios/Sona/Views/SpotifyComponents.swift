@@ -1515,7 +1515,11 @@ struct SonaTrackListView: View {
                     ? "checkmark.circle.fill" : "photo",
                 moreActionDisabled: playlist?.artworkTrackID == track.id,
                 moreAction: playlistArtworkAction(for: track),
-                deleteTitle: canRemoveTracksFromPlaylist ? "从歌单中移除" : nil,
+                deleteTitle: canRemoveTracksFromPlaylist
+                    ? isSubscriptionPlaylist
+                        ? "拉黑并从歌单中移除"
+                        : "从歌单中移除"
+                    : nil,
                 deleteAction: removeFromPlaylistAction(for: track),
                 tapAction: {
                     if isSelecting {
@@ -1683,6 +1687,10 @@ struct SonaTrackListView: View {
 
     private var canRemoveTracksFromPlaylist: Bool {
         playlist?.isDirectoryPlaylist == false
+    }
+
+    private var isSubscriptionPlaylist: Bool {
+        collection.subtitle.hasPrefix("订阅歌单")
     }
 
     private func removeFromPlaylistAction(for track: Track) -> (() -> Void)? {

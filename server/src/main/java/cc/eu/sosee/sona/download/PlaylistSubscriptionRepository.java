@@ -9,6 +9,7 @@ import java.time.Clock;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -96,6 +97,11 @@ class PlaylistSubscriptionRepository {
                     ) AS track_id
                     FROM playlist_subscription_items items
                     WHERE items.subscription_id = :subscriptionId
+                      AND NOT EXISTS (
+                          SELECT 1 FROM playlist_subscription_blacklist blacklist
+                          WHERE blacklist.subscription_id = items.subscription_id
+                            AND blacklist.item_key = items.item_key
+                      )
                 )
                 SELECT track_id FROM resolved_items
                 WHERE track_id IS NOT NULL
@@ -111,6 +117,11 @@ class PlaylistSubscriptionRepository {
                 SELECT items.item_key, items.position, items.title, items.artist, items.album,
                     items.matched_track_id, items.last_seen_at,
                     CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM playlist_subscription_blacklist blacklist
+                            WHERE blacklist.subscription_id = items.subscription_id
+                              AND blacklist.item_key = items.item_key
+                        ) THEN 'BLACKLISTED'
                         WHEN EXISTS (SELECT 1 FROM tracks WHERE id = items.matched_track_id)
                             THEN 'MATCHED'
                         WHEN EXISTS (
@@ -136,6 +147,82 @@ class PlaylistSubscriptionRepository {
             .param("subscriptionId", subscriptionId)
             .query(this::mapItem)
             .list();
+    }
+
+    Set<String> blacklistedItemKeys(String subscriptionId) {
+        return Set.copyOf(jdbcClient.sql("""
+                SELECT item_key FROM playlist_subscription_blacklist
+                WHERE subscription_id = :subscriptionId
+                """)
+            .param("subscriptionId", subscriptionId)
+            .query(String.class)
+            .list());
+    }
+
+    boolean isBlacklisted(String userId, String subscriptionId, String itemKey) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM playlist_subscription_blacklist blacklist
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = blacklist.subscription_id
+                WHERE subscriptions.user_id = :userId
+                  AND blacklist.subscription_id = :subscriptionId
+                  AND blacklist.item_key = :itemKey
+                """)
+            .param("userId", userId)
+            .param("subscriptionId", subscriptionId)
+            .param("itemKey", itemKey)
+            .query(Integer.class)
+            .single() > 0;
+    }
+
+    @Transactional
+    int blacklistTracks(
+        String userId, String subscriptionId, List<String> trackIds
+    ) {
+        if (trackIds.isEmpty()) {
+            return 0;
+        }
+        var inserted = jdbcClient.sql("""
+                INSERT OR IGNORE INTO playlist_subscription_blacklist(
+                    subscription_id, item_key, title, artist, created_at
+                )
+                SELECT items.subscription_id, items.item_key, items.title, items.artist, :now
+                FROM playlist_subscription_items items
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = items.subscription_id
+                WHERE subscriptions.user_id = :userId
+                  AND subscriptions.id = :subscriptionId
+                  AND EXISTS (
+                      SELECT 1 FROM tracks
+                      WHERE tracks.id IN (:trackIds)
+                        AND (
+                            tracks.id = items.matched_track_id
+                            OR (
+                                trim(tracks.title) COLLATE NOCASE =
+                                    trim(items.title) COLLATE NOCASE
+                                AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
+                                    replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                            )
+                        )
+                  )
+                """)
+            .param("now", clock.millis())
+            .param("userId", userId)
+            .param("subscriptionId", subscriptionId)
+            .param("trackIds", trackIds)
+            .update();
+        jdbcClient.sql("""
+                UPDATE playlist_subscription_items
+                SET matched_track_id = NULL, state = 'BLACKLISTED'
+                WHERE subscription_id = :subscriptionId
+                  AND item_key IN (
+                      SELECT item_key FROM playlist_subscription_blacklist
+                      WHERE subscription_id = :subscriptionId
+                  )
+                """)
+            .param("subscriptionId", subscriptionId)
+            .update();
+        return inserted;
     }
 
     Optional<Item> findItem(String userId, String subscriptionId, String itemKey) {
@@ -529,12 +616,18 @@ class PlaylistSubscriptionRepository {
                     ) AS track_id
                     FROM playlist_subscription_version_items items
                     WHERE items.version_id = :versionId
+                      AND NOT EXISTS (
+                          SELECT 1 FROM playlist_subscription_blacklist blacklist
+                          WHERE blacklist.subscription_id = :subscriptionId
+                            AND blacklist.item_key = items.item_key
+                      )
                 )
                 SELECT track_id FROM resolved_items
                 WHERE track_id IS NOT NULL
                 ORDER BY position
                 """)
             .param("versionId", selected.get().version().id())
+            .param("subscriptionId", subscriptionId)
             .query(String.class)
             .list();
     }
@@ -788,6 +881,11 @@ class PlaylistSubscriptionRepository {
                 SELECT items.subscription_id,
                     CASE
                         WHEN EXISTS (
+                            SELECT 1 FROM playlist_subscription_blacklist blacklist
+                            WHERE blacklist.subscription_id = items.subscription_id
+                              AND blacklist.item_key = items.item_key
+                        ) THEN 'BLACKLISTED'
+                        WHEN EXISTS (
                             SELECT 1 FROM tracks WHERE tracks.id = items.matched_track_id
                         ) THEN 'MATCHED'
                         WHEN EXISTS (
@@ -837,6 +935,9 @@ class PlaylistSubscriptionRepository {
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'SUGGESTED') AS suggested_count,
                 (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id
+                      AND items.state = 'BLACKLISTED') AS blacklisted_count,
+                (SELECT COUNT(*) FROM item_states items
+                    WHERE items.subscription_id = subscriptions.id
                       AND items.state IN ('QUEUED', 'RUNNING')) AS downloading_count,
                 (SELECT COUNT(*) FROM item_states items
                     WHERE items.subscription_id = subscriptions.id AND items.state = 'QUEUED') AS queued_count,
@@ -865,7 +966,8 @@ class PlaylistSubscriptionRepository {
             resultSet.getInt("suggested_count"),
             resultSet.getInt("latest_version_number"),
             resultSet.getInt("selected_version_number"),
-            resultSet.getInt("follow_latest") == 1
+            resultSet.getInt("follow_latest") == 1,
+            resultSet.getInt("blacklisted_count")
         );
     }
 
@@ -889,8 +991,27 @@ class PlaylistSubscriptionRepository {
         boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
         int itemCount, int matchedCount, int missingCount, int downloadingCount,
         int queuedCount, int runningCount, int suggestedCount,
-        int latestVersionNumber, int selectedVersionNumber, boolean followingLatest
+        int latestVersionNumber, int selectedVersionNumber, boolean followingLatest,
+        int blacklistedCount
     ) {
+        Subscription(
+            String id, String userId, String username, String playlistId, String sourceUrl,
+            String name, String poolType, boolean autoDownload, boolean strictMode,
+            int syncIntervalHours,
+            boolean enabled, Long lastSyncedAt, String lastError, long createdAt, long updatedAt,
+            int itemCount, int matchedCount, int missingCount, int downloadingCount,
+            int queuedCount, int runningCount, int suggestedCount,
+            int latestVersionNumber, int selectedVersionNumber, boolean followingLatest
+        ) {
+            this(
+                id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
+                strictMode, syncIntervalHours, enabled, lastSyncedAt, lastError,
+                createdAt, updatedAt, itemCount, matchedCount, missingCount, downloadingCount,
+                queuedCount, runningCount, suggestedCount, latestVersionNumber,
+                selectedVersionNumber, followingLatest, 0
+            );
+        }
+
         Subscription(
             String id, String userId, String username, String playlistId, String sourceUrl,
             String name, String poolType, boolean autoDownload, boolean strictMode,
@@ -903,7 +1024,7 @@ class PlaylistSubscriptionRepository {
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
                 strictMode, syncIntervalHours, enabled, lastSyncedAt, lastError,
                 createdAt, updatedAt, itemCount, matchedCount, missingCount, downloadingCount,
-                queuedCount, runningCount, suggestedCount, 0, 0, true
+                queuedCount, runningCount, suggestedCount, 0, 0, true, 0
             );
         }
 
@@ -918,7 +1039,7 @@ class PlaylistSubscriptionRepository {
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
                 true, syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
                 itemCount, matchedCount, missingCount, downloadingCount,
-                queuedCount, runningCount, suggestedCount, 0, 0, true
+                queuedCount, runningCount, suggestedCount, 0, 0, true, 0
             );
         }
 
@@ -932,7 +1053,7 @@ class PlaylistSubscriptionRepository {
                 id, userId, username, playlistId, sourceUrl, name, poolType, autoDownload,
                 true, syncIntervalHours, enabled, lastSyncedAt, lastError, createdAt, updatedAt,
                 itemCount, matchedCount, missingCount, downloadingCount,
-                0, 0, 0, 0, 0, true
+                0, 0, 0, 0, 0, true, 0
             );
         }
     }

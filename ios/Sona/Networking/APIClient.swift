@@ -989,6 +989,17 @@ final class APIClient {
         )
     }
 
+    func blacklistPlaylistSubscriptionTracks(
+        id: String, trackIDs: [String]
+    ) async throws -> PlaylistSubscription {
+        struct Body: Encodable { let trackIds: [String] }
+        return try await request(
+            path: "/api/v1/me/playlist-subscriptions/\(id)/blacklist-tracks",
+            method: "POST",
+            body: try encoder.encode(Body(trackIds: trackIDs))
+        )
+    }
+
     func playlistSubscriptionItems(id: String) async throws -> [PlaylistSubscriptionItem] {
         try await request(path: "/api/v1/me/playlist-subscriptions/\(id)/items")
     }

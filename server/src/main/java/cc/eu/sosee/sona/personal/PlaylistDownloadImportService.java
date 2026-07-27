@@ -83,6 +83,13 @@ public class PlaylistDownloadImportService {
         }
     }
 
+    public void removeTracks(String userId, String playlistId, List<String> trackIds) {
+        if (!repository.ownsPlaylist(userId, playlistId)) {
+            throw new IllegalArgumentException("订阅目标歌单不存在");
+        }
+        repository.removePlaylistTracks(playlistId, trackIds);
+    }
+
     public void addToHome(String userId, String playlistId) {
         if (!repository.setPlaylistShownOnHome(userId, playlistId, true)) {
             throw new IllegalArgumentException("订阅目标歌单不存在");

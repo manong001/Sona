@@ -953,6 +953,13 @@ struct PlaylistSubscriptionsView: View {
                             systemImage: "checkmark.circle.fill",
                             color: Color.sonaGreen
                         )
+                        if (subscription.blacklistedCount ?? 0) > 0 {
+                            subscriptionMetric(
+                                "\(subscription.blacklistedCount ?? 0) 已拉黑",
+                                systemImage: "nosign",
+                                color: .red
+                            )
+                        }
                         if subscription.missingCount > 0 {
                             subscriptionMetric(
                                 "\(subscription.missingCount) 缺少",

@@ -77,6 +77,7 @@ struct PlaylistSubscription: Decodable, Identifiable {
     let queuedCount: Int?
     let runningCount: Int?
     let suggestedCount: Int?
+    let blacklistedCount: Int?
     let latestVersionNumber: Int?
     let selectedVersionNumber: Int?
     let followingLatest: Bool?

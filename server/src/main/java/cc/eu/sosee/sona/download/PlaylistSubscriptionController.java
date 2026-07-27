@@ -69,6 +69,15 @@ class PlaylistSubscriptionController {
         return service.downloadMissing(user.id(), id);
     }
 
+    @PostMapping("/{id}/blacklist-tracks")
+    PlaylistSubscriptionRepository.Subscription blacklistTracks(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @Valid @RequestBody BlacklistTracksRequest request
+    ) {
+        return service.blacklistTracks(user.id(), id, request.trackIds());
+    }
+
     @GetMapping("/{id}/versions")
     List<PlaylistSubscriptionRepository.Version> versions(
         @AuthenticationPrincipal AuthenticatedUser user,
@@ -221,6 +230,11 @@ class PlaylistSubscriptionController {
     }
 
     record MatchRequest(@NotBlank String trackId) {
+    }
+
+    record BlacklistTracksRequest(
+        @Size(min = 1, max = 500) List<@NotBlank String> trackIds
+    ) {
     }
 
     record ErrorResponse(String error) {

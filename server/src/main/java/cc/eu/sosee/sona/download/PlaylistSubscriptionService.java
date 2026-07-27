@@ -189,6 +189,17 @@ class PlaylistSubscriptionService {
             .subscription();
     }
 
+    @Transactional
+    PlaylistSubscriptionRepository.Subscription blacklistTracks(
+        String userId, String id, List<String> trackIds
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        subscriptions.blacklistTracks(userId, id, trackIds);
+        playlistImportService.removeTracks(userId, subscription.playlistId(), trackIds);
+        return subscriptions.find(userId, id).orElseThrow();
+    }
+
     List<PlaylistSubscriptionRepository.Version> versions(String userId, String id) {
         subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
@@ -388,6 +399,9 @@ class PlaylistSubscriptionService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
         subscriptions.findItem(userId, id, itemKey)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌曲不存在"));
+        if (subscriptions.isBlacklisted(userId, id, itemKey)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "歌曲已拉黑，不能下载");
+        }
         var candidate = candidatesByKey(downloadService.parsePlaylist(subscription.sourceUrl()))
             .get(itemKey);
         if (candidate == null) {
@@ -601,6 +615,7 @@ class PlaylistSubscriptionService {
             var now = clock.millis();
             var items = new ArrayList<PlaylistSubscriptionRepository.Item>();
             var candidatesByItemKey = new HashMap<String, DownloadCandidate>();
+            var blacklistedItemKeys = subscriptions.blacklistedItemKeys(subscription.id());
             var existingItems = subscriptions.findItems(subscription.id()).stream()
                 .collect(java.util.stream.Collectors.toMap(
                     PlaylistSubscriptionRepository.Item::itemKey, item -> item,
@@ -617,7 +632,14 @@ class PlaylistSubscriptionService {
                 var existing = existingItems.get(itemKey);
                 String matchedTrackId = null;
                 List<PlaylistSubscriptionMatcher.Suggestion> suggestions = List.of();
-                if (existing != null && matchSession.containsTrack(existing.matchedTrackId())) {
+                if (blacklistedItemKeys.contains(itemKey)) {
+                    items.add(new PlaylistSubscriptionRepository.Item(
+                        itemKey, position, candidate.title().strip(),
+                        candidate.artist().strip(), candidate.album(), null,
+                        "BLACKLISTED", now
+                    ));
+                    continue;
+                } else if (existing != null && matchSession.containsTrack(existing.matchedTrackId())) {
                     matchedTrackId = existing.matchedTrackId();
                 } else {
                     var rememberedTrackId = subscriptions.findRememberedMatch(
@@ -768,7 +790,9 @@ class PlaylistSubscriptionService {
     ) {
         if (!versioningEnabled.test(subscription.userId())
             || (!synchronizedNow && subscription.lastSyncedAt() == null)
-            || items.stream().anyMatch(item -> !"MATCHED".equals(item.state()))) {
+            || items.stream().anyMatch(item ->
+                !"MATCHED".equals(item.state()) && !"BLACKLISTED".equals(item.state())
+            )) {
             return false;
         }
         var savedVersion = subscriptions.saveVersion(

@@ -159,7 +159,12 @@ struct MusicLibraryView: View {
                         shape: .square
                     ))
                 } else {
-                    ManagedPlaylistDetailView(playlistID: collectionID)
+                    ManagedPlaylistDetailView(
+                        playlistID: collectionID,
+                        subscriptionID: subscriptions.first {
+                            $0.playlistId == collectionID
+                        }?.id
+                    )
                         .id(collectionID)
                 }
             }
@@ -628,7 +633,12 @@ struct MusicLibraryView: View {
                 HStack(spacing: 0) {
                     NavigationLink {
                         if isPlaylistFilter {
-                            ManagedPlaylistDetailView(playlistID: collection.id)
+                            ManagedPlaylistDetailView(
+                                playlistID: collection.id,
+                                subscriptionID: subscriptions.first {
+                                    $0.playlistId == collection.id
+                                }?.id
+                            )
                         } else {
                             SonaTrackListView(collection: collection)
                         }
@@ -1037,6 +1047,7 @@ private struct ManagedPlaylistDetailView: View {
     @State private var trackSortMode = SonaTrackSortMode.original
     @State private var alphabeticalSections: [SonaAlphabeticalTrackSection] = []
     let playlistID: String
+    let subscriptionID: String?
 
     private var playlist: Playlist? {
         personal.playlists.first { $0.id == playlistID }
@@ -1283,10 +1294,12 @@ private struct ManagedPlaylistDetailView: View {
                     ? "checkmark.circle.fill" : "photo",
                 moreActionDisabled: playlist?.artworkTrackID == track.id,
                 moreAction: playlistArtworkAction(for: track),
-                deleteTitle: playlist?.isDirectoryPlaylist == true ? nil : "从歌单中移除",
+                deleteTitle: playlist?.isDirectoryPlaylist == true
+                    ? nil
+                    : subscriptionID == nil ? "从歌单中移除" : "拉黑并从歌单移除",
                 deleteAction: playlist?.isDirectoryPlaylist == true ? nil : {
                     Task {
-                        await personal.setTrack(track.id, in: playlistID, isIncluded: false)
+                        await removeTracks(Set([track.id]))
                     }
                 },
                 tapAction: {
@@ -1324,9 +1337,13 @@ private struct ManagedPlaylistDetailView: View {
                 }
             }
             if playlist?.isDirectoryPlaylist != true {
-                Button("从歌单中移除", systemImage: "minus.circle", role: .destructive) {
+                Button(
+                    subscriptionID == nil ? "从歌单中移除" : "拉黑并从歌单移除",
+                    systemImage: subscriptionID == nil ? "minus.circle" : "nosign",
+                    role: .destructive
+                ) {
                     Task {
-                        await personal.setTrack(track.id, in: playlistID, isIncluded: false)
+                        await removeTracks(Set([track.id]))
                     }
                 }
             }
@@ -1574,10 +1591,15 @@ private struct ManagedPlaylistDetailView: View {
             .labelStyle(.iconOnly)
 
             if playlist?.isDirectoryPlaylist != true, isSelecting, !selectedIDs.isEmpty {
-                Button("移除选中的 \(selectedIDs.count) 首", role: .destructive) {
+                Button(
+                    subscriptionID == nil
+                        ? "移除选中的 \(selectedIDs.count) 首"
+                        : "拉黑移除选中的 \(selectedIDs.count) 首",
+                    role: .destructive
+                ) {
                     let ids = selectedIDs
                     Task {
-                        await personal.removeTracks(ids, from: playlistID)
+                        await removeTracks(ids)
                         selectedIDs.removeAll()
                         isSelecting = false
                     }
@@ -1589,6 +1611,16 @@ private struct ManagedPlaylistDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
+    }
+
+    private func removeTracks(_ trackIDs: Set<String>) async {
+        if let subscriptionID {
+            await personal.blacklistTracks(
+                trackIDs, from: playlistID, subscriptionID: subscriptionID
+            )
+        } else {
+            await personal.removeTracks(trackIDs, from: playlistID)
+        }
     }
 
     #if targetEnvironment(macCatalyst)

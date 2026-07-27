@@ -901,7 +901,9 @@ class PersonalRepository {
             .list();
     }
 
+    @Transactional
     void removePlaylistTrack(String playlistId, String trackId) {
+        blacklistSubscriptionTracks(playlistId, List.of(trackId));
         jdbcClient.sql("""
                 DELETE FROM playlist_tracks
                 WHERE playlist_id = :playlistId AND track_id = :trackId
@@ -911,13 +913,64 @@ class PersonalRepository {
             .update();
     }
 
+    @Transactional
     void removePlaylistTracks(String playlistId, List<String> trackIds) {
+        blacklistSubscriptionTracks(playlistId, trackIds);
         jdbcClient.sql("""
                 DELETE FROM playlist_tracks
                 WHERE playlist_id = :playlistId AND track_id IN (:trackIds)
                 """)
             .param("playlistId", playlistId)
             .param("trackIds", trackIds)
+            .update();
+    }
+
+    private void blacklistSubscriptionTracks(String playlistId, List<String> trackIds) {
+        if (trackIds.isEmpty()) {
+            return;
+        }
+        jdbcClient.sql("""
+                INSERT OR IGNORE INTO playlist_subscription_blacklist(
+                    subscription_id, item_key, title, artist, created_at
+                )
+                SELECT items.subscription_id, items.item_key, items.title, items.artist, :now
+                FROM playlist_subscription_items items
+                JOIN playlist_subscriptions subscriptions
+                  ON subscriptions.id = items.subscription_id
+                WHERE subscriptions.playlist_id = :playlistId
+                  AND EXISTS (
+                      SELECT 1 FROM tracks
+                      WHERE tracks.id IN (:trackIds)
+                        AND (
+                            tracks.id = items.matched_track_id
+                            OR (
+                                trim(tracks.title) COLLATE NOCASE =
+                                    trim(items.title) COLLATE NOCASE
+                                AND replace(trim(tracks.artist), '、', '/') COLLATE NOCASE =
+                                    replace(trim(items.artist), '、', '/') COLLATE NOCASE
+                            )
+                        )
+                  )
+                """)
+            .param("now", clock.millis())
+            .param("playlistId", playlistId)
+            .param("trackIds", trackIds)
+            .update();
+        jdbcClient.sql("""
+                UPDATE playlist_subscription_items
+                SET matched_track_id = NULL, state = 'BLACKLISTED'
+                WHERE subscription_id IN (
+                    SELECT id FROM playlist_subscriptions WHERE playlist_id = :playlistId
+                )
+                  AND item_key IN (
+                      SELECT blacklist.item_key
+                      FROM playlist_subscription_blacklist blacklist
+                      JOIN playlist_subscriptions subscriptions
+                        ON subscriptions.id = blacklist.subscription_id
+                      WHERE subscriptions.playlist_id = :playlistId
+                  )
+                """)
+            .param("playlistId", playlistId)
             .update();
     }
 

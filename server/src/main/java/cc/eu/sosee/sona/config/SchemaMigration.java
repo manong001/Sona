@@ -332,6 +332,18 @@ class SchemaMigration implements ApplicationRunner {
                 )
                 """).update();
         jdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS playlist_subscription_blacklist (
+                    subscription_id TEXT NOT NULL,
+                    item_key TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (subscription_id, item_key),
+                    FOREIGN KEY (subscription_id)
+                        REFERENCES playlist_subscriptions(id) ON DELETE CASCADE
+                )
+                """).update();
+        jdbcClient.sql("""
                 CREATE TABLE IF NOT EXISTS playlist_subscription_versions (
                     id TEXT PRIMARY KEY,
                     subscription_id TEXT NOT NULL,
