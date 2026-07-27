@@ -102,7 +102,12 @@ mvn spring-boot:run
 
 用 Xcode 打开 `ios/Sona.xcodeproj`，选择开发团队后运行。Bundle ID 为 `cc.eu.sosee.sona`，最低 iOS 17，默认服务器为 `http://sosee.eu.cc:6699`，也可在 App 设置中修改。
 
-统一打包入口会提示选择 `1. IPA（默认）` 或 `2. DMG`，直接回车生成 IPA：
+统一打包入口提供四个选项，直接回车会生成 IPA，并在成功后自动执行上传脚本：
+
+1. 打包 IPA 并自动上传（默认）
+2. 仅打包 IPA
+3. 打包 Apple Silicon `arm64` DMG
+4. 打包 Intel `x86_64` DMG
 
 ```bash
 ./ios/build_package.sh
@@ -111,8 +116,10 @@ mvn spring-boot:run
 也可跳过交互直接指定格式：
 
 ```bash
-./ios/build_package.sh 1
-./ios/build_package.sh 2
+./ios/build_package.sh 1 # IPA + 自动上传
+./ios/build_package.sh 2 # 仅 IPA
+./ios/build_package.sh 3 # arm64 DMG
+./ios/build_package.sh 4 # Intel DMG
 ```
 
 需要生成未签名设备 IPA 时，在 macOS/Xcode 环境执行：
