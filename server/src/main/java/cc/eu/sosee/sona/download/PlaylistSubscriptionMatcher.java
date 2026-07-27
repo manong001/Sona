@@ -32,7 +32,8 @@ class PlaylistSubscriptionMatcher {
         "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*]|【[^【】]*】"
     );
     private static final Set<String> VERSION_MARKERS = Set.of(
-        "live", "remix", "instrumental", "acoustic", "伴奏", "现场", "翻唱", "纯音乐"
+        "live", "remix", "instrumental", "acoustic",
+        "伴奏", "现场", "演唱会", "翻唱", "纯音乐"
     );
 
     private final JdbcClient jdbcClient;
@@ -374,8 +375,8 @@ class PlaylistSubscriptionMatcher {
             : normalizedText(track.title());
         if (sourceTitle.isEmpty() || !sourceTitle.equals(localTitle)
             || (ignoreBrackets
-                && containsDj(candidate.title())
-                && containsDj(track.title()))) {
+                && ((containsDj(candidate.title()) && containsDj(track.title()))
+                    || hasVersionMismatch(candidate.title(), track.title())))) {
             return false;
         }
         var sourceArtists = normalizedArtistSet(candidate.artist());
@@ -406,7 +407,7 @@ class PlaylistSubscriptionMatcher {
         );
     }
 
-    private boolean hasVersionMismatch(String remoteTitle, String localTitle) {
+    private static boolean hasVersionMismatch(String remoteTitle, String localTitle) {
         var remote = normalizedVersionText(remoteTitle);
         var local = normalizedVersionText(localTitle);
         return VERSION_MARKERS.stream().anyMatch(marker ->
@@ -414,7 +415,7 @@ class PlaylistSubscriptionMatcher {
         );
     }
 
-    private String normalizedVersionText(String value) {
+    private static String normalizedVersionText(String value) {
         return Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)
             .toLowerCase(Locale.ROOT);
     }
@@ -450,7 +451,9 @@ class PlaylistSubscriptionMatcher {
 
     private static boolean hasMarker(String title, String marker) {
         if (marker.chars().allMatch(character -> character < 128)) {
-            return Pattern.compile("\\b" + Pattern.quote(marker) + "\\b").matcher(title).find();
+            return Pattern.compile(
+                "(?<![a-z0-9])" + Pattern.quote(marker) + "(?![a-z0-9])"
+            ).matcher(title).find();
         }
         return title.contains(marker);
     }

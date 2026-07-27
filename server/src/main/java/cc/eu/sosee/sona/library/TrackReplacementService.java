@@ -25,8 +25,21 @@ public class TrackReplacementService {
         }
     }
 
-    public void replaceDownloadedTrack(String sourceTrackId, String targetTrackId)
-        throws IOException {
+    public void replaceDownloadedTrack(
+        String sourceTrackId, String targetTrackId,
+        String title, String artist, String album
+    ) throws IOException {
+        var target = trackStore.findById(targetTrackId)
+            .orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "新音源不存在"
+            ));
+        var resolvedAlbum = album == null || album.isBlank() ? target.album() : album;
+        if (!trackStore.editMetadata(
+            targetTrackId, title, artist, resolvedAlbum,
+            target.trackNumber(), target.genre()
+        )) {
+            throw new IOException("新音源元数据更新失败");
+        }
         duplicateTrackService.replaceDownloadedTrack(sourceTrackId, targetTrackId);
     }
 

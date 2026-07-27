@@ -350,7 +350,8 @@ class DownloadService {
                     .orElseThrow(() -> new IllegalStateException("新音源入库失败"));
                 try {
                     trackReplacementService.replaceDownloadedTrack(
-                        replacementSource.orElseThrow(), downloadedTrackId
+                        replacementSource.orElseThrow(), downloadedTrackId,
+                        task.title(), task.artist(), task.album()
                     );
                 } catch (Exception exception) {
                     trackReplacementService.discardDownloadedTrack(downloadedTrackId);

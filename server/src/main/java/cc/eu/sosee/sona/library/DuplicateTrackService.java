@@ -43,6 +43,10 @@ class DuplicateTrackService {
     private static final Pattern DOWNLOADER_FIELD_SEPARATOR = Pattern.compile(
         "\\s+_\\s+"
     );
+    private static final Set<String> VERSION_MARKERS = Set.of(
+        "live", "remix", "instrumental", "acoustic",
+        "伴奏", "现场", "演唱会", "翻唱", "纯音乐"
+    );
     private static final long MAX_EXACT_DURATION_DIFFERENCE_MS = 5_000;
 
     private final TrackStore trackStore;
@@ -110,13 +114,7 @@ class DuplicateTrackService {
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
         var target = trackStore.findById(targetId)
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Replacement track not found"));
-        var matches = mode == null
-            ? normalizedTitle(source, DuplicateMatchMode.EXACT).equals(
-                normalizedTitle(target, DuplicateMatchMode.EXACT)
-            ) && artistsMatch(
-                source.artist(), target.artist(), DuplicateMatchMode.EXACT
-            )
-            : tracksMatch(source, target, mode);
+        var matches = mode == null || tracksMatch(source, target, mode);
         if (!matches) {
             throw new ResponseStatusException(BAD_REQUEST, "Tracks are not duplicates");
         }
@@ -230,7 +228,8 @@ class DuplicateTrackService {
         TrackRecord first, TrackRecord second, DuplicateMatchMode mode
     ) {
         if (mode == DuplicateMatchMode.TITLE_WITHOUT_BRACKETS
-            && (containsDj(first.title()) || containsDj(second.title()))) {
+            && (containsDj(first.title()) || containsDj(second.title())
+                || hasVersionMismatch(first.title(), second.title()))) {
             return false;
         }
         return normalizedTitle(first, mode).equals(normalizedTitle(second, mode))
@@ -279,6 +278,23 @@ class DuplicateTrackService {
         return Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)
             .toLowerCase(Locale.ROOT)
             .contains("dj");
+    }
+
+    private boolean hasVersionMismatch(String first, String second) {
+        return !versionMarkers(first).equals(versionMarkers(second));
+    }
+
+    private Set<String> versionMarkers(String value) {
+        var normalized = ZhConverterUtil.toSimple(
+            Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)
+        ).toLowerCase(Locale.ROOT);
+        return VERSION_MARKERS.stream()
+            .filter(marker -> marker.chars().allMatch(character -> character < 128)
+                ? Pattern.compile(
+                    "(?<![a-z0-9])" + Pattern.quote(marker) + "(?![a-z0-9])"
+                ).matcher(normalized).find()
+                : normalized.contains(marker))
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     private String withoutBracketedContent(String value) {
