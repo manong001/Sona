@@ -34,6 +34,10 @@ public class PlaylistDownloadImportService {
         return new Target(playlist.id(), playlist.name());
     }
 
+    public boolean isMissing(String userId, String playlistId) {
+        return !repository.ownsPlaylist(userId, playlistId);
+    }
+
     public Target createFeatured(String userId, String name) {
         var playlist = repository.createFeaturedPlaylist(userId, name.strip());
         return new Target(playlist.id(), playlist.name());

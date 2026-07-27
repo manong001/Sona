@@ -101,7 +101,8 @@ func sonaArtworkURL(path: String?, thumbnailSize: Int?) -> URL? {
     guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
           !path.isEmpty else { return nil }
     let url = APIClient.shared.url(for: path)
-    guard let thumbnailSize,
+    guard URL(string: path)?.scheme == nil,
+          let thumbnailSize,
           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
         return url
     }

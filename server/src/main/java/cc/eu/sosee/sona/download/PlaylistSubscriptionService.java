@@ -497,6 +497,18 @@ class PlaylistSubscriptionService {
         }
         try {
             var managesVersions = versioningEnabled.test(subscription.userId());
+            if (playlistImportService.isMissing(
+                subscription.userId(), subscription.playlistId()
+            )) {
+                var target = playlistImportService.create(
+                    subscription.userId(), subscription.name(), subscription.poolType()
+                );
+                subscriptions.retarget(subscription.id(), target.id());
+                playlistImportService.addToHome(subscription.userId(), target.id());
+                subscription = subscriptions.find(
+                    subscription.userId(), subscription.id()
+                ).orElseThrow();
+            }
             downloadService.reconcileCompletedPlaylistDownloads(
                 subscription.playlistId()
             );

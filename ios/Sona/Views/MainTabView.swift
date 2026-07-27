@@ -33,6 +33,7 @@ struct MainTabView: View {
                 MacMainView(
                     selectedTab: $selectedTab,
                     showsNowPlaying: $showsNowPlaying,
+                    hasActivatedDiscoverySwipeFeed: $hasActivatedDiscoverySwipeFeed,
                     availableRelease: availableRelease,
                     openDrawer: openDrawer
                 )

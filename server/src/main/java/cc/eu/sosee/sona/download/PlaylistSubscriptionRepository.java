@@ -661,6 +661,18 @@ class PlaylistSubscriptionRepository {
             .update();
     }
 
+    void retarget(String id, String playlistId) {
+        jdbcClient.sql("""
+                UPDATE playlist_subscriptions
+                SET playlist_id = :playlistId, updated_at = :now
+                WHERE id = :id
+                """)
+            .param("playlistId", playlistId)
+            .param("now", clock.millis())
+            .param("id", id)
+            .update();
+    }
+
     void updateStrictMode(String id, boolean strictMode) {
         jdbcClient.sql("""
                 UPDATE playlist_subscriptions

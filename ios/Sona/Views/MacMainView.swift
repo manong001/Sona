@@ -5,6 +5,7 @@ struct MacMainView: View {
     @EnvironmentObject private var player: PlayerStore
     @Binding var selectedTab: SonaTab
     @Binding var showsNowPlaying: Bool
+    @Binding var hasActivatedDiscoverySwipeFeed: Bool
     let availableRelease: AppReleaseInfo?
     let openDrawer: () -> Void
     @State private var showsQueue = true
@@ -99,6 +100,7 @@ struct MacMainView: View {
         case .discovery:
             DiscoveryView(
                 isActive: true,
+                hasActivatedSwipeFeed: $hasActivatedDiscoverySwipeFeed,
                 close: { selectedTab = .home },
                 openDrawer: {}
             )
