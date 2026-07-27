@@ -178,13 +178,15 @@ class PlaylistSubscriptionService {
     PlaylistSubscriptionRepository.Subscription sync(String userId, String id) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
-        return sync(subscription, "订阅歌单".equals(subscription.name()), false);
+        return sync(subscription, "订阅歌单".equals(subscription.name()), false, false)
+            .subscription();
     }
 
     PlaylistSubscriptionRepository.Subscription downloadMissing(String userId, String id) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
-        return sync(subscription, "订阅歌单".equals(subscription.name()), true);
+        return sync(subscription, "订阅歌单".equals(subscription.name()), true, false)
+            .subscription();
     }
 
     List<PlaylistSubscriptionRepository.Version> versions(String userId, String id) {
@@ -346,7 +348,8 @@ class PlaylistSubscriptionService {
 
     @Transactional
     PlaylistSubscriptionRepository.Subscription updateSettings(
-        String userId, String id, String name, Boolean strictMode, Integer syncIntervalHours
+        String userId, String id, String name, String poolType, Boolean autoDownload,
+        Boolean strictMode, Integer syncIntervalHours
     ) {
         var subscription = subscriptions.find(userId, id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
@@ -357,10 +360,18 @@ class PlaylistSubscriptionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "同步频率无效");
         }
         var normalizedName = name.strip();
+        var normalizedPoolType = poolType == null
+            ? subscription.poolType() : normalizePoolType(poolType);
+        var effectiveAutoDownload = autoDownload == null
+            ? subscription.autoDownload() : autoDownload;
         var effectiveStrictMode = strictMode == null ? subscription.strictMode() : strictMode;
         playlistImportService.rename(userId, subscription.playlistId(), normalizedName);
+        playlistImportService.updatePool(
+            userId, subscription.playlistId(), normalizedPoolType
+        );
         subscriptions.updateSettings(
-            subscription.id(), normalizedName,
+            subscription.id(), normalizedName, normalizedPoolType,
+            effectiveAutoDownload,
             effectiveStrictMode,
             effectiveInterval
         );
@@ -443,6 +454,53 @@ class PlaylistSubscriptionService {
         );
     }
 
+    AutomationSyncResult syncForAutomation(
+        PlaylistSubscriptionRepository.Subscription subscription
+    ) {
+        return sync(
+            subscription, "订阅歌单".equals(subscription.name()), false, true
+        );
+    }
+
+    synchronized AutomationDownloadResult queueAutomationOriginals(
+        String userId, String id, boolean includeSuggested
+    ) {
+        var subscription = subscriptions.find(userId, id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "订阅歌单不存在"));
+        var candidates = candidatesByKey(
+            downloadService.parsePlaylist(subscription.sourceUrl())
+        );
+        var tasks = new ArrayList<DownloadTask>();
+        var skippedCount = 0;
+        for (var item : subscriptions.findItems(subscription.id())) {
+            var shouldDownload = item.matchedTrackId() == null
+                && ("MISSING".equals(item.state())
+                    || includeSuggested && "SUGGESTED".equals(item.state()));
+            if (!shouldDownload) {
+                continue;
+            }
+            var candidate = candidates.get(item.itemKey());
+            if (candidate == null) {
+                skippedCount++;
+                continue;
+            }
+            var queued = subscription.strictMode()
+                ? downloadService.queueForPlaylist(
+                    candidate, subscription.username(), subscription.playlistId()
+                )
+                : downloadService.queueForPlaylist(
+                    candidate, subscription.username(), subscription.playlistId(), false
+                );
+            if (queued.isEmpty()) {
+                skippedCount++;
+                continue;
+            }
+            subscriptions.updateItemState(id, item.itemKey(), "DOWNLOADING");
+            tasks.add(queued.get());
+        }
+        return new AutomationDownloadResult(List.copyOf(tasks), skippedCount);
+    }
+
     @Transactional
     PlaylistSubscriptionRepository.Subscription rename(String userId, String id, String name) {
         var subscription = subscriptions.find(userId, id)
@@ -481,19 +539,22 @@ class PlaylistSubscriptionService {
     void syncDueSubscriptions() {
         for (var subscription : subscriptions.findDue()) {
             try {
-                sync(subscription, "订阅歌单".equals(subscription.name()), false);
+                sync(subscription, "订阅歌单".equals(subscription.name()), false, false);
             } catch (RuntimeException ignored) {
                 // 单个公开歌单失效时保留上次成功镜像，并继续同步其他订阅。
             }
         }
     }
 
-    private PlaylistSubscriptionRepository.Subscription sync(
+    private AutomationSyncResult sync(
         PlaylistSubscriptionRepository.Subscription subscription, boolean useRemoteName,
-        boolean downloadMissing
+        boolean downloadMissing, boolean suppressAutoDownload
     ) {
         if (!syncing.add(subscription.id())) {
-            return subscriptions.find(subscription.userId(), subscription.id()).orElseThrow();
+            return new AutomationSyncResult(
+                subscriptions.find(subscription.userId(), subscription.id()).orElseThrow(),
+                false
+            );
         }
         try {
             var managesVersions = versioningEnabled.test(subscription.userId());
@@ -539,6 +600,7 @@ class PlaylistSubscriptionService {
             );
             var now = clock.millis();
             var items = new ArrayList<PlaylistSubscriptionRepository.Item>();
+            var candidatesByItemKey = new HashMap<String, DownloadCandidate>();
             var existingItems = subscriptions.findItems(subscription.id()).stream()
                 .collect(java.util.stream.Collectors.toMap(
                     PlaylistSubscriptionRepository.Item::itemKey, item -> item,
@@ -551,6 +613,7 @@ class PlaylistSubscriptionService {
                 var keyBase = itemKeyBase(candidate);
                 var occurrence = occurrences.merge(keyBase, 1, Integer::sum) - 1;
                 var itemKey = itemKey(candidate, occurrence);
+                candidatesByItemKey.put(itemKey, candidate);
                 var existing = existingItems.get(itemKey);
                 String matchedTrackId = null;
                 List<PlaylistSubscriptionMatcher.Suggestion> suggestions = List.of();
@@ -578,7 +641,25 @@ class PlaylistSubscriptionService {
                 } else if (candidate.downloadState() == DownloadTaskState.QUEUED
                     || candidate.downloadState() == DownloadTaskState.RUNNING) {
                     state = "DOWNLOADING";
-                } else if (subscription.autoDownload() || downloadMissing) {
+                }
+                items.add(new PlaylistSubscriptionRepository.Item(
+                    itemKey, position, candidate.title().strip(),
+                    candidate.artist().strip(), candidate.album(), matchedTrackId, state, now
+                ));
+            }
+            var canDownloadMissing = !suppressAutoDownload
+                && (subscription.autoDownload() || downloadMissing)
+                && items.stream().noneMatch(item -> "SUGGESTED".equals(item.state()));
+            if (canDownloadMissing) {
+                for (var index = 0; index < items.size(); index++) {
+                    var item = items.get(index);
+                    if (!"MISSING".equals(item.state())) {
+                        continue;
+                    }
+                    var candidate = candidatesByItemKey.get(item.itemKey());
+                    if (candidate == null) {
+                        continue;
+                    }
                     var queued = subscription.strictMode()
                         ? downloadService.queueForPlaylist(
                             candidate, subscription.username(), subscription.playlistId()
@@ -587,13 +668,12 @@ class PlaylistSubscriptionService {
                             candidate, subscription.username(), subscription.playlistId(), false
                         );
                     if (queued.isPresent()) {
-                        state = "DOWNLOADING";
+                        items.set(index, new PlaylistSubscriptionRepository.Item(
+                            item.itemKey(), item.position(), item.title(), item.artist(),
+                            item.album(), item.matchedTrackId(), "DOWNLOADING", item.lastSeenAt()
+                        ));
                     }
                 }
-                items.add(new PlaylistSubscriptionRepository.Item(
-                    itemKey, position, candidate.title().strip(),
-                    candidate.artist().strip(), candidate.album(), matchedTrackId, state, now
-                ));
             }
             subscriptions.replaceItems(subscription.id(), items);
             subscriptions.markSynced(subscription.id());
@@ -620,7 +700,7 @@ class PlaylistSubscriptionService {
                         .toList()
                 );
             }
-            return refreshed;
+            return new AutomationSyncResult(refreshed, true);
         } catch (RuntimeException exception) {
             subscriptions.markFailed(subscription.id(), conciseMessage(exception));
             throw exception;
@@ -635,7 +715,7 @@ class PlaylistSubscriptionService {
         try {
             taskExecutor.execute(() -> {
                 try {
-                    sync(subscription, useRemoteName, false);
+                    sync(subscription, useRemoteName, false, false);
                 } catch (RuntimeException ignored) {
                     // 同步错误已记录在订阅中，不能影响创建接口的快速返回。
                 }
@@ -807,6 +887,14 @@ class PlaylistSubscriptionService {
         PlaylistSubscriptionRepository.Subscription subscription,
         int queuedCount, int skippedCount
     ) {
+    }
+
+    record AutomationSyncResult(
+        PlaylistSubscriptionRepository.Subscription subscription, boolean performed
+    ) {
+    }
+
+    record AutomationDownloadResult(List<DownloadTask> tasks, int skippedCount) {
     }
 
     private String conciseMessage(RuntimeException exception) {

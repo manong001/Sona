@@ -21,6 +21,14 @@ struct SettingsView: View {
     @AppStorage("miniPlayerMode") private var miniPlayerMode = "floating"
     @AppStorage("playlistVersionManagementEnabled")
     private var playlistVersionManagementEnabled = false
+    @AppStorage("playlistAutomationEnabled")
+    private var playlistAutomationEnabled = false
+    @AppStorage("playlistAutomationIntervalHours")
+    private var playlistAutomationIntervalHours = 2
+    @AppStorage("playlistAutomationMatchMode")
+    private var playlistAutomationMatchMode = "IGNORE_BRACKETS"
+    @AppStorage(PlayerStore.cellularAudioOptimizationKey)
+    private var cellularAudioOptimizationEnabled = true
     @AppStorage(SonaHaptics.preferenceKey) private var hapticStrength =
         SonaHapticStrength.medium.rawValue
     @State private var appIconPreference: String?
@@ -192,6 +200,15 @@ struct SettingsView: View {
                 }
 
                 Section("播放体验") {
+#if !targetEnvironment(macCatalyst)
+                    Toggle(
+                        "蜂窝网络节省流量",
+                        isOn: $cellularAudioOptimizationEnabled
+                    )
+                    Text("开启后，蜂窝网络播放 AAC 192 kbps 流量版；WiFi 始终播放原版。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+#endif
                     Picker("迷你播放器", selection: $miniPlayerMode) {
                         Text("悬浮拖动").tag("floating")
                         Text("固定在导航栏上方").tag("fixed")
@@ -226,6 +243,30 @@ struct SettingsView: View {
                 }
 
                 Section("订阅歌单") {
+                    Toggle("自动维护", isOn: $playlistAutomationEnabled)
+                    if playlistAutomationEnabled {
+                        Picker("执行周期", selection: $playlistAutomationIntervalHours) {
+                            ForEach([1, 2, 4, 6, 12, 24, 48, 72, 168], id: \.self) {
+                                Text($0 == 168 ? "每周" : "每 \($0) 小时").tag($0)
+                            }
+                        }
+                        Picker("相似歌曲处理", selection: $playlistAutomationMatchMode) {
+                            Text("严格匹配").tag("STRICT")
+                            Text("忽略括号自动匹配").tag("IGNORE_BRACKETS")
+                            Text("保留待人工处理").tag("MANUAL")
+                        }
+                    }
+                    Text(
+                        "开启后按周期刷新订阅歌单、处理相似歌曲，再下载仍缺失的原曲。"
+                        + "下载失败会在全部任务结束后汇总通知。"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    NavigationLink {
+                        SystemNotificationsView()
+                    } label: {
+                        Label("自动维护通知", systemImage: "bell")
+                    }
                     Toggle(
                         "版本管理",
                         isOn: $playlistVersionManagementEnabled
@@ -533,6 +574,90 @@ struct SettingsView: View {
         case "FINALIZING": "正在完成扫描"
         default: nil
         }
+    }
+}
+
+private struct SystemNotificationsView: View {
+    @State private var notifications: [SystemNotification] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+            } else if let errorMessage {
+                ContentUnavailableView(
+                    "通知加载失败",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+            } else if notifications.isEmpty {
+                ContentUnavailableView("暂无自动维护通知", systemImage: "bell")
+            } else {
+                List(notifications) { notification in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            if notification.readAt == nil {
+                                Circle()
+                                    .fill(.tint)
+                                    .frame(width: 7, height: 7)
+                            }
+                            Text(notification.title)
+                                .font(.headline)
+                        }
+                        Text(notification.body)
+                            .font(.subheadline)
+                        Text(notificationDate(notification.createdAt), style: .relative)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                    .onAppear {
+                        guard notification.readAt == nil else { return }
+                        Task {
+                            try? await APIClient.shared.markSystemNotificationRead(
+                                id: notification.id
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("自动维护通知")
+        .toolbar {
+            if notifications.contains(where: { $0.readAt == nil }) {
+                Button("全部已读") {
+                    Task { await markAllRead() }
+                }
+            }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        isLoading = notifications.isEmpty
+        defer { isLoading = false }
+        do {
+            notifications = try await APIClient.shared.systemNotifications()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func markAllRead() async {
+        do {
+            try await APIClient.shared.markAllSystemNotificationsRead()
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func notificationDate(_ milliseconds: Int64) -> Date {
+        Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
     }
 }
 

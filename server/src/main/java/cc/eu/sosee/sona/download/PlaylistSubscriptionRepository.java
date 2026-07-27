@@ -294,6 +294,15 @@ class PlaylistSubscriptionRepository {
             .list();
     }
 
+    List<Subscription> findAllEnabled() {
+        return select("""
+                WHERE subscriptions.enabled = 1
+                ORDER BY subscriptions.created_at
+                """)
+            .query(this::map)
+            .list();
+    }
+
     @Transactional
     void replaceItems(String subscriptionId, List<Item> items) {
         jdbcClient.sql("DELETE FROM playlist_subscription_items WHERE subscription_id = :id")
@@ -686,15 +695,19 @@ class PlaylistSubscriptionRepository {
     }
 
     void updateSettings(
-        String id, String name, boolean strictMode, int syncIntervalHours
+        String id, String name, String poolType, boolean autoDownload,
+        boolean strictMode, int syncIntervalHours
     ) {
         jdbcClient.sql("""
                 UPDATE playlist_subscriptions
-                SET name = :name, strict_mode = :strictMode,
+                SET name = :name, pool_type = :poolType,
+                    auto_download = :autoDownload, strict_mode = :strictMode,
                     sync_interval_hours = :syncIntervalHours, updated_at = :now
                 WHERE id = :id
                 """)
             .param("name", name)
+            .param("poolType", poolType)
+            .param("autoDownload", autoDownload ? 1 : 0)
             .param("strictMode", strictMode ? 1 : 0)
             .param("syncIntervalHours", syncIntervalHours)
             .param("now", clock.millis())

@@ -95,6 +95,11 @@ class DuplicateTrackService {
     }
 
     @Transactional
+    void replaceDownloadedTrack(String sourceId, String targetId) throws IOException {
+        replaceAndDelete(sourceId, targetId, null);
+    }
+
+    @Transactional
     void replaceAndDelete(
         String sourceId, String targetId, DuplicateMatchMode mode
     ) throws IOException {
@@ -105,7 +110,14 @@ class DuplicateTrackService {
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Track not found"));
         var target = trackStore.findById(targetId)
             .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Replacement track not found"));
-        if (!tracksMatch(source, target, mode)) {
+        var matches = mode == null
+            ? normalizedTitle(source, DuplicateMatchMode.EXACT).equals(
+                normalizedTitle(target, DuplicateMatchMode.EXACT)
+            ) && artistsMatch(
+                source.artist(), target.artist(), DuplicateMatchMode.EXACT
+            )
+            : tracksMatch(source, target, mode);
+        if (!matches) {
             throw new ResponseStatusException(BAD_REQUEST, "Tracks are not duplicates");
         }
 
@@ -121,6 +133,11 @@ class DuplicateTrackService {
         jdbcClient.sql("""
                 UPDATE playlist_subscription_items
                 SET matched_track_id = :target, state = 'MATCHED'
+                WHERE matched_track_id = :source
+                """).param("target", targetId).param("source", sourceId).update();
+        jdbcClient.sql("""
+                UPDATE playlist_subscription_version_items
+                SET matched_track_id = :target
                 WHERE matched_track_id = :source
                 """).param("target", targetId).param("source", sourceId).update();
         jdbcClient.sql("UPDATE playlist_match_choices SET track_id = :target WHERE track_id = :source")

@@ -126,7 +126,16 @@ final class UserPreferencesStore: ObservableObject {
                 ?? (UIApplication.shared.alternateIconName == nil ? "girl" : "spotify"),
             playlistVersionManagementEnabled: defaults.bool(
                 forKey: "playlistVersionManagementEnabled"
-            )
+            ),
+            playlistAutomationEnabled: defaults.bool(
+                forKey: "playlistAutomationEnabled"
+            ),
+            playlistAutomationIntervalHours:
+                defaults.object(forKey: "playlistAutomationIntervalHours") == nil
+                    ? 2 : defaults.integer(forKey: "playlistAutomationIntervalHours"),
+            playlistAutomationMatchMode: defaults.string(
+                forKey: "playlistAutomationMatchMode"
+            ) ?? "IGNORE_BRACKETS"
         )
     }
 
@@ -142,6 +151,18 @@ final class UserPreferencesStore: ObservableObject {
         defaults.set(
             preferences.playlistVersionManagementEnabled,
             forKey: "playlistVersionManagementEnabled"
+        )
+        defaults.set(
+            preferences.playlistAutomationEnabled,
+            forKey: "playlistAutomationEnabled"
+        )
+        defaults.set(
+            preferences.playlistAutomationIntervalHours,
+            forKey: "playlistAutomationIntervalHours"
+        )
+        defaults.set(
+            preferences.playlistAutomationMatchMode,
+            forKey: "playlistAutomationMatchMode"
         )
         isApplyingRemote = false
 

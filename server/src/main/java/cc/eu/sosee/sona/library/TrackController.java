@@ -63,14 +63,19 @@ class TrackController {
     private final Path musicDirectory;
     private final Path dataDirectory;
     private final OnlinePlaybackService onlinePlaybackService;
+    private final MobileAudioTranscoder mobileAudioTranscoder;
 
     TrackController(
-        TrackStore trackStore, SonaProperties properties, OnlinePlaybackService onlinePlaybackService
+        TrackStore trackStore,
+        SonaProperties properties,
+        OnlinePlaybackService onlinePlaybackService,
+        MobileAudioTranscoder mobileAudioTranscoder
     ) {
         this.trackStore = trackStore;
         this.musicDirectory = properties.getMusicDir().toAbsolutePath().normalize();
         this.dataDirectory = properties.getDataDir().toAbsolutePath().normalize();
         this.onlinePlaybackService = onlinePlaybackService;
+        this.mobileAudioTranscoder = mobileAudioTranscoder;
     }
 
     @GetMapping
@@ -152,15 +157,28 @@ class TrackController {
 
     @GetMapping("/{id}/stream")
     ResponseEntity<Resource> stream(
-        @AuthenticationPrincipal AuthenticatedUser user, @PathVariable String id
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String id,
+        @RequestParam(required = false) String quality
     ) throws IOException {
         var track = findTrack(id, user.id());
         var audioPath = checkedPath(track.path(), musicDirectory);
+        if ("mobile".equalsIgnoreCase(quality) && needsMobileTranscode(track)) {
+            audioPath = mobileAudioTranscoder.transcode(audioPath, track.id());
+        }
         return ResponseEntity.ok()
             .header(HttpHeaders.ACCEPT_RANGES, "bytes")
             .contentType(contentType(audioPath))
             .contentLength(Files.size(audioPath))
             .body(new FileSystemResource(audioPath));
+    }
+
+    private boolean needsMobileTranscode(TrackRecord track) {
+        if (track.durationMs() <= 0) {
+            return true;
+        }
+        var averageBitsPerSecond = track.fileSize() * 8_000 / track.durationMs();
+        return averageBitsPerSecond > 192_000;
     }
 
     @GetMapping("/{id}/fallback-stream")

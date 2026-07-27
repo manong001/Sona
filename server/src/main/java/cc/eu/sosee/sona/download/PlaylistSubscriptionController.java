@@ -169,7 +169,8 @@ class PlaylistSubscriptionController {
         @Valid @RequestBody UpdateRequest request
     ) {
         return service.updateSettings(
-            user.id(), id, request.name(), request.strictMode(), request.syncIntervalHours()
+            user.id(), id, request.name(), request.poolType(), request.autoDownload(),
+            request.strictMode(), request.syncIntervalHours()
         );
     }
 
@@ -209,6 +210,8 @@ class PlaylistSubscriptionController {
 
     record UpdateRequest(
         @NotBlank @Size(max = 80) String name,
+        String poolType,
+        Boolean autoDownload,
         Boolean strictMode,
         @Min(1) @Max(168) Integer syncIntervalHours
     ) {

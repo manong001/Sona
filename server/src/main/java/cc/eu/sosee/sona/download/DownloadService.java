@@ -1,5 +1,6 @@
 package cc.eu.sosee.sona.download;
 
+import cc.eu.sosee.sona.library.TrackReplacementService;
 import cc.eu.sosee.sona.personal.PlaylistDownloadImportService;
 import jakarta.annotation.PostConstruct;
 import java.util.Comparator;
@@ -8,6 +9,7 @@ import java.util.Optional;
 import java.util.concurrent.RejectedExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpStatus;
@@ -24,19 +26,36 @@ class DownloadService {
     private final TaskExecutor taskExecutor;
     private final PlaylistDownloadImportService playlistImportService;
     private final PlaylistSubscriptionRepository subscriptionRepository;
+    private final TrackReplacementService trackReplacementService;
 
+    @Autowired
     DownloadService(
         DownloaderGateway gateway,
         DownloadTaskRepository repository,
         PlaylistDownloadImportService playlistImportService,
         PlaylistSubscriptionRepository subscriptionRepository,
+        TrackReplacementService trackReplacementService,
         @Qualifier("downloadTaskExecutor") TaskExecutor taskExecutor
     ) {
         this.gateway = gateway;
         this.repository = repository;
         this.playlistImportService = playlistImportService;
         this.subscriptionRepository = subscriptionRepository;
+        this.trackReplacementService = trackReplacementService;
         this.taskExecutor = taskExecutor;
+    }
+
+    DownloadService(
+        DownloaderGateway gateway,
+        DownloadTaskRepository repository,
+        PlaylistDownloadImportService playlistImportService,
+        PlaylistSubscriptionRepository subscriptionRepository,
+        TaskExecutor taskExecutor
+    ) {
+        this(
+            gateway, repository, playlistImportService, subscriptionRepository,
+            null, taskExecutor
+        );
     }
 
     @PostConstruct
@@ -63,9 +82,11 @@ class DownloadService {
     }
 
     List<DownloadTask> tasks(String requestedBy) {
-        return repository.findRecent(requestedBy).stream()
-            .map(this::withProgress)
-            .toList();
+        var unique = new java.util.LinkedHashMap<String, DownloadTask>();
+        for (var task : repository.findRecent(requestedBy)) {
+            unique.putIfAbsent(identity(task.title(), task.artist()), withProgress(task));
+        }
+        return List.copyOf(unique.values());
     }
 
     private DownloadTask withProgress(DownloadTask task) {
@@ -129,6 +150,25 @@ class DownloadService {
         return task;
     }
 
+    synchronized DownloadTask queueTrackReplacement(
+        String sourceTrackId, DownloadCandidate candidate, String requestedBy
+    ) {
+        requireEnabled();
+        if (trackReplacementService == null) {
+            throw new IllegalStateException("歌曲替换服务未配置");
+        }
+        trackReplacementService.requireTrack(sourceTrackId);
+        if (repository.findTrackReplacementState(sourceTrackId).isPresent()) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, "这首歌曲已有重新下载任务"
+            );
+        }
+        var task = repository.create(candidate, requestedBy);
+        repository.markTrackReplacement(task.id(), sourceTrackId);
+        submit(task);
+        return task;
+    }
+
     synchronized Optional<DownloadTask> queueForPlaylist(
         DownloadCandidate candidate, String requestedBy, String targetPlaylistId
     ) {
@@ -180,6 +220,15 @@ class DownloadService {
         return repository.findExistingState(candidate);
     }
 
+    private Optional<DownloadTaskState> existingStateExcluding(
+        DownloadCandidate candidate, String excludedTaskId
+    ) {
+        if (repository.existsInLibrary(candidate)) {
+            return Optional.of(DownloadTaskState.COMPLETED);
+        }
+        return repository.findExistingStateExcluding(candidate, excludedTaskId);
+    }
+
     DownloadTask retry(String id, String requestedBy) {
         requireEnabled();
         var task = repository.findById(id, requestedBy)
@@ -207,12 +256,14 @@ class DownloadService {
         if ("SpotifyMusicClient".equals(candidate.source())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请选择 Spotify 以外的备选音源");
         }
-        var existing = existingState(candidate);
-        if (existing.isPresent()) {
-            var message = existing.get() == DownloadTaskState.COMPLETED
-                ? "所选歌曲已存在于曲库"
-                : "所选歌曲已在下载列表";
-            throw new ResponseStatusException(HttpStatus.CONFLICT, message);
+        if (repository.findReplacementSourceTrackId(task.id()).isEmpty()) {
+            var existing = existingStateExcluding(candidate, task.id());
+            if (existing.isPresent()) {
+                var message = existing.get() == DownloadTaskState.COMPLETED
+                    ? "所选歌曲已存在于曲库"
+                    : "所选歌曲已在下载列表";
+                throw new ResponseStatusException(HttpStatus.CONFLICT, message);
+            }
         }
         repository.replaceCandidate(task.id(), candidate);
         var queued = repository.findById(task.id()).orElseThrow();
@@ -233,6 +284,28 @@ class DownloadService {
 
     void clearFailed(String requestedBy) {
         repository.deleteFailed(requestedBy);
+    }
+
+    synchronized List<DownloadTask> retryAllFailed(String requestedBy) {
+        var retried = new java.util.ArrayList<DownloadTask>();
+        var identities = new java.util.HashSet<String>();
+        for (var task : repository.findFailed(requestedBy)) {
+            if (!identities.add(identity(task.title(), task.artist()))) {
+                continue;
+            }
+            try {
+                retried.add(retry(task.id(), requestedBy));
+            } catch (RuntimeException exception) {
+                LOGGER.warn("重试下载任务 {} 失败", task.id(), exception);
+            }
+        }
+        return List.copyOf(retried);
+    }
+
+    private String identity(String title, String artist) {
+        return title.strip().toLowerCase(java.util.Locale.ROOT)
+            + "\u0000"
+            + artist.strip().replace('、', '/').toLowerCase(java.util.Locale.ROOT);
     }
 
     void disableStrictMatchForPlaylist(String playlistId) {
@@ -265,7 +338,23 @@ class DownloadService {
             if (files.isEmpty()) {
                 throw new IllegalStateException("下载服务没有返回文件");
             }
-            if (task.targetPlaylistId() == null) {
+            var replacementSource = repository.findReplacementSourceTrackId(task.id());
+            if (replacementSource.isPresent()) {
+                playlistImportService.scanDownloadedFiles(files);
+                var downloadedTrackId = playlistImportService.findDownloadedTrackIds(files)
+                    .stream()
+                    .filter(trackId -> !trackId.equals(replacementSource.orElseThrow()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("新音源入库失败"));
+                try {
+                    trackReplacementService.replaceDownloadedTrack(
+                        replacementSource.orElseThrow(), downloadedTrackId
+                    );
+                } catch (Exception exception) {
+                    trackReplacementService.discardDownloadedTrack(downloadedTrackId);
+                    throw exception;
+                }
+            } else if (task.targetPlaylistId() == null) {
                 playlistImportService.scanDownloadedFiles(files);
             } else {
                 var trackIds = playlistImportService.addDownloadedFiles(

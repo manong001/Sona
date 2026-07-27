@@ -95,6 +95,12 @@ public class PlaylistDownloadImportService {
         }
     }
 
+    public void updatePool(String userId, String playlistId, String poolType) {
+        if (!repository.updatePlaylistPool(userId, playlistId, poolType)) {
+            throw new IllegalArgumentException("订阅目标歌单不存在");
+        }
+    }
+
     public void setRemoteArtwork(String userId, String playlistId, String artworkUrl) {
         var normalizedUrl = artworkUrl.strip();
         if (!normalizedUrl.startsWith("https://") && !normalizedUrl.startsWith("http://")) {

@@ -54,6 +54,17 @@ class UserPreferencesRepository {
                 && !object.has("playlistVersionManagementEnabled")) {
                 object.put("playlistVersionManagementEnabled", false);
             }
+            if (value instanceof ObjectNode object) {
+                if (!object.has("playlistAutomationEnabled")) {
+                    object.put("playlistAutomationEnabled", false);
+                }
+                if (!object.has("playlistAutomationIntervalHours")) {
+                    object.put("playlistAutomationIntervalHours", 2);
+                }
+                if (!object.has("playlistAutomationMatchMode")) {
+                    object.put("playlistAutomationMatchMode", "IGNORE_BRACKETS");
+                }
+            }
             return objectMapper.treeToValue(value, UserPreferencesValue.class);
         } catch (JacksonException exception) {
             throw new IllegalStateException("Stored user preferences are invalid", exception);

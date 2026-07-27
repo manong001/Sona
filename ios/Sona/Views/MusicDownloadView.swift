@@ -24,6 +24,7 @@ struct MusicDownloadView: View {
     @State private var addedToastTask: Task<Void, Never>?
     @State private var showsClearFailedTasksConfirmation = false
     @State private var isClearingFailedTasks = false
+    @State private var isRetryingFailedTasks = false
     @State private var alternativeTask: MusicDownloadTask?
     @State private var alternativeCandidates: [String: [DownloadCandidate]] = [:]
     @State private var alternativeLoadingTaskIDs: Set<String> = []
@@ -69,9 +70,13 @@ struct MusicDownloadView: View {
                     !tasks.contains(where: { $0.state == .failed })
                         || isClearingFailedTasks
                 )
-                Button("刷新", systemImage: "arrow.clockwise") {
-                    Task { await loadTasks(showLoading: true) }
+                Button("重试全部失败任务", systemImage: "arrow.clockwise") {
+                    Task { await retryAllFailedTasks() }
                 }
+                .disabled(
+                    !tasks.contains(where: { $0.state == .failed })
+                        || isRetryingFailedTasks
+                )
             } else {
                 Button("导入歌单", systemImage: "link.badge.plus") {
                     showsPlaylistImport = true
@@ -671,6 +676,21 @@ struct MusicDownloadView: View {
         }
     }
 
+    private func retryAllFailedTasks() async {
+        guard !isRetryingFailedTasks else { return }
+        isRetryingFailedTasks = true
+        errorMessage = nil
+        defer { isRetryingFailedTasks = false }
+        do {
+            _ = try await APIClient.shared.retryAllFailedMusicDownloadTasks()
+            needsLibraryRefresh = true
+            await loadTasks(showLoading: false)
+        } catch {
+            errorMessage = error.localizedDescription
+            await loadTasks(showLoading: false)
+        }
+    }
+
     private func refreshLibraryAfterDownloadsIfNeeded() async {
         guard needsLibraryRefresh else { return }
         needsLibraryRefresh = false
@@ -753,10 +773,12 @@ struct PlaylistSubscriptionsView: View {
             }
             .sheet(item: $editingSubscription) { subscription in
                 EditPlaylistSubscriptionView(subscription: subscription) {
-                    name, strictMode, syncIntervalHours in
+                    name, poolType, autoDownload, strictMode, syncIntervalHours in
                     let updated = try await APIClient.shared.updatePlaylistSubscription(
                         id: subscription.id,
                         name: name,
+                        poolType: poolType,
+                        autoDownload: autoDownload,
                         strictMode: strictMode,
                         syncIntervalHours: syncIntervalHours
                     )
@@ -970,7 +992,9 @@ struct PlaylistSubscriptionsView: View {
                     Task { await downloadMissing(subscription) }
                 } label: {
                     Label(
-                        downloadingMissingIDs.contains(subscription.id)
+                        (subscription.suggestedCount ?? 0) > 0
+                            ? "请先处理相似歌曲"
+                            : downloadingMissingIDs.contains(subscription.id)
                             ? "正在添加到下载列表…"
                             : "下载缺少的 \(subscription.missingCount) 首",
                         systemImage: "arrow.down.circle.fill"
@@ -985,6 +1009,7 @@ struct PlaylistSubscriptionsView: View {
                 .disabled(
                     syncingIDs.contains(subscription.id)
                         || downloadingMissingIDs.contains(subscription.id)
+                        || (subscription.suggestedCount ?? 0) > 0
                 )
             }
 
@@ -1725,8 +1750,10 @@ private struct PlaylistSubscriptionItemsView: View {
 private struct EditPlaylistSubscriptionView: View {
     @Environment(\.dismiss) private var dismiss
     let subscription: PlaylistSubscription
-    let saved: (String, Bool, Int) async throws -> Void
+    let saved: (String, String, Bool, Bool, Int) async throws -> Void
     @State private var name: String
+    @State private var poolType: String
+    @State private var autoDownload: Bool
     @State private var strictMode: Bool
     @State private var syncIntervalHours: Int
     @State private var isSaving = false
@@ -1734,11 +1761,13 @@ private struct EditPlaylistSubscriptionView: View {
 
     init(
         subscription: PlaylistSubscription,
-        saved: @escaping (String, Bool, Int) async throws -> Void
+        saved: @escaping (String, String, Bool, Bool, Int) async throws -> Void
     ) {
         self.subscription = subscription
         self.saved = saved
         _name = State(initialValue: subscription.name)
+        _poolType = State(initialValue: subscription.poolType)
+        _autoDownload = State(initialValue: subscription.autoDownload)
         _strictMode = State(initialValue: subscription.strictMode)
         _syncIntervalHours = State(initialValue: subscription.syncIntervalHours)
     }
@@ -1750,18 +1779,27 @@ private struct EditPlaylistSubscriptionView: View {
                     TextField("歌单名称", text: $name)
                 }
                 Section("同步设置") {
+                    Picker("歌曲池", selection: $poolType) {
+                        Text("正常歌曲池").tag("NORMAL")
+                        Text("发现歌曲池").tag("DISCOVERY")
+                        Text("儿童歌池").tag("CHILD")
+                    }
                     Picker("同步频率", selection: $syncIntervalHours) {
                         Text("每 6 小时").tag(6)
                         Text("每 12 小时").tag(12)
                         Text("每天").tag(24)
                         Text("每 3 天").tag(72)
                     }
-                    Toggle("严格模式", isOn: $strictMode)
-                        .tint(Color.sonaGreen)
+                    Picker("歌曲处理方式", selection: $strictMode) {
+                        Text("完全匹配").tag(true)
+                        Text("智能匹配相似歌曲").tag(false)
+                    }
+                    Toggle("缺少音源时自动下载", isOn: $autoDownload)
                 }
                 Section {
                     Text(
-                        "严格模式仅自动采用歌名、歌手完全一致的歌曲。"
+                        "完全匹配只采用歌名、歌手一致的歌曲；"
+                        + "相似歌曲处理完成后，才会自动下载仍缺失的原曲。"
                         + "这些设置只影响 Sona，不会修改来源平台的公开歌单。"
                     )
                         .font(.caption)
@@ -1799,7 +1837,9 @@ private struct EditPlaylistSubscriptionView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            try await saved(normalizedName, strictMode, syncIntervalHours)
+            try await saved(
+                normalizedName, poolType, autoDownload, strictMode, syncIntervalHours
+            )
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
@@ -1840,14 +1880,17 @@ struct CreatePlaylistSubscriptionView: View {
                         Text("每天").tag(24)
                         Text("每 3 天").tag(72)
                     }
-                    Toggle("严格模式", isOn: $strictMode)
-                        .tint(Color.sonaGreen)
+                    Picker("歌曲处理方式", selection: $strictMode) {
+                        Text("完全匹配").tag(true)
+                        Text("智能匹配相似歌曲").tag(false)
+                    }
                     Toggle("缺少音源时自动下载", isOn: $autoDownload)
                 } header: {
                     Text("同步设置")
                 } footer: {
                     Text(
-                        "严格模式仅自动采用歌名、歌手完全一致的歌曲。"
+                        "默认使用完全匹配。相似歌曲处理完成后，"
+                        + "才会自动下载仍缺失的原曲。"
                         + "关闭自动下载时只匹配本地曲库；外部歌单删除歌曲时，"
                         + "只移除歌单关系，不删除本地音频。"
                     )
@@ -2112,6 +2155,172 @@ private struct PlaylistDownloadImportView: View {
                 items: preview.items
             )
             queued(result)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+struct TrackRedownloadView: View {
+    @Environment(\.dismiss) private var dismiss
+    let track: Track
+    let queued: (MusicDownloadTask) -> Void
+
+    @State private var query: String
+    @State private var candidates: [DownloadCandidate] = []
+    @State private var isSearching = false
+    @State private var queuingCandidateID: String?
+    @State private var pendingCandidate: DownloadCandidate?
+    @State private var errorMessage: String?
+
+    init(track: Track, queued: @escaping (MusicDownloadTask) -> Void) {
+        self.track = track
+        self.queued = queued
+        _query = State(initialValue: "\(track.title) \(track.artist)")
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(track.title) · \(track.artist)")
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text("新音源成功入库后，系统才会迁移全部引用并删除原本地资源；失败时原歌曲保持不变。")
+                        .font(.caption)
+                        .foregroundStyle(Color.sonaSecondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+
+                HStack(spacing: 10) {
+                    TextField("输入歌曲名称和歌手", text: $query)
+                        .textFieldStyle(.plain)
+                        .submitLabel(.search)
+                        .onSubmit { Task { await search() } }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 40)
+                        .background(
+                            Color.white.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+
+                    Button("搜索") {
+                        Task { await search() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.sonaGreen)
+                    .foregroundStyle(.black)
+                    .disabled(isSearching || trimmedQuery.isEmpty)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+
+                Divider().overlay(Color.white.opacity(0.08))
+
+                if isSearching && candidates.isEmpty {
+                    ProgressView("正在查询可用音源…")
+                        .tint(.sonaGreen)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if candidates.isEmpty {
+                    ContentUnavailableView(
+                        "没有找到可用音源",
+                        systemImage: "music.note.slash",
+                        description: Text("可修改关键词后重新搜索")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(candidates.enumerated()), id: \.element.id) {
+                                index, candidate in
+                                DownloadCandidateRow(
+                                    candidate: candidate,
+                                    isQueuing: queuingCandidateID == candidate.id,
+                                    downloadState: nil
+                                ) {
+                                    pendingCandidate = candidate
+                                }
+                                if index < candidates.count - 1 {
+                                    Divider()
+                                        .overlay(Color.white.opacity(0.08))
+                                        .padding(.leading, 84)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .background(Color.sonaBackground.ignoresSafeArea())
+            .navigationTitle("重新查询下载")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+        .task { await search() }
+        .confirmationDialog(
+            "使用这个音源替换原歌曲？",
+            isPresented: Binding(
+                get: { pendingCandidate != nil },
+                set: { if !$0 { pendingCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("下载并替换", role: .destructive) {
+                guard let candidate = pendingCandidate else { return }
+                pendingCandidate = nil
+                Task { await queue(candidate) }
+            }
+            Button("取消", role: .cancel) {
+                pendingCandidate = nil
+            }
+        } message: {
+            Text("仅在新音源下载、入库和引用迁移全部成功后，才会删除原本地资源。")
+        }
+        .alert("操作失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "未知错误")
+        }
+    }
+
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func search() async {
+        guard !trimmedQuery.isEmpty, !isSearching else { return }
+        isSearching = true
+        errorMessage = nil
+        defer { isSearching = false }
+        do {
+            candidates = try await APIClient.shared.searchMusicDownloads(
+                query: trimmedQuery
+            ).items
+        } catch {
+            candidates = []
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func queue(_ candidate: DownloadCandidate) async {
+        guard queuingCandidateID == nil else { return }
+        queuingCandidateID = candidate.id
+        errorMessage = nil
+        defer { queuingCandidateID = nil }
+        do {
+            let task = try await APIClient.shared.queueTrackReplacement(
+                trackID: track.id,
+                candidate: candidate
+            )
+            queued(task)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

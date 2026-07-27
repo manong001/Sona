@@ -563,6 +563,17 @@ class PersonalRepository {
             .update() == 1;
     }
 
+    boolean updatePlaylistPool(String userId, String playlistId, String poolType) {
+        return jdbcClient.sql("""
+                UPDATE playlists SET pool_type = :poolType
+                WHERE id = :playlistId AND user_id = :userId AND directory_path IS NULL
+                """)
+            .param("poolType", poolType)
+            .param("playlistId", playlistId)
+            .param("userId", userId)
+            .update() == 1;
+    }
+
     @Transactional
     Optional<PlaylistData> updateDirectoryPlaylist(
         String userId,

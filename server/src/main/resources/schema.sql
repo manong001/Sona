@@ -29,6 +29,20 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS system_notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    read_at INTEGER,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_notifications_user
+    ON system_notifications(user_id, read_at, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS friendships (
     user_low_id TEXT NOT NULL,
     user_high_id TEXT NOT NULL,
@@ -193,6 +207,33 @@ CREATE TABLE IF NOT EXISTS playlist_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_playlist_subscriptions_due
     ON playlist_subscriptions(enabled, last_synced_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS playlist_automation_runs (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    playlist_name TEXT NOT NULL,
+    matched_count INTEGER NOT NULL DEFAULT 0,
+    queued_count INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    FOREIGN KEY (subscription_id) REFERENCES playlist_subscriptions(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_playlist_automation_runs_due
+    ON playlist_automation_runs(subscription_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS playlist_automation_run_tasks (
+    run_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    PRIMARY KEY (run_id, task_id),
+    FOREIGN KEY (run_id) REFERENCES playlist_automation_runs(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS playlist_subscription_items (
     subscription_id TEXT NOT NULL,
@@ -456,6 +497,13 @@ CREATE INDEX IF NOT EXISTS idx_download_tasks_subscription_match
         replace(trim(artist), '、', '/') COLLATE NOCASE,
         state
     );
+
+CREATE TABLE IF NOT EXISTS track_redownload_tasks (
+    task_id TEXT PRIMARY KEY,
+    source_track_id TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES download_tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_track_id) REFERENCES tracks(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS import_records (
     id TEXT PRIMARY KEY,

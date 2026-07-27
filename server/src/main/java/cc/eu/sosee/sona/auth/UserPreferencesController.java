@@ -3,6 +3,8 @@ package cc.eu.sosee.sona.auth;
 import cc.eu.sosee.sona.download.PlaylistSubscriptionVersionManager;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -58,8 +60,18 @@ record UserPreferencesValue(
     @DecimalMin("0.0") double miniPlayerY,
     @NotNull @Pattern(regexp = "off|light|medium|heavy") String hapticStrength,
     @NotNull @Pattern(regexp = "girl|spotify") String appIcon,
-    boolean playlistVersionManagementEnabled
+    boolean playlistVersionManagementEnabled,
+    Boolean playlistAutomationEnabled,
+    @Min(1) @Max(168) Integer playlistAutomationIntervalHours,
+    @Pattern(regexp = "MANUAL|STRICT|IGNORE_BRACKETS") String playlistAutomationMatchMode
 ) {
+    UserPreferencesValue {
+        playlistAutomationEnabled = Boolean.TRUE.equals(playlistAutomationEnabled);
+        playlistAutomationIntervalHours = playlistAutomationIntervalHours == null
+            ? 2 : playlistAutomationIntervalHours;
+        playlistAutomationMatchMode = playlistAutomationMatchMode == null
+            ? "IGNORE_BRACKETS" : playlistAutomationMatchMode;
+    }
 }
 
 record UserPreferencesResponse(
@@ -72,11 +84,15 @@ record UserPreferencesResponse(
     String hapticStrength,
     String appIcon,
     boolean playlistVersionManagementEnabled,
+    boolean playlistAutomationEnabled,
+    int playlistAutomationIntervalHours,
+    String playlistAutomationMatchMode,
     Long updatedAt
 ) {
     static UserPreferencesResponse empty() {
         return new UserPreferencesResponse(
-            false, null, null, null, null, null, null, null, false, null
+            false, null, null, null, null, null, null, null,
+            false, false, 2, "IGNORE_BRACKETS", null
         );
     }
 
@@ -94,6 +110,9 @@ record UserPreferencesResponse(
             value.hapticStrength(),
             value.appIcon(),
             value.playlistVersionManagementEnabled(),
+            value.playlistAutomationEnabled(),
+            value.playlistAutomationIntervalHours(),
+            value.playlistAutomationMatchMode(),
             stored.updatedAt()
         );
     }

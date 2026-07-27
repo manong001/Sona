@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
+import Network
 import UIKit
 import SwiftUI
 
@@ -43,6 +44,8 @@ final class PlaybackProgress: ObservableObject {
 
 @MainActor
 final class PlayerStore: ObservableObject {
+    static let cellularAudioOptimizationKey = "cellularAudioOptimizationEnabled"
+
     @Published private(set) var currentTrack: Track?
     @Published private(set) var isPlaying = false
     @Published private(set) var playbackMode: PlaybackMode = .sequential
@@ -62,6 +65,9 @@ final class PlayerStore: ObservableObject {
     var duration: Double { progress.duration }
 
     private let player = AVPlayer()
+    private let networkPathMonitor = NWPathMonitor()
+    private let networkPathMonitorQueue = DispatchQueue(label: "cc.eu.sosee.sona.network-path")
+    private var isUsingCellularNetwork = false
     private var activeAPI = APIClient.shared
     private var offlineURLProvider: ((Track) -> URL?)?
     private var timeObserver: Any?
@@ -104,6 +110,7 @@ final class PlayerStore: ObservableObject {
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
+        observeNetworkPath()
         configureAudioSession()
         observeTime()
         observeItemEnd()
@@ -144,6 +151,7 @@ final class PlayerStore: ObservableObject {
         seekTimeoutTask?.cancel()
         durationResolutionTask?.cancel()
         playbackResourceLoader?.cancelAll()
+        networkPathMonitor.cancel()
     }
 
     var canGoPrevious: Bool {
@@ -250,10 +258,14 @@ final class PlayerStore: ObservableObject {
         resumeAfterSeeking = false
         isFinishingCurrentItem = false
         let item: AVPlayerItem
-        if let offlineURL = offlineURLProvider?(track) {
+        let offlineURL = offlineURLProvider?(track)
+        let usesMobileStream =
+            offlineURL == nil && streamURLOverride == nil && shouldUseMobileStream
+        if let offlineURL {
             item = AVPlayerItem(url: offlineURL)
         } else {
-            let streamURL = activeAPI.url(for: streamURLOverride ?? track.streamURL)
+            let streamPath = streamURLOverride ?? streamPathForCurrentNetwork(track.streamURL)
+            let streamURL = activeAPI.url(for: streamPath)
             if usePlaybackCache {
                 let resourceLoader = PlaybackCacheResourceLoader(originalURL: streamURL)
                 playbackResourceLoader = resourceLoader
@@ -287,7 +299,10 @@ final class PlayerStore: ObservableObject {
             schedulePlaybackWatchdog(
                 for: item,
                 track: track,
-                startingAt: 0
+                startingAt: 0,
+                delay: usesMobileStream
+                    ? .seconds(30)
+                    : .seconds(6)
             )
         }
         loadNowPlayingArtwork(for: track)
@@ -928,12 +943,14 @@ final class PlayerStore: ObservableObject {
         stalledRecoveryTask?.cancel()
         stalledRecoveryTask = Task { [weak self, weak item] in
             var checkpointSeconds = max(0, seconds)
+            var nextDelay = delay
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: delay)
+                    try await Task.sleep(for: nextDelay)
                 } catch {
                     return
                 }
+                nextDelay = .seconds(6)
                 guard !Task.isCancelled,
                       let self,
                       let item,
@@ -984,6 +1001,34 @@ final class PlayerStore: ObservableObject {
                 return
             }
         }
+    }
+
+    private func observeNetworkPath() {
+        networkPathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                self?.isUsingCellularNetwork = path.usesInterfaceType(.cellular)
+            }
+        }
+        networkPathMonitor.start(queue: networkPathMonitorQueue)
+    }
+
+    private func streamPathForCurrentNetwork(_ path: String) -> String {
+        guard shouldUseMobileStream,
+              var components = URLComponents(string: path) else { return path }
+        var queryItems = components.queryItems ?? []
+        queryItems.removeAll { $0.name == "quality" }
+        queryItems.append(URLQueryItem(name: "quality", value: "mobile"))
+        components.queryItems = queryItems
+        return components.string ?? path
+    }
+
+    private var shouldUseMobileStream: Bool {
+        guard isUsingCellularNetwork else { return false }
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.cellularAudioOptimizationKey) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: Self.cellularAudioOptimizationKey)
     }
 
     private func observeAudioInterruptions() {

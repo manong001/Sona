@@ -78,6 +78,55 @@ paths:
       responses:
         "204":
           description: 当前用户所有会话已撤销
+  /me/preferences:
+    get:
+      operationId: getUserPreferences
+      responses:
+        "200":
+          description: 当前用户的同步配置；未配置时返回默认自动维护配置
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserPreferencesResponse"}
+    put:
+      operationId: saveUserPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/UserPreferences"}
+      responses:
+        "200":
+          description: 配置已保存
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserPreferencesResponse"}
+  /me/notifications:
+    get:
+      operationId: listSystemNotifications
+      responses:
+        "200":
+          description: 最近 100 条系统通知
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/SystemNotification"}
+  /me/notifications/{id}/read:
+    put:
+      operationId: markSystemNotificationRead
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: 已标记为已读}
+        "404": {description: 通知不存在}
+  /me/notifications/read-all:
+    put:
+      operationId: markAllSystemNotificationsRead
+      responses:
+        "204": {description: 全部通知已标记为已读}
   /users:
     get:
       operationId: listUsers
@@ -990,6 +1039,12 @@ paths:
       operationId: streamTrack
       parameters:
         - $ref: "#/components/parameters/TrackId"
+        - name: quality
+          in: query
+          description: 设为 mobile 时，对高于 192 kbps 的音频返回缓存的 AAC 流量版
+          schema:
+            type: string
+            enum: [mobile]
         - name: Range
           in: header
           schema:
@@ -1465,6 +1520,28 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PlaylistDownloadQueue"}
+  /downloads/replace-track/{trackId}:
+    post:
+      operationId: queueTrackReplacement
+      description: 下载选定新音源；成功入库并迁移全部歌曲引用后，删除原本地资源（仅管理员）
+      parameters:
+        - name: trackId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadCandidate"
+      responses:
+        "202":
+          description: 替换下载任务已加入队列
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadTask"
   /downloads/{downloadId}/retry:
     post:
       operationId: retryDownload
@@ -1482,6 +1559,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownloadTask"
+  /downloads/retry-failed:
+    post:
+      operationId: retryAllFailedDownloads
+      description: 复用原任务记录，重新加入当前用户的全部失败任务，不创建重复列表项
+      responses:
+        "202":
+          description: 已重新加入队列的任务
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DownloadTask"
   /app/releases/latest:
     get:
       operationId: latestAppRelease
@@ -2119,6 +2209,59 @@ components:
           type: boolean
         lyrics:
           type: [string, "null"]
+    UserPreferences:
+      type: object
+      required:
+        - childMode
+        - childTheme
+        - miniPlayerMode
+        - miniPlayerSide
+        - miniPlayerY
+        - hapticStrength
+        - appIcon
+        - playlistVersionManagementEnabled
+        - playlistAutomationEnabled
+        - playlistAutomationIntervalHours
+        - playlistAutomationMatchMode
+      properties:
+        childMode: {type: boolean}
+        childTheme: {type: string, enum: [boy, girl]}
+        miniPlayerMode: {type: string, enum: [floating, fixed]}
+        miniPlayerSide: {type: string, enum: [left, right]}
+        miniPlayerY: {type: number, minimum: 0}
+        hapticStrength: {type: string, enum: [off, light, medium, heavy]}
+        appIcon: {type: string, enum: [girl, spotify]}
+        playlistVersionManagementEnabled: {type: boolean}
+        playlistAutomationEnabled:
+          type: boolean
+          default: false
+        playlistAutomationIntervalHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+          default: 2
+        playlistAutomationMatchMode:
+          type: string
+          enum: [MANUAL, STRICT, IGNORE_BRACKETS]
+          default: IGNORE_BRACKETS
+    UserPreferencesResponse:
+      allOf:
+        - $ref: "#/components/schemas/UserPreferences"
+        - type: object
+          required: [configured]
+          properties:
+            configured: {type: boolean}
+            updatedAt: {type: [integer, "null"], format: int64}
+    SystemNotification:
+      type: object
+      required: [id, type, title, body, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        type: {type: string}
+        title: {type: string}
+        body: {type: string}
+        readAt: {type: [integer, "null"], format: int64}
+        createdAt: {type: integer, format: int64}
     DownloadTask:
       type: object
       required: [id, candidateId, source, sourceName, title, artist, album, quality, requestedBy, state, files, createdAt, updatedAt]

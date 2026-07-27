@@ -9,6 +9,9 @@ struct UserPreferences: Codable, Equatable {
     let hapticStrength: String
     let appIcon: String
     let playlistVersionManagementEnabled: Bool
+    let playlistAutomationEnabled: Bool
+    let playlistAutomationIntervalHours: Int
+    let playlistAutomationMatchMode: String
 }
 
 struct UserPreferencesResponse: Decodable {
@@ -21,6 +24,9 @@ struct UserPreferencesResponse: Decodable {
     let hapticStrength: String?
     let appIcon: String?
     let playlistVersionManagementEnabled: Bool?
+    let playlistAutomationEnabled: Bool?
+    let playlistAutomationIntervalHours: Int?
+    let playlistAutomationMatchMode: String?
     let updatedAt: Int64?
 
     var preferences: UserPreferences? {
@@ -42,7 +48,19 @@ struct UserPreferencesResponse: Decodable {
             miniPlayerY: miniPlayerY,
             hapticStrength: hapticStrength,
             appIcon: appIcon,
-            playlistVersionManagementEnabled: playlistVersionManagementEnabled ?? false
+            playlistVersionManagementEnabled: playlistVersionManagementEnabled ?? false,
+            playlistAutomationEnabled: playlistAutomationEnabled ?? false,
+            playlistAutomationIntervalHours: playlistAutomationIntervalHours ?? 2,
+            playlistAutomationMatchMode: playlistAutomationMatchMode ?? "IGNORE_BRACKETS"
         )
     }
+}
+
+struct SystemNotification: Decodable, Identifiable {
+    let id: String
+    let type: String
+    let title: String
+    let body: String
+    let readAt: Int64?
+    let createdAt: Int64
 }

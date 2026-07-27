@@ -981,6 +981,7 @@ private struct ManagedPlaylistDetailView: View {
     @State private var editingDirectoryPlaylist: Playlist?
     @State private var editingTrack: Track?
     @State private var editingMetadataTrack: Track?
+    @State private var redownloadingTrack: Track?
     @State private var playlistHeaderColor = Color(red: 0.08, green: 0.22, blue: 0.16)
     @State private var showsArtworkPicker = false
     @State private var showsArtworkMenu = false
@@ -1175,6 +1176,13 @@ private struct ManagedPlaylistDetailView: View {
             }
             .desktopSheetSize(.standard)
         }
+        .sheet(item: $redownloadingTrack) { track in
+            TrackRedownloadView(track: track) { task in
+                importMessage = "新音源已加入下载队列，完成后会自动替换原歌曲"
+                Task { await monitorTrackReplacement(task.id) }
+            }
+            .desktopSheetSize(.large)
+        }
         .fileImporter(
             isPresented: $showsImporter,
             allowedContentTypes: [.audio],
@@ -1254,6 +1262,9 @@ private struct ManagedPlaylistDetailView: View {
         .padding(.vertical, 6)
         .contextMenu {
             if session.currentUser?.isAdmin == true {
+                Button("重新查询下载", systemImage: "arrow.triangle.2.circlepath") {
+                    redownloadingTrack = track
+                }
                 Button("编辑歌曲名和歌手", systemImage: "pencil") {
                     editingTrack = track
                 }
@@ -1271,6 +1282,34 @@ private struct ManagedPlaylistDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func monitorTrackReplacement(_ taskID: String) async {
+        for _ in 0..<120 {
+            do {
+                guard let task = try await APIClient.shared.musicDownloadTasks()
+                    .first(where: { $0.id == taskID }) else {
+                    return
+                }
+                switch task.state {
+                case .completed:
+                    await library.refresh()
+                    await personal.refreshPlaylists()
+                    loadedTracks = [:]
+                    await loadMissingTracks()
+                    importMessage = "歌曲已替换，原本地资源已删除"
+                    return
+                case .failed:
+                    importMessage = task.message ?? "重新下载失败，原歌曲已保留"
+                    return
+                case .queued, .running:
+                    break
+                }
+            } catch {
+                return
+            }
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 

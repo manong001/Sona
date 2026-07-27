@@ -81,6 +81,24 @@ final class APIClient {
         )
     }
 
+    func systemNotifications() async throws -> [SystemNotification] {
+        try await request(path: "/api/v1/me/notifications")
+    }
+
+    func markSystemNotificationRead(id: String) async throws {
+        try await requestVoid(
+            path: "/api/v1/me/notifications/\(id)/read",
+            method: "PUT"
+        )
+    }
+
+    func markAllSystemNotificationsRead() async throws {
+        try await requestVoid(
+            path: "/api/v1/me/notifications/read-all",
+            method: "PUT"
+        )
+    }
+
     func users() async throws -> [ManagedUser] {
         try await request(path: "/api/v1/users")
     }
@@ -892,6 +910,16 @@ final class APIClient {
         )
     }
 
+    func queueTrackReplacement(
+        trackID: String, candidate: DownloadCandidate
+    ) async throws -> MusicDownloadTask {
+        try await request(
+            path: "/api/v1/downloads/replace-track/\(trackID)",
+            method: "POST",
+            body: try encoder.encode(candidate)
+        )
+    }
+
     func previewDownloadPlaylist(url: String) async throws -> DownloadPlaylistPreview {
         struct Body: Encodable { let url: String }
         return try await request(
@@ -1052,10 +1080,13 @@ final class APIClient {
     }
 
     func updatePlaylistSubscription(
-        id: String, name: String, strictMode: Bool, syncIntervalHours: Int
+        id: String, name: String, poolType: String, autoDownload: Bool,
+        strictMode: Bool, syncIntervalHours: Int
     ) async throws -> PlaylistSubscription {
         struct Body: Encodable {
             let name: String
+            let poolType: String
+            let autoDownload: Bool
             let strictMode: Bool
             let syncIntervalHours: Int
         }
@@ -1064,6 +1095,8 @@ final class APIClient {
             method: "PATCH",
             body: try encoder.encode(Body(
                 name: name,
+                poolType: poolType,
+                autoDownload: autoDownload,
                 strictMode: strictMode,
                 syncIntervalHours: syncIntervalHours
             ))
@@ -1091,6 +1124,10 @@ final class APIClient {
 
     func clearFailedMusicDownloadTasks() async throws {
         try await requestVoid(path: "/api/v1/downloads", method: "DELETE")
+    }
+
+    func retryAllFailedMusicDownloadTasks() async throws -> [MusicDownloadTask] {
+        try await request(path: "/api/v1/downloads/retry-failed", method: "POST")
     }
 
     func deleteMusicDownloadTask(taskID: String) async throws {

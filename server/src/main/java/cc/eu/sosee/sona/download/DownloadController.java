@@ -97,12 +97,35 @@ class DownloadController {
             .body(task);
     }
 
+    @PostMapping("/replace-track/{trackId}")
+    ResponseEntity<DownloadTask> queueTrackReplacement(
+        @AuthenticationPrincipal AuthenticatedUser user,
+        @PathVariable String trackId,
+        @Valid @RequestBody DownloadCandidate candidate
+    ) {
+        var task = service.queueTrackReplacement(
+            trackId, candidate, user.username()
+        );
+        return ResponseEntity.accepted()
+            .location(URI.create("/api/v1/downloads/" + task.id()))
+            .body(task);
+    }
+
     @PostMapping("/{id}/retry")
     ResponseEntity<DownloadTask> retry(
         @AuthenticationPrincipal AuthenticatedUser user,
         @PathVariable String id
     ) {
         return ResponseEntity.accepted().body(service.retry(id, user.username()));
+    }
+
+    @PostMapping("/retry-failed")
+    ResponseEntity<List<DownloadTask>> retryAllFailed(
+        @AuthenticationPrincipal AuthenticatedUser user
+    ) {
+        return ResponseEntity.accepted().body(
+            service.retryAllFailed(user.username())
+        );
     }
 
     @PostMapping("/{id}/replacement")

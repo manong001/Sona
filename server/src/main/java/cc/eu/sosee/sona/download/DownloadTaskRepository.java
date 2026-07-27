@@ -177,13 +177,39 @@ class DownloadTaskRepository {
                 WHERE trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
                   AND replace(trim(artist), '、', '/') COLLATE NOCASE =
                       replace(trim(:artist), '、', '/') COLLATE NOCASE
-                  AND state IN ('QUEUED', 'RUNNING')
                 ORDER BY CASE state
                     WHEN 'RUNNING' THEN 0
-                    ELSE 2
+                    WHEN 'QUEUED' THEN 1
+                    WHEN 'COMPLETED' THEN 2
+                    ELSE 3
                 END
                 LIMIT 1
                 """)
+            .param("title", candidate.title().strip())
+            .param("artist", candidate.artist().strip())
+            .query(String.class)
+            .optional()
+            .map(DownloadTaskState::valueOf);
+    }
+
+    Optional<DownloadTaskState> findExistingStateExcluding(
+        DownloadCandidate candidate, String excludedTaskId
+    ) {
+        return jdbcClient.sql("""
+                SELECT state FROM download_tasks
+                WHERE id <> :excludedTaskId
+                  AND trim(title) COLLATE NOCASE = trim(:title) COLLATE NOCASE
+                  AND replace(trim(artist), '、', '/') COLLATE NOCASE =
+                      replace(trim(:artist), '、', '/') COLLATE NOCASE
+                ORDER BY CASE state
+                    WHEN 'RUNNING' THEN 0
+                    WHEN 'QUEUED' THEN 1
+                    WHEN 'COMPLETED' THEN 2
+                    ELSE 3
+                END
+                LIMIT 1
+                """)
+            .param("excludedTaskId", excludedTaskId)
             .param("title", candidate.title().strip())
             .param("artist", candidate.artist().strip())
             .query(String.class)
@@ -206,6 +232,52 @@ class DownloadTaskRepository {
             .param("id", id)
             .param("requestedBy", requestedBy)
             .query(this::map)
+            .optional();
+    }
+
+    List<DownloadTask> findFailed(String requestedBy) {
+        return jdbcClient.sql("""
+                SELECT * FROM download_tasks
+                WHERE requested_by = :requestedBy AND state = 'FAILED'
+                ORDER BY created_at
+                """)
+            .param("requestedBy", requestedBy)
+            .query(this::map)
+            .list();
+    }
+
+    Optional<DownloadTaskState> findTrackReplacementState(String sourceTrackId) {
+        return jdbcClient.sql("""
+                SELECT download_tasks.state
+                FROM track_redownload_tasks
+                JOIN download_tasks ON download_tasks.id = track_redownload_tasks.task_id
+                WHERE track_redownload_tasks.source_track_id = :sourceTrackId
+                ORDER BY download_tasks.updated_at DESC
+                LIMIT 1
+                """)
+            .param("sourceTrackId", sourceTrackId)
+            .query(String.class)
+            .optional()
+            .map(DownloadTaskState::valueOf);
+    }
+
+    void markTrackReplacement(String taskId, String sourceTrackId) {
+        jdbcClient.sql("""
+                INSERT INTO track_redownload_tasks(task_id, source_track_id)
+                VALUES (:taskId, :sourceTrackId)
+                """)
+            .param("taskId", taskId)
+            .param("sourceTrackId", sourceTrackId)
+            .update();
+    }
+
+    Optional<String> findReplacementSourceTrackId(String taskId) {
+        return jdbcClient.sql("""
+                SELECT source_track_id FROM track_redownload_tasks
+                WHERE task_id = :taskId
+                """)
+            .param("taskId", taskId)
+            .query(String.class)
             .optional();
     }
 
